@@ -1,0 +1,180 @@
+﻿# ChoreSync Refresh
+
+## Original App Snapshot
+- Django backend with rich domain: users, groups, recurrent chores, proposals, notifications, and Google calendar sync.
+- Vue SPA handling task boards, messaging, and real-time updates for household coordination.
+- Business logic tightly coupled to Django models, mixing scheduling, notifications, and calendar projection concerns.
+
+## Refactor Objectives
+- Split choreography into focused services (scheduling, calendar sync, group orchestration) to reduce coupling and enable async execution.
+- Introduce provider-agnostic calendar sync surface that now plans for Google, Apple (CalDAV), and Outlook (Microsoft Graph) connectors.
+- Provide lightweight FastAPI interface ready for dependency injection, background workers, and container-friendly lifecycle management.
+- Simplify SPA controllers to clear, testable units so the UI can evolve independently from data transport concerns.
+
+## Backend Skeleton
+- `chore_sync/app.py` exposes FastAPI lifecycle hooks ready for dependency-managed startup/shutdown and health reporting.
+- `chore_sync/services/auth_service.py` provides `AccountService` primitives for registration, login, profile, and password management.
+- `chore_sync/services/membership_service.py` captures group join/leave flows and membership roster management.
+- `chore_sync/services/task_service.py` hosts a `TaskScheduler` responsible for scheduling, reassigning, projecting chores, and their notification fan-out.
+- `chore_sync/services/task_lifecycle_service.py` manages user-centric task completion, swaps, and assignment triggers.
+- `chore_sync/services/calendar_service.py` ships a `CalendarSyncService` with dedicated import/export methods for Google, Apple, and Outlook sync.
+- `chore_sync/services/calendar_auth_service.py` coordinates OAuth handshakes and credential storage for external providers.
+- `chore_sync/services/calendar_event_service.py` maintains in-app events, recurring occurrences, and group calendars.
+- `chore_sync/services/group_service.py` centralizes group creation, invitations, and fairness-matrix computation.
+- `chore_sync/services/messaging_service.py` captures group chat flows including message sends, read receipts, history, and real-time broadcasts.
+- `chore_sync/services/notification_service.py` orchestrates in-app and push notifications, preference syncing, and digests.
+- `chore_sync/services/proposal_service.py` manages task proposals, voting, evaluation, and preference migration.
+- `chore_sync/sync_providers/` contains provider adapters that wrap raw Google, Apple (CalDAV), and Outlook (Graph) APIs.
+- `chore_sync/api/` defines placeholder routers for tasks, calendars, and groups with TODOs for validation, delegation, and response shaping.
+- `chore_sync/tests/` contains pytest stubs for every backend method, skipping execution until concrete implementations land.
+
+## Frontend Skeleton
+- `frontend/src/main.ts` holds `bootstrapApplication` for framework mounting and real-time channel wiring.
+- `frontend/src/components/TaskBoard.ts` exposes controller methods for loading, selecting, and reassigning tasks.
+- `frontend/src/components/CalendarSyncPanel.ts` adds controllers for connecting Google, Apple, and Outlook calendars.
+- `frontend/src/components/MessagePanel.ts` defines messaging UX flows including composition, read receipts, history, and live subscriptions.
+- `frontend/tests/` contains skipped Jest-style specs covering each controller method plus the SPA bootstrap entry point.
+
+## 10-Week Roadmap
+- Week 1 - Platform Bootstrapping: Finalize FastAPI scaffolding, wire routers, and configure linting/test infrastructure.
+- Week 2 - Authentication and Onboarding: Implement user creation, session management, and group provisioning flows.
+- Week 3 - Task Scheduling Core: Deliver task creation, recurring projections, and overdue reassignment pipelines.
+- Week 4 - Google Calendar Sync: Build incremental sync (delta tokens, push channels) and map tasks to calendar events.
+- Week 5 - Apple Calendar Sync: Implement CalDAV credential management, initial sync, and bidirectional updates.
+- Week 6 - Outlook Calendar Sync: Integrate Microsoft Graph delta queries, webhook subscriptions, and conflict resolution.
+- Week 7 - Notifications and Messaging: Add in-app notifications, email digests, and lightweight group chat with receipts.
+- Week 8 - Analytics and Load Balancing: Compute fairness matrix, surface metrics dashboards, and tune reassignment heuristics.
+- Week 9 - Frontend Experience: Implement SPA task board, calendar sync panel, and responsive layout improvements.
+- Week 10 - Hardening and Launch Prep: Execute end-to-end testing, load profiling, failure drills, and produce launch runbooks.
+
+## Feature -> Method -> Test Matrix
+- Accounts & Profiles
+  - Method `AccountService.register_user` -> Test `backend/chore_sync/tests/test_auth_service.py::test_register_user_todo`
+  - Method `AccountService.authenticate_user` -> Test `backend/chore_sync/tests/test_auth_service.py::test_authenticate_user_todo`
+  - Method `AccountService.logout_session` -> Test `backend/chore_sync/tests/test_auth_service.py::test_logout_session_todo`
+  - Method `AccountService.get_profile` -> Test `backend/chore_sync/tests/test_auth_service.py::test_get_profile_todo`
+  - Method `AccountService.update_profile` -> Test `backend/chore_sync/tests/test_auth_service.py::test_update_profile_todo`
+  - Method `AccountService.change_password` -> Test `backend/chore_sync/tests/test_auth_service.py::test_change_password_todo`
+- Membership
+  - Method `MembershipService.join_group` -> Test `backend/chore_sync/tests/test_membership_service.py::test_join_group_todo`
+  - Method `MembershipService.leave_group` -> Test `backend/chore_sync/tests/test_membership_service.py::test_leave_group_todo`
+  - Method `MembershipService.list_user_groups` -> Test `backend/chore_sync/tests/test_membership_service.py::test_list_user_groups_todo`
+  - Method `MembershipService.list_group_members` -> Test `backend/chore_sync/tests/test_membership_service.py::test_list_group_members_todo`
+  - Method `MembershipService.update_member_role` -> Test `backend/chore_sync/tests/test_membership_service.py::test_update_member_role_todo`
+- Task Scheduling
+  - Method `TaskScheduler.schedule_task` -> Test `backend/chore_sync/tests/test_task_service.py::test_schedule_task_todo`
+  - Method `TaskScheduler.reassign_overdue_tasks` -> Test `backend/chore_sync/tests/test_task_service.py::test_reassign_overdue_tasks_todo`
+  - Method `TaskScheduler.generate_recurring_instances` -> Test `backend/chore_sync/tests/test_task_service.py::test_generate_recurring_instances_todo`
+  - Method `TaskScheduler.compute_candidate_scores` -> Test `backend/chore_sync/tests/test_task_service.py::test_compute_candidate_scores_todo`
+  - Method `TaskScheduler.select_assignee` -> Test `backend/chore_sync/tests/test_task_service.py::test_select_assignee_todo`
+  - Method `TaskScheduler.record_assignment_history` -> Test `backend/chore_sync/tests/test_task_service.py::test_record_assignment_history_todo`
+  - Method `TaskScheduler.project_assignment_notifications` -> Test `backend/chore_sync/tests/test_task_service.py::test_project_assignment_notifications_todo`
+  - Method `TaskScheduler.assign_group_tasks` -> Test `backend/chore_sync/tests/test_task_service.py::test_assign_group_tasks_todo`
+  - Method `create_task_endpoint` -> Test `backend/chore_sync/tests/test_task_router.py::test_create_task_endpoint_todo`
+  - Method `reassign_overdue_tasks_endpoint` -> Test `backend/chore_sync/tests/test_task_router.py::test_reassign_overdue_tasks_endpoint_todo`
+  - Method `generate_recurring_tasks_endpoint` -> Test `backend/chore_sync/tests/test_task_router.py::test_generate_recurring_tasks_endpoint_todo`
+  - Method `TaskBoardController.triggerReassignment` -> Test `frontend/tests/taskBoard.spec.ts`
+- Task Lifecycle & Swaps
+  - Method `TaskLifecycleService.list_user_tasks` -> Test `backend/chore_sync/tests/test_task_lifecycle_service.py::test_list_user_tasks_todo`
+  - Method `TaskLifecycleService.assign_group_tasks` -> Test `backend/chore_sync/tests/test_task_lifecycle_service.py::test_assign_group_tasks_todo`
+  - Method `TaskLifecycleService.toggle_task_completed` -> Test `backend/chore_sync/tests/test_task_lifecycle_service.py::test_toggle_task_completed_todo`
+  - Method `TaskLifecycleService.toggle_occurrence_completed` -> Test `backend/chore_sync/tests/test_task_lifecycle_service.py::test_toggle_occurrence_completed_todo`
+  - Method `TaskLifecycleService.create_swap_request` -> Test `backend/chore_sync/tests/test_task_lifecycle_service.py::test_create_swap_request_todo`
+  - Method `TaskLifecycleService.respond_to_swap_request` -> Test `backend/chore_sync/tests/test_task_lifecycle_service.py::test_respond_to_swap_request_todo`
+  - Method `TaskLifecycleService.list_incoming_swaps` -> Test `backend/chore_sync/tests/test_task_lifecycle_service.py::test_list_incoming_swaps_todo`
+  - Method `TaskBoardController.loadTasks` -> Test `frontend/tests/taskBoard.spec.ts`
+  - Method `TaskBoardController.selectTask` -> Test `frontend/tests/taskBoard.spec.ts`
+- Calendar Synchronization
+  - Method `CalendarSyncService.sync_google_calendar` -> Test `backend/chore_sync/tests/test_calendar_service.py::test_sync_google_calendar_todo`
+  - Method `CalendarSyncService.push_events_to_google` -> Test `backend/chore_sync/tests/test_calendar_service.py::test_push_events_to_google_todo`
+  - Method `CalendarSyncService.pull_events_from_google` -> Test `backend/chore_sync/tests/test_calendar_service.py::test_pull_events_from_google_todo`
+  - Method `CalendarSyncService.sync_apple_calendar` -> Test `backend/chore_sync/tests/test_calendar_service.py::test_sync_apple_calendar_todo`
+  - Method `CalendarSyncService.push_events_to_apple` -> Test `backend/chore_sync/tests/test_calendar_service.py::test_push_events_to_apple_todo`
+  - Method `CalendarSyncService.pull_events_from_apple` -> Test `backend/chore_sync/tests/test_calendar_service.py::test_pull_events_from_apple_todo`
+  - Method `CalendarSyncService.sync_outlook_calendar` -> Test `backend/chore_sync/tests/test_calendar_service.py::test_sync_outlook_calendar_todo`
+  - Method `CalendarSyncService.push_events_to_outlook` -> Test `backend/chore_sync/tests/test_calendar_service.py::test_push_events_to_outlook_todo`
+  - Method `CalendarSyncService.pull_events_from_outlook` -> Test `backend/chore_sync/tests/test_calendar_service.py::test_pull_events_from_outlook_todo`
+  - Method `sync_google_calendar_endpoint` -> Test `backend/chore_sync/tests/test_calendar_router.py::test_sync_google_calendar_endpoint_todo`
+  - Method `sync_apple_calendar_endpoint` -> Test `backend/chore_sync/tests/test_calendar_router.py::test_sync_apple_calendar_endpoint_todo`
+  - Method `sync_outlook_calendar_endpoint` -> Test `backend/chore_sync/tests/test_calendar_router.py::test_sync_outlook_calendar_endpoint_todo`
+  - Method `CalendarSyncPanelController.connectGoogleCalendar` -> Test `frontend/tests/calendarSyncPanel.spec.ts`
+  - Method `CalendarSyncPanelController.connectAppleCalendar` -> Test `frontend/tests/calendarSyncPanel.spec.ts`
+  - Method `CalendarSyncPanelController.connectOutlookCalendar` -> Test `frontend/tests/calendarSyncPanel.spec.ts`
+- Calendar OAuth & Credentials
+  - Method `CalendarAuthService.begin_google_oauth` -> Test `backend/chore_sync/tests/test_calendar_auth_service.py::test_begin_google_oauth_todo`
+  - Method `CalendarAuthService.complete_google_oauth` -> Test `backend/chore_sync/tests/test_calendar_auth_service.py::test_complete_google_oauth_todo`
+  - Method `CalendarAuthService.list_google_calendars` -> Test `backend/chore_sync/tests/test_calendar_auth_service.py::test_list_google_calendars_todo`
+  - Method `CalendarAuthService.sync_from_google` -> Test `backend/chore_sync/tests/test_calendar_auth_service.py::test_sync_from_google_todo`
+  - Method `CalendarAuthService.sync_to_google` -> Test `backend/chore_sync/tests/test_calendar_auth_service.py::test_sync_to_google_todo`
+  - Method `CalendarAuthService.store_credentials` -> Test `backend/chore_sync/tests/test_calendar_auth_service.py::test_store_credentials_todo`
+  - Method `CalendarAuthService.revoke_credentials` -> Test `backend/chore_sync/tests/test_calendar_auth_service.py::test_revoke_credentials_todo`
+  - Method `CalendarAuthService.parse_provider_credentials` -> Test `backend/chore_sync/tests/test_calendar_auth_service.py::test_parse_provider_credentials_todo`
+- Calendar Events & In-App Scheduling
+  - Method `CalendarEventService.create_in_app_event` -> Test `backend/chore_sync/tests/test_calendar_event_service.py::test_create_in_app_event_todo`
+  - Method `CalendarEventService.list_in_app_events` -> Test `backend/chore_sync/tests/test_calendar_event_service.py::test_list_in_app_events_todo`
+  - Method `CalendarEventService.update_in_app_event` -> Test `backend/chore_sync/tests/test_calendar_event_service.py::test_update_in_app_event_todo`
+  - Method `CalendarEventService.delete_in_app_event` -> Test `backend/chore_sync/tests/test_calendar_event_service.py::test_delete_in_app_event_todo`
+  - Method `CalendarEventService.list_group_occurrences` -> Test `backend/chore_sync/tests/test_calendar_event_service.py::test_list_group_occurrences_todo`
+  - Method `CalendarEventService.get_group_calendar` -> Test `backend/chore_sync/tests/test_calendar_event_service.py::test_get_group_calendar_todo`
+  - Method `CalendarEventService.delete_recurring_task` -> Test `backend/chore_sync/tests/test_calendar_event_service.py::test_delete_recurring_task_todo`
+  - Method `CalendarEventService.consolidate_to_in_app_calendar` -> Test `backend/chore_sync/tests/test_calendar_event_service.py::test_consolidate_to_in_app_calendar_todo`
+- Messaging & Read Receipts
+  - Method `MessagingService.send_message` -> Test `backend/chore_sync/tests/test_messaging_service.py::test_send_message_todo`
+  - Method `MessagingService.mark_message_read` -> Test `backend/chore_sync/tests/test_messaging_service.py::test_mark_message_read_todo`
+  - Method `MessagingService.fetch_conversation` -> Test `backend/chore_sync/tests/test_messaging_service.py::test_fetch_conversation_todo`
+  - Method `MessagingService.broadcast_live_message` -> Test `backend/chore_sync/tests/test_messaging_service.py::test_broadcast_live_message_todo`
+  - Method `MessagingService.list_unread_messages` -> Test `backend/chore_sync/tests/test_messaging_service.py::test_list_unread_messages_todo`
+  - Method `MessagePanelController.composeMessage` -> Test `frontend/tests/messagePanel.spec.ts`
+  - Method `MessagePanelController.markAsRead` -> Test `frontend/tests/messagePanel.spec.ts`
+  - Method `MessagePanelController.loadConversation` -> Test `frontend/tests/messagePanel.spec.ts`
+  - Method `MessagePanelController.subscribeToLiveUpdates` -> Test `frontend/tests/messagePanel.spec.ts`
+- Notifications
+  - Method `NotificationService.emit_notification` -> Test `backend/chore_sync/tests/test_notification_service.py::test_emit_notification_todo`
+  - Method `NotificationService.mark_notification_read` -> Test `backend/chore_sync/tests/test_notification_service.py::test_mark_notification_read_todo`
+  - Method `NotificationService.fan_out_realtime` -> Test `backend/chore_sync/tests/test_notification_service.py::test_fan_out_realtime_todo`
+  - Method `NotificationService.schedule_digest` -> Test `backend/chore_sync/tests/test_notification_service.py::test_schedule_digest_todo`
+  - Method `NotificationService.sync_notification_preferences` -> Test `backend/chore_sync/tests/test_notification_service.py::test_sync_notification_preferences_todo`
+  - Method `NotificationService.list_active_notifications` -> Test `backend/chore_sync/tests/test_notification_service.py::test_list_active_notifications_todo`
+  - Method `NotificationService.list_all_notifications` -> Test `backend/chore_sync/tests/test_notification_service.py::test_list_all_notifications_todo`
+  - Method `NotificationService.dismiss_notification` -> Test `backend/chore_sync/tests/test_notification_service.py::test_dismiss_notification_todo`
+  - Method `NotificationService.delete_notification` -> Test `backend/chore_sync/tests/test_notification_service.py::test_delete_notification_todo`
+  - Method `NotificationService.build_notification_url` -> Test `backend/chore_sync/tests/test_notification_service.py::test_build_notification_url_todo`
+- Group Lifecycle & Fairness
+  - Method `GroupOrchestrator.create_group` -> Test `backend/chore_sync/tests/test_group_service.py::test_create_group_todo`
+  - Method `GroupOrchestrator.invite_member` -> Test `backend/chore_sync/tests/test_group_service.py::test_invite_member_todo`
+  - Method `GroupOrchestrator.compute_assignment_matrix` -> Test `backend/chore_sync/tests/test_group_service.py::test_compute_assignment_matrix_todo`
+  - Method `GroupOrchestrator.generate_invite_code` -> Test `backend/chore_sync/tests/test_group_service.py::test_generate_invite_code_todo`
+  - Method `create_group_endpoint` -> Test `backend/chore_sync/tests/test_group_router.py::test_create_group_endpoint_todo`
+  - Method `invite_group_member_endpoint` -> Test `backend/chore_sync/tests/test_group_router.py::test_invite_group_member_endpoint_todo`
+  - Method `get_assignment_matrix_endpoint` -> Test `backend/chore_sync/tests/test_group_router.py::test_get_assignment_matrix_endpoint_todo`
+- Task Proposals
+  - Method `ProposalService.submit_proposal` -> Test `backend/chore_sync/tests/test_proposal_service.py::test_submit_proposal_todo`
+  - Method `ProposalService.record_vote` -> Test `backend/chore_sync/tests/test_proposal_service.py::test_record_vote_todo`
+  - Method `ProposalService.evaluate_proposal` -> Test `backend/chore_sync/tests/test_proposal_service.py::test_evaluate_proposal_todo`
+  - Method `ProposalService.expire_stale_proposals` -> Test `backend/chore_sync/tests/test_proposal_service.py::test_expire_stale_proposals_todo`
+  - Method `ProposalService.sync_proposal_preferences` -> Test `backend/chore_sync/tests/test_proposal_service.py::test_sync_proposal_preferences_todo`
+  - Method `ProposalService.list_group_proposals` -> Test `backend/chore_sync/tests/test_proposal_service.py::test_list_group_proposals_todo`
+  - Method `ProposalService.approve_proposal` -> Test `backend/chore_sync/tests/test_proposal_service.py::test_approve_proposal_todo`
+- Provider Integrations
+  - Method `GoogleCalendarProvider.list_calendars` -> Test `backend/chore_sync/tests/test_sync_providers.py::test_google_list_calendars_todo`
+  - Method `GoogleCalendarProvider.pull_events` -> Test `backend/chore_sync/tests/test_sync_providers.py::test_google_pull_events_todo`
+  - Method `GoogleCalendarProvider.push_events` -> Test `backend/chore_sync/tests/test_sync_providers.py::test_google_push_events_todo`
+  - Method `GoogleCalendarProvider.revoke_credentials` -> Test `backend/chore_sync/tests/test_sync_providers.py::test_google_revoke_credentials_todo`
+  - Method `AppleCalendarProvider.discover_principal` -> Test `backend/chore_sync/tests/test_sync_providers.py::test_apple_discover_principal_todo`
+  - Method `AppleCalendarProvider.pull_events` -> Test `backend/chore_sync/tests/test_sync_providers.py::test_apple_pull_events_todo`
+  - Method `AppleCalendarProvider.push_events` -> Test `backend/chore_sync/tests/test_sync_providers.py::test_apple_push_events_todo`
+  - Method `AppleCalendarProvider.renew_session` -> Test `backend/chore_sync/tests/test_sync_providers.py::test_apple_renew_session_todo`
+  - Method `OutlookCalendarProvider.list_calendars` -> Test `backend/chore_sync/tests/test_sync_providers.py::test_outlook_list_calendars_todo`
+  - Method `OutlookCalendarProvider.pull_events` -> Test `backend/chore_sync/tests/test_sync_providers.py::test_outlook_pull_events_todo`
+  - Method `OutlookCalendarProvider.push_events` -> Test `backend/chore_sync/tests/test_sync_providers.py::test_outlook_push_events_todo`
+  - Method `OutlookCalendarProvider.renew_subscription` -> Test `backend/chore_sync/tests/test_sync_providers.py::test_outlook_renew_subscription_todo`
+- Platform Lifecycle
+  - Method `bootstrap_runtime_dependencies` -> Test `backend/chore_sync/tests/test_app.py::test_bootstrap_runtime_dependencies_todo`
+  - Method `teardown_runtime_dependencies` -> Test `backend/chore_sync/tests/test_app.py::test_teardown_runtime_dependencies_todo`
+  - Method `health_check` -> Test `backend/chore_sync/tests/test_app.py::test_health_check_todo`
+  - Method `bootstrapApplication` -> Test `frontend/tests/bootstrap.spec.ts`
+
+## Next Steps
+- Flesh out infrastructure decisions (database, message queue, secrets) to unlock startup/shutdown implementations.
+- Define API contracts (OpenAPI schema, validation models) before wiring routers to services.
+- Choose frontend framework (Vue, React, Svelte) and state management strategy ahead of Week 9 deliverables.
