@@ -1,8 +1,16 @@
 """Root FastAPI application wiring for the ChoreSync backend."""
+from __future__ import annotations
+
 from fastapi import FastAPI
 
-# TODO: Register routers (tasks, calendars, groups) once dependency injection is available.
+from chore_sync.api import calendar_router, group_router, task_router
+
+# Register routers eagerly; dependency injection wiring will replace this later.
 app = FastAPI(title="ChoreSync API", version="0.0.1-dev")
+
+app.include_router(calendar_router.router)
+app.include_router(group_router.router)
+app.include_router(task_router.router)
 
 
 @app.on_event("startup")

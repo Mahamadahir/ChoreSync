@@ -1,15 +1,23 @@
 """Domain entity definitions for ChoreSync."""
+from django.contrib.auth.models import AbstractUser
+from django.db import models
+
+# TODO(Model Test Ideas):
+# - Validation paths: required fields, uniqueness, and custom clean/validator logic.
+# - Relationship behavior: foreign-key/many-to-many linkage, cascade delete rules, and reverse lookups.
+# - Domain helpers: computed properties or custom methods that encode business rules (e.g., is_overdue, display_name).
+# - State transitions: enums/choice fields, status changes, and soft-delete or archival flows.
+# - Audit hooks: automatic timestamps, __str__ representations, and signal-driven side effects (notifications, sync events).
 
 
-class User:
+class User(AbstractUser):
     """Represents a platform user with identity and notification preferences."""
     # TODO: Define fields and validation rules for User domain entity.
-
+    email = models.EmailField(unique=True)
 
 class Group:
     """Represents a household or team coordinating chores."""
     # TODO: Describe attributes (name, owner, reassignment policy, etc.).
-
 
 class Task:
     """Describes a chore scheduled for a group with optional recurrence."""

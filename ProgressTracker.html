@@ -1,286 +1,964 @@
-# ChoreSync Platform
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>ChoreSync Progress Tracker</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      :root {
+        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        color: #1f2933;
+        background-color: #f5f6fa;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      a {
+        color: inherit;
+      }
+      main.page {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 2rem 1.5rem 4rem;
+      }
+      .page__header {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        margin-bottom: 2rem;
+      }
+      .page__header h1 {
+        margin: 0;
+        font-size: 2rem;
+      }
+      .status-banner {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        background: #ffffff;
+        border: 1px solid #e1e7ef;
+        border-radius: 14px;
+        padding: 1rem 1.25rem;
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+      }
+      .status-banner__metrics {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        font-size: 0.95rem;
+      }
+      .status-banner__metrics span {
+        display: inline-flex;
+        flex-direction: column;
+        gap: 0.2rem;
+      }
+      .status-banner__metrics strong {
+        font-size: 1.2rem;
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        margin-bottom: 1.5rem;
+        font-size: 0.85rem;
+        color: #52606d;
+      }
+      .legend__item {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        background: #ffffff;
+        padding: 0.35rem 0.6rem;
+        border-radius: 999px;
+        border: 1px solid #e1e7ef;
+      }
+      .feature-card {
+        background: #ffffff;
+        border: 1px solid #e1e7ef;
+        border-radius: 16px;
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+      }
+      .feature-card__header {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1rem;
+        margin-bottom: 1rem;
+      }
+      .feature-card__info {
+        display: flex;
+        gap: 0.75rem;
+        align-items: flex-start;
+      }
+      .feature-card__checkbox,
+      .method__checkbox,
+      .test__checkbox {
+        width: 1.1rem;
+        height: 1.1rem;
+        margin-top: 0.25rem;
+        accent-color: #2563eb;
+      }
+      .feature-card__label,
+      .method__label,
+      .test__label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        cursor: pointer;
+      }
+      .feature-card__title {
+        font-weight: 600;
+        font-size: 1.15rem;
+      }
+      .feature-card__dates {
+        font-size: 0.85rem;
+        color: #52606d;
+      }
+      .feature-card__body {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+      .feature-card--collapsed .feature-card__body {
+        display: none;
+      }
+      .feature-card__header--collapsible {
+        cursor: pointer;
+      }
+      .feature-card__header--collapsible input,
+      .feature-card__header--collapsible label,
+      .feature-card__header--collapsible button {
+        cursor: pointer;
+      }
+      .feature-card__toggle {
+        border: 1px solid #d1d9e6;
+        background: #f1f5f9;
+        color: #1f2933;
+        padding: 0.3rem 0.75rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.2s ease, border-color 0.2s ease;
+      }
+      .feature-card__toggle:hover {
+        background: #e2e8f0;
+        border-color: #c4cfde;
+      }
+      .feature-card__empty {
+        margin: 0;
+        padding: 1rem;
+        border: 1px dashed #d7dce5;
+        border-radius: 12px;
+        background: #f8fafc;
+        color: #64748b;
+        font-style: italic;
+      }
+      .method-list,
+      .test-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+      .method {
+        border: 1px solid #edf0f7;
+        border-radius: 12px;
+        padding: 0.9rem 1rem;
+        background: #fbfdff;
+      }
+      .method__header {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+        align-items: flex-start;
+      }
+      .method__info {
+        display: flex;
+        gap: 0.75rem;
+      }
+      .method__title {
+        font-weight: 600;
+      }
+      .method__dates,
+      .test__dates {
+        font-size: 0.8rem;
+        color: #64748b;
+      }
+      .test {
+        border-top: 1px solid #e8edf5;
+        padding-top: 0.75rem;
+        margin-top: 0.75rem;
+      }
+      .test:first-child {
+        border-top: none;
+        padding-top: 0;
+        margin-top: 0;
+      }
+      .test__row {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+        align-items: flex-start;
+      }
+      .test__info {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+      .test__title {
+        font-size: 0.9rem;
+        font-weight: 500;
+      }
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.3rem 0.75rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        min-width: 7.5rem;
+        text-align: center;
+      }
+      .status-pill--green {
+        background: #dcfce7;
+        color: #166534;
+      }
+      .status-pill--blue {
+        background: #dbeafe;
+        color: #1d4ed8;
+      }
+      .status-pill--grey {
+        background: #e2e8f0;
+        color: #334155;
+      }
+      .status-pill--orange {
+        background: #fef3c7;
+        color: #b45309;
+      }
+      .status-pill--red {
+        background: #fee2e2;
+        color: #b91c1c;
+      }
+      [data-status="overdue"] {
+        border-color: #fecaca;
+      }
+      [data-status="due-soon"] {
+        border-color: #fde68a;
+      }
+      [data-status="ahead"] {
+        border-color: #bfdbfe;
+      }
+      [data-status="complete"] {
+        border-color: #bbf7d0;
+        background: #f0fdf4;
+      }
+      @media (max-width: 720px) {
+        .status-banner {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+        .method__header,
+        .test__row,
+        .feature-card__header {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+        .status-pill {
+          min-width: unset;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="page__header">
+        <h1>ChoreSync Progress Tracker</h1>
+        <div class="status-banner">
+          <span id="project-status" class="status-pill status-pill--grey">Pending</span>
+          <div class="status-banner__metrics">
+            <span>Features<br><strong id="feature-progress">0 / 0</strong></span>
+            <span>Methods<br><strong id="method-progress">0 / 0</strong></span>
+            <span>Tests<br><strong id="test-progress">0 / 0</strong></span>
+            <span>Overdue<br><strong id="overdue-count">0</strong></span>
+            <span>Due Soon<br><strong id="due-soon-count">0</strong></span>
+          </div>
+        </div>
+        <div class="legend">
+          <span class="legend__item"><span class="status-pill status-pill--green">Complete</span>Complete</span>
+          <span class="legend__item"><span class="status-pill status-pill--blue">Ahead</span>Ahead of Schedule</span>
+          <span class="legend__item"><span class="status-pill status-pill--grey">On Track</span>On Track</span>
+          <span class="legend__item"><span class="status-pill status-pill--orange">Due Soon</span>Due within 7 days</span>
+          <span class="legend__item"><span class="status-pill status-pill--red">Behind</span>Overdue</span>
+        </div>
+      </header>
+      <section id="feature-container"></section>
+    </main>
+    <script src="progress-data.js"></script>
+    <script>
+      (function () {
+        const data = window.progressData;
+        if (!data || !Array.isArray(data.features)) {
+          console.warn("Progress data unavailable.");
+          return;
+        }
 
-Status: Ahead of Date (blue)
+        const container = document.getElementById("feature-container");
+        const featureProgressEl = document.getElementById("feature-progress");
+        const methodProgressEl = document.getElementById("method-progress");
+        const testProgressEl = document.getElementById("test-progress");
+        const overdueCountEl = document.getElementById("overdue-count");
+        const dueSoonCountEl = document.getElementById("due-soon-count");
+        const projectStatusEl = document.getElementById("project-status");
 
-<style>
-.todo-list { list-style: none; padding: 0; margin: 0; }
-.todo { margin: 0.2rem 0; display: flex; align-items: center; gap: 0.4rem; }
-.todo input { width: 1rem; height: 1rem; }
-.todo label { cursor: pointer; }
-.todo[data-state="pending"] label { color: #7f8c8d; }
-.todo[data-state="overdue"] label { color: #c0392b; }
-.todo input:checked + label { color: #1d8348; }
-.todo[data-state="late"] input:checked + label { color: #e67e22; }
-.todo[data-state="overdue"] input:checked + label { color: #c0392b; }
-.legend span { display: inline-block; padding: 0.15rem 0.35rem; border-radius: 0.35rem; margin-right: 0.5rem; font-size: 0.85rem; }
-.legend .grey { background: #ecf0f1; color: #2c3e50; }
-.legend .green { background: #1d8348; color: #fff; }
-.legend .orange { background: #e67e22; color: #fff; }
-.legend .red { background: #c0392b; color: #fff; }
-.legend .blue { background: #2980b9; color: #fff; }
-</style>
+        const storageKey = "chore-sync-progress-v1";
+        const storage = (() => {
+          try {
+            const store = window.localStorage;
+            const testKey = "__progress-test__";
+            store.setItem(testKey, "ok");
+            store.removeItem(testKey);
+            return store;
+          } catch (err) {
+            return null;
+          }
+        })();
 
-## Overview
-ChoreSync is a greenfield coordination platform for households and teams. The current codebase provides a deliberately minimal FastAPI/Vite skeleton with service stubs, front-end controllers, and skipped tests so implementation work can follow a predictable plan.
+        let savedChecks = {};
+        if (storage) {
+          try {
+            const parsed = JSON.parse(storage.getItem(storageKey) || "{}");
+            if (parsed && typeof parsed === "object") {
+              savedChecks = parsed;
+            }
+          } catch (err) {
+            savedChecks = {};
+          }
+        }
 
-## Architecture Snapshot
-- FastAPI entrypoint with lifecycle hooks (ackend/chore_sync/app.py).
-- Service layer divided into auth, membership, task orchestration, calendar sync/auth/events, messaging, notifications, group management, proposals, and provider adapters.
-- Front-end TypeScript controllers for core UI panes (task board, calendar connections, messaging panel) plus SPA bootstrap.
-- Domain models recorded as TODO stubs to guide persistence design.
-- Pytest and Jest-style suites created for every planned method; each test currently skips until implementation lands.
+        const items = new Map();
+        const MS_PER_DAY = 24 * 60 * 60 * 1000;
+        const today = (() => {
+          const now = new Date();
+          return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        })();
+        const dateFormatter = new Intl.DateTimeFormat("en-US", {
+          month: "short",
+          day: "2-digit",
+          year: "numeric",
+        });
 
-## Testing Posture
-All generated unit tests and specs are present but intentionally skipped. Once implementations are available, remove the skip markers to activate coverage.
+        const statusLabels = {
+          complete: "Complete",
+          ahead: "Ahead of Schedule",
+          "on-track": "On Track",
+          "due-soon": "Due Soon",
+          overdue: "Behind Schedule",
+          pending: "Pending",
+        };
+        const statusClasses = {
+          complete: "status-pill status-pill--green",
+          ahead: "status-pill status-pill--blue",
+          "on-track": "status-pill status-pill--grey",
+          "due-soon": "status-pill status-pill--orange",
+          overdue: "status-pill status-pill--red",
+          pending: "status-pill status-pill--grey",
+        };
 
-## Delivery Goals
-- Start date: 2025-11-01
-- Target completion: 2026-01-31
+        function parseDate(value) {
+          if (!value) {
+            return null;
+          }
+          const parts = value.split("-");
+          if (parts.length !== 3) {
+            return null;
+          }
+          const year = Number(parts[0]);
+          const month = Number(parts[1]) - 1;
+          const day = Number(parts[2]);
+          if (
+            Number.isNaN(year) ||
+            Number.isNaN(month) ||
+            Number.isNaN(day)
+          ) {
+            return null;
+          }
+          return new Date(year, month, day, 23, 59, 59, 999);
+        }
 
-## Interactive Delivery Tracker
-<div class="legend">
-  <span class="blue">Project Status: Ahead of Date</span>
-  <span class="grey">Pending</span>
-  <span class="green">Completed On Time</span>
-  <span class="orange">Completed Late</span>
-  <span class="red">Overdue</span>
-</div>
-<p>Update the <code>data-state</code> attribute on each item to <code>pending</code>, <code>late</code>, or <code>overdue</code> as deadlines approach. Checking an item automatically flips it to the appropriate completion colour.</p>
+        function formatRange(start, due) {
+          const startDate = parseDate(start);
+          const dueDate = parseDate(due);
+          if (!startDate && !dueDate) {
+            return "Schedule: TBD";
+          }
+          if (!startDate) {
+            return `Due ${dateFormatter.format(dueDate)}`;
+          }
+          if (!dueDate) {
+            return `Start ${dateFormatter.format(startDate)}`;
+          }
+          return `${dateFormatter.format(startDate)} → ${dateFormatter.format(
+            dueDate
+          )}`;
+        }
 
-### Features & Milestones
-<div class="todo-list">
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-accounts"><label for="feature-accounts">Feature: Accounts & Profiles — Start: 2025-11-01 — Due: 2025-11-15</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-membership"><label for="feature-membership">Feature: Membership Management — Start: 2025-11-01 — Due: 2025-11-18</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-task-scheduling"><label for="feature-task-scheduling">Feature: Task Scheduling Engine — Start: 2025-11-05 — Due: 2025-11-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-task-lifecycle"><label for="feature-task-lifecycle">Feature: Task Lifecycle & Swaps — Start: 2025-11-08 — Due: 2025-12-02</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-calendar-sync"><label for="feature-calendar-sync">Feature: Calendar Synchronization — Start: 2025-11-10 — Due: 2025-12-10</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-calendar-oauth"><label for="feature-calendar-oauth">Feature: Calendar OAuth & Credential Handling — Start: 2025-11-12 — Due: 2025-12-15</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-calendar-views"><label for="feature-calendar-views">Feature: In-App Calendar & Occurrence Views — Start: 2025-11-15 — Due: 2025-12-18</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-messaging"><label for="feature-messaging">Feature: Messaging & Read Receipts — Start: 2025-11-18 — Due: 2025-12-22</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-notifications"><label for="feature-notifications">Feature: Notifications & Digests — Start: 2025-11-20 — Due: 2025-12-28</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-group-lifecycle"><label for="feature-group-lifecycle">Feature: Group Lifecycle & Fairness Analytics — Start: 2025-11-25 — Due: 2026-01-04</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-proposals"><label for="feature-proposals">Feature: Task Proposals & Voting — Start: 2025-11-28 — Due: 2026-01-08</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-providers"><label for="feature-providers">Feature: Provider Integrations (Google, Apple, Outlook) — Start: 2025-12-02 — Due: 2026-01-15</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-platform-lifecycle"><label for="feature-platform-lifecycle">Feature: Platform Lifecycle & Health — Start: 2025-12-05 — Due: 2026-01-20</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-frontend"><label for="feature-frontend">Feature: Frontend SPA Experience — Start: 2025-12-08 — Due: 2026-01-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-docker"><label for="feature-docker">Feature: Containerization (Docker) — Start: 2026-01-05 — Due: 2026-01-28</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="feature-launch"><label for="feature-launch">Feature: Launch Readiness & Hardening — Start: 2026-01-10 — Due: 2026-01-31</label></div>
-</div>
-### Methods & Unit Tests
-<div class="todo-list">
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-account-register"><label for="method-account-register">AccountService.register_user / test_auth_service::test_register_user_todo — Start: 2025-11-01 — Due: 2025-11-09</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-account-auth"><label for="method-account-auth">AccountService.authenticate_user / test_auth_service::test_authenticate_user_todo — Start: 2025-11-01 — Due: 2025-11-09</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-account-logout"><label for="method-account-logout">AccountService.logout_session / test_auth_service::test_logout_session_todo — Start: 2025-11-02 — Due: 2025-11-10</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-account-profile"><label for="method-account-profile">AccountService.get_profile / test_auth_service::test_get_profile_todo — Start: 2025-11-02 — Due: 2025-11-11</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-account-update"><label for="method-account-update">AccountService.update_profile / test_auth_service::test_update_profile_todo — Start: 2025-11-03 — Due: 2025-11-12</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-account-password"><label for="method-account-password">AccountService.change_password / test_auth_service::test_change_password_todo — Start: 2025-11-03 — Due: 2025-11-12</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-membership-join"><label for="method-membership-join">MembershipService.join_group / test_membership_service::test_join_group_todo — Start: 2025-11-04 — Due: 2025-11-14</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-membership-leave"><label for="method-membership-leave">MembershipService.leave_group / test_membership_service::test_leave_group_todo — Start: 2025-11-04 — Due: 2025-11-14</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-membership-list-user"><label for="method-membership-list-user">MembershipService.list_user_groups / test_membership_service::test_list_user_groups_todo — Start: 2025-11-05 — Due: 2025-11-15</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-membership-list-group"><label for="method-membership-list-group">MembershipService.list_group_members / test_membership_service::test_list_group_members_todo — Start: 2025-11-05 — Due: 2025-11-16</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-membership-update-role"><label for="method-membership-update-role">MembershipService.update_member_role / test_membership_service::test_update_member_role_todo — Start: 2025-11-06 — Due: 2025-11-17</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-task-schedule"><label for="method-task-schedule">TaskScheduler.schedule_task / test_task_service::test_schedule_task_todo — Start: 2025-11-05 — Due: 2025-11-18</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-task-reassign"><label for="method-task-reassign">TaskScheduler.reassign_overdue_tasks / test_task_service::test_reassign_overdue_tasks_todo — Start: 2025-11-05 — Due: 2025-11-20</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-task-recurring"><label for="method-task-recurring">TaskScheduler.generate_recurring_instances / test_task_service::test_generate_recurring_instances_todo — Start: 2025-11-06 — Due: 2025-11-20</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-task-scores"><label for="method-task-scores">TaskScheduler.compute_candidate_scores / test_task_service::test_compute_candidate_scores_todo — Start: 2025-11-06 — Due: 2025-11-21</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-task-select"><label for="method-task-select">TaskScheduler.select_assignee / test_task_service::test_select_assignee_todo — Start: 2025-11-07 — Due: 2025-11-22</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-task-history"><label for="method-task-history">TaskScheduler.record_assignment_history / test_task_service::test_record_assignment_history_todo — Start: 2025-11-07 — Due: 2025-11-23</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-task-notifications"><label for="method-task-notifications">TaskScheduler.project_assignment_notifications / test_task_service::test_project_assignment_notifications_todo — Start: 2025-11-08 — Due: 2025-11-24</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-task-assign-group"><label for="method-task-assign-group">TaskScheduler.assign_group_tasks / test_task_service::test_assign_group_tasks_todo — Start: 2025-11-08 — Due: 2025-11-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-lifecycle-list"><label for="method-lifecycle-list">TaskLifecycleService.list_user_tasks / test_task_lifecycle_service::test_list_user_tasks_todo — Start: 2025-11-08 — Due: 2025-11-26</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-lifecycle-assign"><label for="method-lifecycle-assign">TaskLifecycleService.assign_group_tasks / test_task_lifecycle_service::test_assign_group_tasks_todo — Start: 2025-11-08 — Due: 2025-11-26</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-lifecycle-complete"><label for="method-lifecycle-complete">TaskLifecycleService.toggle_task_completed / test_task_lifecycle_service::test_toggle_task_completed_todo — Start: 2025-11-09 — Due: 2025-11-27</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-lifecycle-occurrence"><label for="method-lifecycle-occurrence">TaskLifecycleService.toggle_occurrence_completed / test_task_lifecycle_service::test_toggle_occurrence_completed_todo — Start: 2025-11-09 — Due: 2025-11-27</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-lifecycle-swap"><label for="method-lifecycle-swap">TaskLifecycleService.create_swap_request / test_task_lifecycle_service::test_create_swap_request_todo — Start: 2025-11-10 — Due: 2025-11-28</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-lifecycle-respond"><label for="method-lifecycle-respond">TaskLifecycleService.respond_to_swap_request / test_task_lifecycle_service::test_respond_to_swap_request_todo — Start: 2025-11-10 — Due: 2025-11-28</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-lifecycle-incoming"><label for="method-lifecycle-incoming">TaskLifecycleService.list_incoming_swaps / test_task_lifecycle_service::test_list_incoming_swaps_todo — Start: 2025-11-11 — Due: 2025-11-29</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-calendar-sync-google"><label for="method-calendar-sync-google">CalendarSyncService.sync_google_calendar / test_calendar_service::test_sync_google_calendar_todo — Start: 2025-11-10 — Due: 2025-12-01</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-calendar-push-google"><label for="method-calendar-push-google">CalendarSyncService.push_events_to_google / test_calendar_service::test_push_events_to_google_todo — Start: 2025-11-10 — Due: 2025-12-01</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-calendar-pull-google"><label for="method-calendar-pull-google">CalendarSyncService.pull_events_from_google / test_calendar_service::test_pull_events_from_google_todo — Start: 2025-11-11 — Due: 2025-12-02</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-calendar-sync-apple"><label for="method-calendar-sync-apple">CalendarSyncService.sync_apple_calendar / test_calendar_service::test_sync_apple_calendar_todo — Start: 2025-11-11 — Due: 2025-12-03</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-calendar-push-apple"><label for="method-calendar-push-apple">CalendarSyncService.push_events_to_apple / test_calendar_service::test_push_events_to_apple_todo — Start: 2025-11-12 — Due: 2025-12-04</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-calendar-pull-apple"><label for="method-calendar-pull-apple">CalendarSyncService.pull_events_from_apple / test_calendar_service::test_pull_events_from_apple_todo — Start: 2025-11-12 — Due: 2025-12-04</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-calendar-sync-outlook"><label for="method-calendar-sync-outlook">CalendarSyncService.sync_outlook_calendar / test_calendar_service::test_sync_outlook_calendar_todo — Start: 2025-11-13 — Due: 2025-12-05</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-calendar-push-outlook"><label for="method-calendar-push-outlook">CalendarSyncService.push_events_to_outlook / test_calendar_service::test_push_events_to_outlook_todo — Start: 2025-11-13 — Due: 2025-12-06</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-calendar-pull-outlook"><label for="method-calendar-pull-outlook">CalendarSyncService.pull_events_from_outlook / test_calendar_service::test_pull_events_from_outlook_todo — Start: 2025-11-14 — Due: 2025-12-06</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-oauth-start"><label for="method-oauth-start">CalendarAuthService.begin_google_oauth / test_calendar_auth_service::test_begin_google_oauth_todo — Start: 2025-11-12 — Due: 2025-12-08</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-oauth-complete"><label for="method-oauth-complete">CalendarAuthService.complete_google_oauth / test_calendar_auth_service::test_complete_google_oauth_todo — Start: 2025-11-12 — Due: 2025-12-08</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-oauth-list"><label for="method-oauth-list">CalendarAuthService.list_google_calendars / test_calendar_auth_service::test_list_google_calendars_todo — Start: 2025-11-13 — Due: 2025-12-09</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-oauth-sync-from"><label for="method-oauth-sync-from">CalendarAuthService.sync_from_google / test_calendar_auth_service::test_sync_from_google_todo — Start: 2025-11-13 — Due: 2025-12-09</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-oauth-sync-to"><label for="method-oauth-sync-to">CalendarAuthService.sync_to_google / test_calendar_auth_service::test_sync_to_google_todo — Start: 2025-11-14 — Due: 2025-12-10</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-oauth-store"><label for="method-oauth-store">CalendarAuthService.store_credentials / test_calendar_auth_service::test_store_credentials_todo — Start: 2025-11-14 — Due: 2025-12-10</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-oauth-revoke"><label for="method-oauth-revoke">CalendarAuthService.revoke_credentials / test_calendar_auth_service::test_revoke_credentials_todo — Start: 2025-11-15 — Due: 2025-12-11</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-oauth-parse"><label for="method-oauth-parse">CalendarAuthService.parse_provider_credentials / test_calendar_auth_service::test_parse_provider_credentials_todo — Start: 2025-11-15 — Due: 2025-12-11</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-event-create"><label for="method-event-create">CalendarEventService.create_in_app_event / test_calendar_event_service::test_create_in_app_event_todo — Start: 2025-11-15 — Due: 2025-12-12</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-event-list"><label for="method-event-list">CalendarEventService.list_in_app_events / test_calendar_event_service::test_list_in_app_events_todo — Start: 2025-11-15 — Due: 2025-12-12</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-event-update"><label for="method-event-update">CalendarEventService.update_in_app_event / test_calendar_event_service::test_update_in_app_event_todo — Start: 2025-11-16 — Due: 2025-12-13</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-event-delete"><label for="method-event-delete">CalendarEventService.delete_in_app_event / test_calendar_event_service::test_delete_in_app_event_todo — Start: 2025-11-16 — Due: 2025-12-13</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-event-occurrences"><label for="method-event-occurrences">CalendarEventService.list_group_occurrences / test_calendar_event_service::test_list_group_occurrences_todo — Start: 2025-11-17 — Due: 2025-12-14</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-event-calendar"><label for="method-event-calendar">CalendarEventService.get_group_calendar / test_calendar_event_service::test_get_group_calendar_todo — Start: 2025-11-17 — Due: 2025-12-14</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-event-delete-recurring"><label for="method-event-delete-recurring">CalendarEventService.delete_recurring_task / test_calendar_event_service::test_delete_recurring_task_todo — Start: 2025-11-18 — Due: 2025-12-15</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-event-consolidate"><label for="method-event-consolidate">CalendarEventService.consolidate_to_in_app_calendar / test_calendar_event_service::test_consolidate_to_in_app_calendar_todo — Start: 2025-11-18 — Due: 2025-12-15</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-messaging-send"><label for="method-messaging-send">MessagingService.send_message / test_messaging_service::test_send_message_todo — Start: 2025-11-18 — Due: 2025-12-18</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-messaging-read"><label for="method-messaging-read">MessagingService.mark_message_read / test_messaging_service::test_mark_message_read_todo — Start: 2025-11-18 — Due: 2025-12-18</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-messaging-fetch"><label for="method-messaging-fetch">MessagingService.fetch_conversation / test_messaging_service::test_fetch_conversation_todo — Start: 2025-11-19 — Due: 2025-12-19</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-messaging-broadcast"><label for="method-messaging-broadcast">MessagingService.broadcast_live_message / test_messaging_service::test_broadcast_live_message_todo — Start: 2025-11-19 — Due: 2025-12-19</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-messaging-unread"><label for="method-messaging-unread">MessagingService.list_unread_messages / test_messaging_service::test_list_unread_messages_todo — Start: 2025-11-20 — Due: 2025-12-20</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notify-emit"><label for="method-notify-emit">NotificationService.emit_notification / test_notification_service::test_emit_notification_todo — Start: 2025-11-20 — Due: 2025-12-24</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notify-read"><label for="method-notify-read">NotificationService.mark_notification_read / test_notification_service::test_mark_notification_read_todo — Start: 2025-11-20 — Due: 2025-12-24</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notify-realtime"><label for="method-notify-realtime">NotificationService.fan_out_realtime / test_notification_service::test_fan_out_realtime_todo — Start: 2025-11-21 — Due: 2025-12-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notify-digest"><label for="method-notify-digest">NotificationService.schedule_digest / test_notification_service::test_schedule_digest_todo — Start: 2025-11-21 — Due: 2025-12-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notify-preferences"><label for="method-notify-preferences">NotificationService.sync_notification_preferences / test_notification_service::test_sync_notification_preferences_todo — Start: 2025-11-22 — Due: 2025-12-26</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notify-active"><label for="method-notify-active">NotificationService.list_active_notifications / test_notification_service::test_list_active_notifications_todo — Start: 2025-11-22 — Due: 2025-12-26</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notify-all"><label for="method-notify-all">NotificationService.list_all_notifications / test_notification_service::test_list_all_notifications_todo — Start: 2025-11-23 — Due: 2025-12-27</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notify-dismiss"><label for="method-notify-dismiss">NotificationService.dismiss_notification / test_notification_service::test_dismiss_notification_todo — Start: 2025-11-23 — Due: 2025-12-27</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notify-delete"><label for="method-notify-delete">NotificationService.delete_notification / test_notification_service::test_delete_notification_todo — Start: 2025-11-24 — Due: 2025-12-28</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notify-url"><label for="method-notify-url">NotificationService.build_notification_url / test_notification_service::test_build_notification_url_todo — Start: 2025-11-24 — Due: 2025-12-28</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-group-create"><label for="method-group-create">GroupOrchestrator.create_group / test_group_service::test_create_group_todo — Start: 2025-11-25 — Due: 2026-01-01</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-group-invite"><label for="method-group-invite">GroupOrchestrator.invite_member / test_group_service::test_invite_member_todo — Start: 2025-11-25 — Due: 2026-01-01</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-group-matrix"><label for="method-group-matrix">GroupOrchestrator.compute_assignment_matrix / test_group_service::test_compute_assignment_matrix_todo — Start: 2025-11-26 — Due: 2026-01-02</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-group-invite-code"><label for="method-group-invite-code">GroupOrchestrator.generate_invite_code / test_group_service::test_generate_invite_code_todo — Start: 2025-11-26 — Due: 2026-01-02</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-proposal-submit"><label for="method-proposal-submit">ProposalService.submit_proposal / test_proposal_service::test_submit_proposal_todo — Start: 2025-11-28 — Due: 2026-01-05</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-proposal-vote"><label for="method-proposal-vote">ProposalService.record_vote / test_proposal_service::test_record_vote_todo — Start: 2025-11-28 — Due: 2026-01-05</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-proposal-evaluate"><label for="method-proposal-evaluate">ProposalService.evaluate_proposal / test_proposal_service::test_evaluate_proposal_todo — Start: 2025-11-29 — Due: 2026-01-06</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-proposal-expire"><label for="method-proposal-expire">ProposalService.expire_stale_proposals / test_proposal_service::test_expire_stale_proposals_todo — Start: 2025-11-29 — Due: 2026-01-06</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-proposal-preferences"><label for="method-proposal-preferences">ProposalService.sync_proposal_preferences / test_proposal_service::test_sync_proposal_preferences_todo — Start: 2025-11-30 — Due: 2026-01-07</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-proposal-list"><label for="method-proposal-list">ProposalService.list_group_proposals / test_proposal_service::test_list_group_proposals_todo — Start: 2025-11-30 — Due: 2026-01-07</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-proposal-approve"><label for="method-proposal-approve">ProposalService.approve_proposal / test_proposal_service::test_approve_proposal_todo — Start: 2025-12-01 — Due: 2026-01-08</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-provider-google-list"><label for="method-provider-google-list">GoogleCalendarProvider.list_calendars / test_sync_providers::test_google_list_calendars_todo — Start: 2025-12-02 — Due: 2026-01-10</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-provider-google-pull"><label for="method-provider-google-pull">GoogleCalendarProvider.pull_events / test_sync_providers::test_google_pull_events_todo — Start: 2025-12-02 — Due: 2026-01-10</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-provider-google-push"><label for="method-provider-google-push">GoogleCalendarProvider.push_events / test_sync_providers::test_google_push_events_todo — Start: 2025-12-03 — Due: 2026-01-11</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-provider-google-revoke"><label for="method-provider-google-revoke">GoogleCalendarProvider.revoke_credentials / test_sync_providers::test_google_revoke_credentials_todo — Start: 2025-12-03 — Due: 2026-01-11</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-provider-apple-principal"><label for="method-provider-apple-principal">AppleCalendarProvider.discover_principal / test_sync_providers::test_apple_discover_principal_todo — Start: 2025-12-04 — Due: 2026-01-12</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-provider-apple-pull"><label for="method-provider-apple-pull">AppleCalendarProvider.pull_events / test_sync_providers::test_apple_pull_events_todo — Start: 2025-12-04 — Due: 2026-01-12</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-provider-apple-push"><label for="method-provider-apple-push">AppleCalendarProvider.push_events / test_sync_providers::test_apple_push_events_todo — Start: 2025-12-05 — Due: 2026-01-13</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-provider-apple-renew"><label for="method-provider-apple-renew">AppleCalendarProvider.renew_session / test_sync_providers::test_apple_renew_session_todo — Start: 2025-12-05 — Due: 2026-01-13</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-provider-outlook-list"><label for="method-provider-outlook-list">OutlookCalendarProvider.list_calendars / test_sync_providers::test_outlook_list_calendars_todo — Start: 2025-12-06 — Due: 2026-01-14</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-provider-outlook-pull"><label for="method-provider-outlook-pull">OutlookCalendarProvider.pull_events / test_sync_providers::test_outlook_pull_events_todo — Start: 2025-12-06 — Due: 2026-01-14</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-provider-outlook-push"><label for="method-provider-outlook-push">OutlookCalendarProvider.push_events / test_sync_providers::test_outlook_push_events_todo — Start: 2025-12-07 — Due: 2026-01-15</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-provider-outlook-renew"><label for="method-provider-outlook-renew">OutlookCalendarProvider.renew_subscription / test_sync_providers::test_outlook_renew_subscription_todo — Start: 2025-12-07 — Due: 2026-01-15</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-api-task-create"><label for="method-api-task-create">Task API create_task_endpoint / test_task_router::test_create_task_endpoint_todo — Start: 2025-12-08 — Due: 2026-01-16</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-api-task-reassign"><label for="method-api-task-reassign">Task API reassign_overdue_tasks_endpoint / test_task_router::test_reassign_overdue_tasks_endpoint_todo — Start: 2025-12-08 — Due: 2026-01-16</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-api-task-recurring"><label for="method-api-task-recurring">Task API generate_recurring_tasks_endpoint / test_task_router::test_generate_recurring_tasks_endpoint_todo — Start: 2025-12-09 — Due: 2026-01-17</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-api-cal-google"><label for="method-api-cal-google">Calendar API sync_google_calendar_endpoint / test_calendar_router::test_sync_google_calendar_endpoint_todo — Start: 2025-12-09 — Due: 2026-01-17</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-api-cal-apple"><label for="method-api-cal-apple">Calendar API sync_apple_calendar_endpoint / test_calendar_router::test_sync_apple_calendar_endpoint_todo — Start: 2025-12-10 — Due: 2026-01-18</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-api-cal-outlook"><label for="method-api-cal-outlook">Calendar API sync_outlook_calendar_endpoint / test_calendar_router::test_sync_outlook_calendar_endpoint_todo — Start: 2025-12-10 — Due: 2026-01-18</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-api-group-create"><label for="method-api-group-create">Group API create_group_endpoint / test_group_router::test_create_group_endpoint_todo — Start: 2025-12-11 — Due: 2026-01-19</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-api-group-invite"><label for="method-api-group-invite">Group API invite_group_member_endpoint / test_group_router::test_invite_group_member_endpoint_todo — Start: 2025-12-11 — Due: 2026-01-19</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-api-group-matrix"><label for="method-api-group-matrix">Group API get_assignment_matrix_endpoint / test_group_router::test_get_assignment_matrix_endpoint_todo — Start: 2025-12-12 — Due: 2026-01-20</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-app-startup"><label for="method-app-startup">App bootstrap_runtime_dependencies / test_app::test_bootstrap_runtime_dependencies_todo — Start: 2025-12-12 — Due: 2026-01-20</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-app-shutdown"><label for="method-app-shutdown">App teardown_runtime_dependencies / test_app::test_teardown_runtime_dependencies_todo — Start: 2025-12-13 — Due: 2026-01-21</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-app-health"><label for="method-app-health">App health_check / test_app::test_health_check_todo — Start: 2025-12-13 — Due: 2026-01-21</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-ui-task-load"><label for="method-ui-task-load">TaskBoardController.loadTasks / taskBoard.spec.ts — Start: 2025-12-14 — Due: 2026-01-22</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-ui-task-select"><label for="method-ui-task-select">TaskBoardController.selectTask / taskBoard.spec.ts — Start: 2025-12-14 — Due: 2026-01-22</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-ui-task-reassign"><label for="method-ui-task-reassign">TaskBoardController.triggerReassignment / taskBoard.spec.ts — Start: 2025-12-15 — Due: 2026-01-23</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-ui-cal-google"><label for="method-ui-cal-google">CalendarSyncPanelController.connectGoogleCalendar / calendarSyncPanel.spec.ts — Start: 2025-12-15 — Due: 2026-01-23</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-ui-cal-apple"><label for="method-ui-cal-apple">CalendarSyncPanelController.connectAppleCalendar / calendarSyncPanel.spec.ts — Start: 2025-12-16 — Due: 2026-01-24</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-ui-cal-outlook"><label for="method-ui-cal-outlook">CalendarSyncPanelController.connectOutlookCalendar / calendarSyncPanel.spec.ts — Start: 2025-12-16 — Due: 2026-01-24</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-ui-msg-compose"><label for="method-ui-msg-compose">MessagePanelController.composeMessage / messagePanel.spec.ts — Start: 2025-12-17 — Due: 2026-01-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-ui-msg-read"><label for="method-ui-msg-read">MessagePanelController.markAsRead / messagePanel.spec.ts — Start: 2025-12-17 — Due: 2026-01-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-ui-msg-load"><label for="method-ui-msg-load">MessagePanelController.loadConversation / messagePanel.spec.ts — Start: 2025-12-18 — Due: 2026-01-26</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-ui-msg-subscribe"><label for="method-ui-msg-subscribe">MessagePanelController.subscribeToLiveUpdates / messagePanel.spec.ts — Start: 2025-12-18 — Due: 2026-01-26</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-ui-bootstrap"><label for="method-ui-bootstrap">bootstrapApplication / bootstrap.spec.ts — Start: 2025-12-19 — Due: 2026-01-27</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-navbar-logout"><label for="method-navbar-logout">NavBarController.logoutAndRedirect / frontend/tests/navBarController.spec.ts — Start: 2025-11-01 — Due: 2025-11-09</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifbell-toggle"><label for="method-notifbell-toggle">NotificationBellController.toggleDropdown / frontend/tests/notificationBellController.spec.ts — Start: 2025-11-20 — Due: 2025-12-24</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifbell-user"><label for="method-notifbell-user">NotificationBellController.fetchUserId / frontend/tests/notificationBellController.spec.ts — Start: 2025-11-20 — Due: 2025-12-24</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifbell-fetch"><label for="method-notifbell-fetch">NotificationBellController.fetchExistingNotifications / frontend/tests/notificationBellController.spec.ts — Start: 2025-11-20 — Due: 2025-12-24</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifbell-click"><label for="method-notifbell-click">NotificationBellController.handleClick / frontend/tests/notificationBellController.spec.ts — Start: 2025-11-20 — Due: 2025-12-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifbell-read"><label for="method-notifbell-read">NotificationBellController.markAsRead / frontend/tests/notificationBellController.spec.ts — Start: 2025-11-20 — Due: 2025-12-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifbell-dismiss"><label for="method-notifbell-dismiss">NotificationBellController.dismiss / frontend/tests/notificationBellController.spec.ts — Start: 2025-11-20 — Due: 2025-12-26</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifbell-time"><label for="method-notifbell-time">NotificationBellController.timeAgo / frontend/tests/notificationBellController.spec.ts — Start: 2025-11-20 — Due: 2025-12-26</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifbell-outside"><label for="method-notifbell-outside">NotificationBellController.handleOutsideClick / frontend/tests/notificationBellController.spec.ts — Start: 2025-11-20 — Due: 2025-12-26</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-dashboard-fetch-calendars"><label for="method-dashboard-fetch-calendars">DashboardController.fetchCalendars / frontend/tests/dashboardController.spec.ts — Start: 2025-11-05 — Due: 2025-11-18</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-dashboard-update-calendar"><label for="method-dashboard-update-calendar">DashboardController.updateCalendar / frontend/tests/dashboardController.spec.ts — Start: 2025-11-05 — Due: 2025-11-19</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-dashboard-delete-calendar"><label for="method-dashboard-delete-calendar">DashboardController.deleteCalendar / frontend/tests/dashboardController.spec.ts — Start: 2025-11-05 — Due: 2025-11-20</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-dashboard-update-profile"><label for="method-dashboard-update-profile">DashboardController.updateProfile / frontend/tests/dashboardController.spec.ts — Start: 2025-11-06 — Due: 2025-11-21</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-dashboard-reset-password"><label for="method-dashboard-reset-password">DashboardController.resetPassword / frontend/tests/dashboardController.spec.ts — Start: 2025-11-06 — Due: 2025-11-22</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-dashboard-logout"><label for="method-dashboard-logout">DashboardController.logout / frontend/tests/dashboardController.spec.ts — Start: 2025-11-07 — Due: 2025-11-23</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-dashboard-sync"><label for="method-dashboard-sync">DashboardController.syncCalendar / frontend/tests/dashboardController.spec.ts — Start: 2025-11-07 — Due: 2025-11-24</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-groups-fetch"><label for="method-groups-fetch">GroupDirectoryController.fetchGroups / frontend/tests/groupDirectoryController.spec.ts — Start: 2025-11-01 — Due: 2025-11-15</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-groups-create"><label for="method-groups-create">GroupDirectoryController.createGroup / frontend/tests/groupDirectoryController.spec.ts — Start: 2025-11-01 — Due: 2025-11-16</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-groups-join"><label for="method-groups-join">GroupDirectoryController.joinGroup / frontend/tests/groupDirectoryController.spec.ts — Start: 2025-11-02 — Due: 2025-11-17</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-groups-leave"><label for="method-groups-leave">GroupDirectoryController.leaveGroup / frontend/tests/groupDirectoryController.spec.ts — Start: 2025-11-02 — Due: 2025-11-18</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-groupdetail-user"><label for="method-groupdetail-user">GroupDetailController.fetchCurrentUser / frontend/tests/groupDetailController.spec.ts — Start: 2025-11-25 — Due: 2026-01-01</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-groupdetail-role"><label for="method-groupdetail-role">GroupDetailController.fetchGroupRole / frontend/tests/groupDetailController.spec.ts — Start: 2025-11-25 — Due: 2026-01-01</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-groupdetail-calendar"><label for="method-groupdetail-calendar">GroupDetailController.fetchCalendar / frontend/tests/groupDetailController.spec.ts — Start: 2025-11-26 — Due: 2026-01-02</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-groupdetail-assign"><label for="method-groupdetail-assign">GroupDetailController.assignTasks / frontend/tests/groupDetailController.spec.ts — Start: 2025-11-26 — Due: 2026-01-02</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-proposals-groupname"><label for="method-proposals-groupname">GroupProposalsController.fetchGroupName / frontend/tests/groupProposalsController.spec.ts — Start: 2025-11-28 — Due: 2026-01-05</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-proposals-fetch"><label for="method-proposals-fetch">GroupProposalsController.fetchProposals / frontend/tests/groupProposalsController.spec.ts — Start: 2025-11-28 — Due: 2026-01-05</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-proposals-submit"><label for="method-proposals-submit">GroupProposalsController.propose / frontend/tests/groupProposalsController.spec.ts — Start: 2025-11-29 — Due: 2026-01-06</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-proposals-vote"><label for="method-proposals-vote">GroupProposalsController.vote / frontend/tests/groupProposalsController.spec.ts — Start: 2025-11-29 — Due: 2026-01-06</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-proposals-format"><label for="method-proposals-format">GroupProposalsController.formatDate / frontend/tests/groupProposalsController.spec.ts — Start: 2025-11-30 — Due: 2026-01-07</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-chat-connect"><label for="method-chat-connect">GroupChatController.connectWebSocket / frontend/tests/groupChatController.spec.ts — Start: 2025-11-18 — Due: 2025-12-22</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-chat-send"><label for="method-chat-send">GroupChatController.sendMessage / frontend/tests/groupChatController.spec.ts — Start: 2025-11-18 — Due: 2025-12-22</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-chat-read"><label for="method-chat-read">GroupChatController.sendReadReceipt / frontend/tests/groupChatController.spec.ts — Start: 2025-11-19 — Due: 2025-12-22</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-chat-mark"><label for="method-chat-mark">GroupChatController.markAllAsRead / frontend/tests/groupChatController.spec.ts — Start: 2025-11-19 — Due: 2025-12-22</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-chat-scroll"><label for="method-chat-scroll">GroupChatController.scrollToBottom / frontend/tests/groupChatController.spec.ts — Start: 2025-11-20 — Due: 2025-12-22</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-chat-format"><label for="method-chat-format">GroupChatController.formatDate / frontend/tests/groupChatController.spec.ts — Start: 2025-11-20 — Due: 2025-12-22</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-moderator-groupname"><label for="method-moderator-groupname">ModeratorPanelController.fetchGroupName / frontend/tests/moderatorPanelController.spec.ts — Start: 2025-11-25 — Due: 2026-01-03</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-moderator-members"><label for="method-moderator-members">ModeratorPanelController.fetchMembers / frontend/tests/moderatorPanelController.spec.ts — Start: 2025-11-25 — Due: 2026-01-03</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-moderator-recurring"><label for="method-moderator-recurring">ModeratorPanelController.fetchRecurringTasks / frontend/tests/moderatorPanelController.spec.ts — Start: 2025-11-26 — Due: 2026-01-04</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-moderator-delete"><label for="method-moderator-delete">ModeratorPanelController.onConfirmDelete / frontend/tests/moderatorPanelController.spec.ts — Start: 2025-11-26 — Due: 2026-01-04</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-moderator-update-role"><label for="method-moderator-update-role">ModeratorPanelController.onUpdateRole / frontend/tests/moderatorPanelController.spec.ts — Start: 2025-11-27 — Due: 2026-01-04</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-mytasks-key"><label for="method-mytasks-key">MyTasksController.itemKey / frontend/tests/myTasksController.spec.ts — Start: 2025-11-08 — Due: 2025-11-24</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-mytasks-groupname"><label for="method-mytasks-groupname">MyTasksController.fetchGroupName / frontend/tests/myTasksController.spec.ts — Start: 2025-11-08 — Due: 2025-11-24</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-mytasks-oneoff"><label for="method-mytasks-oneoff">MyTasksController.fetchOneOff / frontend/tests/myTasksController.spec.ts — Start: 2025-11-09 — Due: 2025-11-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-mytasks-occurrences"><label for="method-mytasks-occurrences">MyTasksController.fetchOccurrences / frontend/tests/myTasksController.spec.ts — Start: 2025-11-09 — Due: 2025-11-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-mytasks-toggle"><label for="method-mytasks-toggle">MyTasksController.toggleComplete / frontend/tests/myTasksController.spec.ts — Start: 2025-11-10 — Due: 2025-11-26</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-mytasks-swaps"><label for="method-mytasks-swaps">MyTasksController.fetchIncomingSwaps / frontend/tests/myTasksController.spec.ts — Start: 2025-11-10 — Due: 2025-11-26</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-mytasks-respond"><label for="method-mytasks-respond">MyTasksController.respondToSwap / frontend/tests/myTasksController.spec.ts — Start: 2025-11-11 — Due: 2025-11-27</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-mytasks-remaining"><label for="method-mytasks-remaining">MyTasksController.timeRemaining / frontend/tests/myTasksController.spec.ts — Start: 2025-11-11 — Due: 2025-11-27</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifications-fetch"><label for="method-notifications-fetch">NotificationsController.fetchNotifications / frontend/tests/notificationsController.spec.ts — Start: 2025-11-20 — Due: 2025-12-24</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifications-click"><label for="method-notifications-click">NotificationsController.handleClick / frontend/tests/notificationsController.spec.ts — Start: 2025-11-20 — Due: 2025-12-24</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifications-read"><label for="method-notifications-read">NotificationsController.markAsRead / frontend/tests/notificationsController.spec.ts — Start: 2025-11-21 — Due: 2025-12-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifications-markall"><label for="method-notifications-markall">NotificationsController.markAllAsRead / frontend/tests/notificationsController.spec.ts — Start: 2025-11-21 — Due: 2025-12-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifications-delete"><label for="method-notifications-delete">NotificationsController.deleteNotification / frontend/tests/notificationsController.spec.ts — Start: 2025-11-22 — Due: 2025-12-26</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifications-time"><label for="method-notifications-time">NotificationsController.timeAgo / frontend/tests/notificationsController.spec.ts — Start: 2025-11-22 — Due: 2025-12-26</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-home-load"><label for="method-home-load">HomeCalendarController.loadEvents / frontend/tests/homeCalendarController.spec.ts — Start: 2025-11-10 — Due: 2025-12-01</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-home-create"><label for="method-home-create">HomeCalendarController.createEvent / frontend/tests/homeCalendarController.spec.ts — Start: 2025-11-10 — Due: 2025-12-02</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-home-update"><label for="method-home-update">HomeCalendarController.updateEvent / frontend/tests/homeCalendarController.spec.ts — Start: 2025-11-11 — Due: 2025-12-03</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-home-delete"><label for="method-home-delete">HomeCalendarController.deleteEvent / frontend/tests/homeCalendarController.spec.ts — Start: 2025-11-11 — Due: 2025-12-03</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-home-fetch-calendars"><label for="method-home-fetch-calendars">HomeCalendarController.fetchCalendars / frontend/tests/homeCalendarController.spec.ts — Start: 2025-11-12 — Due: 2025-12-04</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-home-sync-from"><label for="method-home-sync-from">HomeCalendarController.syncFromGoogle / frontend/tests/homeCalendarController.spec.ts — Start: 2025-11-12 — Due: 2025-12-04</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-home-sync-to"><label for="method-home-sync-to">HomeCalendarController.syncToGoogle / frontend/tests/homeCalendarController.spec.ts — Start: 2025-11-13 — Due: 2025-12-05</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-home-logout"><label for="method-home-logout">HomeCalendarController.logout / frontend/tests/homeCalendarController.spec.ts — Start: 2025-11-13 — Due: 2025-12-05</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-authforms-login"><label for="method-authforms-login">AuthFormsController.handleLogin / frontend/tests/authFormsController.spec.ts — Start: 2025-11-01 — Due: 2025-11-09</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-authforms-signup"><label for="method-authforms-signup">AuthFormsController.handleSignup / frontend/tests/authFormsController.spec.ts — Start: 2025-11-01 — Due: 2025-11-09</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-authgateway-login"><label for="method-authgateway-login">AuthGateway.login / frontend/tests/authGateway.spec.ts — Start: 2025-11-01 — Due: 2025-11-09</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-authgateway-logout"><label for="method-authgateway-logout">AuthGateway.logout / frontend/tests/authGateway.spec.ts — Start: 2025-11-01 — Due: 2025-11-10</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-authgateway-getuser"><label for="method-authgateway-getuser">AuthGateway.getUser / frontend/tests/authGateway.spec.ts — Start: 2025-11-02 — Due: 2025-11-11</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifsocket-connect"><label for="method-notifsocket-connect">NotificationSocketService.connectNotificationSocket / frontend/tests/notificationSocketService.spec.ts — Start: 2025-11-20 — Due: 2025-12-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-notifsocket-disconnect"><label for="method-notifsocket-disconnect">NotificationSocketService.disconnectNotificationSocket / frontend/tests/notificationSocketService.spec.ts — Start: 2025-11-20 — Due: 2025-12-25</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-useauth-hook"><label for="method-useauth-hook">useAuth / frontend/tests/useAuth.spec.ts — Start: 2025-11-01 — Due: 2025-11-10</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-useauth-check"><label for="method-useauth-check">checkAuth / frontend/tests/useAuth.spec.ts — Start: 2025-11-01 — Due: 2025-11-10</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="method-useauth-logout"><label for="method-useauth-logout">logout (composable) / frontend/tests/useAuth.spec.ts — Start: 2025-11-02 — Due: 2025-11-11</label></div>
-</div>
-### Domain Models
-<div class="todo-list">
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-user"><label for="model-user">User model definition — Start: 2025-11-01 — Due: 2025-11-10</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-group"><label for="model-group">Group model definition — Start: 2025-11-01 — Due: 2025-11-10</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-task"><label for="model-task">Task model definition — Start: 2025-11-02 — Due: 2025-11-11</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-calendar"><label for="model-calendar">Calendar model definition — Start: 2025-11-02 — Due: 2025-11-11</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-event"><label for="model-event">Event model definition — Start: 2025-11-03 — Due: 2025-11-12</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-occurrence"><label for="model-occurrence">RecurringTaskOccurrence model definition — Start: 2025-11-03 — Due: 2025-11-12</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-message"><label for="model-message">Message model definition — Start: 2025-11-04 — Due: 2025-11-13</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-receipt"><label for="model-receipt">MessageReceipt model definition — Start: 2025-11-04 — Due: 2025-11-13</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-swap"><label for="model-swap">TaskSwap model definition — Start: 2025-11-05 — Due: 2025-11-14</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-notification"><label for="model-notification">Notification model definition — Start: 2025-11-05 — Due: 2025-11-14</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-proposal"><label for="model-proposal">TaskProposal model definition — Start: 2025-11-06 — Due: 2025-11-15</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-preference"><label for="model-preference">TaskPreference model definition — Start: 2025-11-06 — Due: 2025-11-15</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-vote"><label for="model-vote">TaskVote model definition — Start: 2025-11-07 — Due: 2025-11-16</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-credential"><label for="model-credential">ExternalCredential model definition — Start: 2025-11-07 — Due: 2025-11-16</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-group-calendar"><label for="model-group-calendar">GroupCalendar model definition — Start: 2025-11-08 — Due: 2025-11-17</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="model-synced-event"><label for="model-synced-event">SyncedEvent model definition — Start: 2025-11-08 — Due: 2025-11-17</label></div>
-</div>
+        function formatSingle(start, due) {
+          const startDate = parseDate(start);
+          const dueDate = parseDate(due);
+          if (startDate && dueDate) {
+            return `Start ${dateFormatter.format(
+              startDate
+            )} • Due ${dateFormatter.format(dueDate)}`;
+          }
+          if (dueDate) {
+            return `Due ${dateFormatter.format(dueDate)}`;
+          }
+          if (startDate) {
+            return `Start ${dateFormatter.format(startDate)}`;
+          }
+          return "Schedule: TBD";
+        }
 
-### DevOps & Platform Tasks
-<div class="todo-list">
-  <div class="todo" data-state="pending"><input type="checkbox" id="devops-dockerize"><label for="devops-dockerize">Dockerize ChoreSync services — Start: 2026-01-05 — Due: 2026-01-28</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="devops-compose"><label for="devops-compose">Compose local stack (database, cache, queue) — Start: 2026-01-06 — Due: 2026-01-28</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="devops-ci"><label for="devops-ci">CI pipeline with lint/test stages — Start: 2026-01-07 — Due: 2026-01-30</label></div>
-  <div class="todo" data-state="pending"><input type="checkbox" id="devops-runbook"><label for="devops-runbook">Release checklist & launch runbook — Start: 2026-01-10 — Due: 2026-01-31</label></div>
-</div>
+        function createStatusPill() {
+          const pill = document.createElement("span");
+          pill.className = statusClasses.pending;
+          pill.textContent = statusLabels.pending;
+          return pill;
+        }
 
-## Notes
-- Use the checkboxes to instantly flip items from grey to green (on-time completion). For late completions, set <code>data-state="late"</code> so the checked colour becomes orange. For overdue tasks that are still unchecked, set <code>data-state="overdue"</code> to render them red.
-- All TODO-marked methods, tests, and models remain placeholders until implementation begins.
+        function createFeature(featureData) {
+          const featureCard = document.createElement("section");
+          featureCard.className = "feature-card";
+          featureCard.dataset.id = featureData.id;
+
+          const header = document.createElement("header");
+          header.className = "feature-card__header";
+          header.classList.add("feature-card__header--collapsible");
+
+          const info = document.createElement("div");
+          info.className = "feature-card__info";
+
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.id = featureData.id;
+          checkbox.className = "feature-card__checkbox";
+
+          const label = document.createElement("label");
+          label.className = "feature-card__label";
+          label.htmlFor = featureData.id;
+
+          const title = document.createElement("span");
+          title.className = "feature-card__title";
+          title.textContent = featureData.title;
+
+          const dates = document.createElement("span");
+          dates.className = "feature-card__dates";
+          dates.textContent = formatRange(featureData.start, featureData.due);
+
+          label.appendChild(title);
+          label.appendChild(dates);
+          info.appendChild(checkbox);
+          info.appendChild(label);
+
+          const statusPill = createStatusPill();
+          const toggleButton = document.createElement("button");
+          toggleButton.type = "button";
+          toggleButton.className = "feature-card__toggle";
+          toggleButton.textContent = "Collapse";
+          toggleButton.setAttribute("aria-expanded", "true");
+
+          header.appendChild(info);
+          header.appendChild(toggleButton);
+          header.appendChild(statusPill);
+          featureCard.appendChild(header);
+
+          const item = {
+            id: featureData.id,
+            type: "feature",
+            element: featureCard,
+            checkbox,
+            statusPill,
+            parentId: null,
+            children: [],
+            startDate: parseDate(featureData.start),
+            dueDate: parseDate(featureData.due),
+            status: "pending",
+          };
+          items.set(featureData.id, item);
+
+          const body = document.createElement("div");
+          body.className = "feature-card__body";
+
+          if (featureData.methods.length === 0) {
+            const emptyState = document.createElement("p");
+            emptyState.className = "feature-card__empty";
+            emptyState.textContent = "No methods tracked yet.";
+            body.appendChild(emptyState);
+          } else {
+            const methodList = document.createElement("ul");
+            methodList.className = "method-list";
+            featureData.methods.forEach((methodData) => {
+              const methodItem = createMethod(methodData, featureData.id);
+              methodList.appendChild(methodItem.element);
+            });
+            body.appendChild(methodList);
+          }
+
+          featureCard.appendChild(body);
+
+          const setCollapsedState = (collapsed) => {
+            featureCard.classList.toggle("feature-card--collapsed", collapsed);
+            toggleButton.setAttribute("aria-expanded", String(!collapsed));
+            toggleButton.textContent = collapsed ? "Expand" : "Collapse";
+          };
+          setCollapsedState(false);
+
+          checkbox.addEventListener("change", (event) => {
+            handleToggle(event.target.id, event.target.checked);
+          });
+
+          toggleButton.addEventListener("click", (event) => {
+            event.stopPropagation();
+            setCollapsedState(
+              !featureCard.classList.contains("feature-card--collapsed")
+            );
+          });
+
+          header.addEventListener("click", (event) => {
+            if (
+              event.target === checkbox ||
+              event.target.closest("label") ||
+              event.target.closest("input") ||
+              event.target.closest(".feature-card__toggle")
+            ) {
+              return;
+            }
+            setCollapsedState(
+              !featureCard.classList.contains("feature-card--collapsed")
+            );
+          });
+
+          container.appendChild(featureCard);
+          return item;
+        }
+
+        function createMethod(methodData, featureId) {
+          const methodEntry = document.createElement("li");
+          methodEntry.className = "method";
+          methodEntry.dataset.id = methodData.id;
+
+          const header = document.createElement("div");
+          header.className = "method__header";
+
+          const info = document.createElement("div");
+          info.className = "method__info";
+
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.id = methodData.id;
+          checkbox.className = "method__checkbox";
+
+          const label = document.createElement("label");
+          label.className = "method__label";
+          label.htmlFor = methodData.id;
+
+          const title = document.createElement("span");
+          title.className = "method__title";
+          title.textContent = methodData.title;
+
+          const dates = document.createElement("span");
+          dates.className = "method__dates";
+          dates.textContent = formatSingle(methodData.start, methodData.due);
+
+          label.appendChild(title);
+          label.appendChild(dates);
+
+          info.appendChild(checkbox);
+          info.appendChild(label);
+
+          const statusPill = createStatusPill();
+
+          const item = {
+            id: methodData.id,
+            type: "method",
+            element: methodEntry,
+            checkbox,
+            statusPill,
+            parentId: featureId,
+            children: [],
+            startDate: parseDate(methodData.start),
+            dueDate: parseDate(methodData.due),
+            status: "pending",
+          };
+          items.set(methodData.id, item);
+          items.get(featureId).children.push(methodData.id);
+
+          header.appendChild(info);
+          header.appendChild(statusPill);
+          methodEntry.appendChild(header);
+
+          const testList = document.createElement("ul");
+          testList.className = "test-list";
+          methodData.tests.forEach((testData) => {
+            const testItem = createTest(testData, methodData.id);
+            testList.appendChild(testItem.element);
+          });
+          methodEntry.appendChild(testList);
+
+          checkbox.addEventListener("change", (event) => {
+            handleToggle(event.target.id, event.target.checked);
+          });
+
+          return item;
+        }
+
+        function createTest(testData, methodId) {
+          const testEntry = document.createElement("li");
+          testEntry.className = "test";
+          testEntry.dataset.id = testData.id;
+
+          const row = document.createElement("div");
+          row.className = "test__row";
+
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.id = testData.id;
+          checkbox.className = "test__checkbox";
+
+          const label = document.createElement("label");
+          label.className = "test__label";
+          label.htmlFor = testData.id;
+
+          const title = document.createElement("span");
+          title.className = "test__title";
+          title.textContent = testData.title;
+
+          const dates = document.createElement("span");
+          dates.className = "test__dates";
+          dates.textContent = formatSingle(testData.start, testData.due);
+
+          label.appendChild(title);
+          label.appendChild(dates);
+
+          const statusPill = createStatusPill();
+
+          row.appendChild(checkbox);
+          row.appendChild(label);
+          row.appendChild(statusPill);
+          testEntry.appendChild(row);
+
+          const item = {
+            id: testData.id,
+            type: "test",
+            element: testEntry,
+            checkbox,
+            statusPill,
+            parentId: methodId,
+            children: [],
+            startDate: parseDate(testData.start),
+            dueDate: parseDate(testData.due),
+            status: "pending",
+          };
+          items.set(testData.id, item);
+          items.get(methodId).children.push(testData.id);
+
+          checkbox.addEventListener("change", (event) => {
+            handleToggle(event.target.id, event.target.checked);
+          });
+
+          return item;
+        }
+
+        function computeLeafStatus(item) {
+          if (item.checkbox.checked) {
+            return "complete";
+          }
+          if (!item.dueDate) {
+            return "on-track";
+          }
+          const diff = Math.ceil((item.dueDate - today) / MS_PER_DAY);
+          if (diff < 0) {
+            return "overdue";
+          }
+          if (diff <= 7) {
+            return "due-soon";
+          }
+          if (diff <= 14) {
+            return "on-track";
+          }
+          return "ahead";
+        }
+
+        function computeStatus(item) {
+          if (item.checkbox.checked) {
+            return "complete";
+          }
+          if (item.children.length === 0) {
+            return computeLeafStatus(item);
+          }
+          const childStatuses = item.children.map((childId) => {
+            const child = items.get(childId);
+            return child ? child.status : "pending";
+          });
+          if (childStatuses.every((status) => status === "complete")) {
+            return "complete";
+          }
+          if (childStatuses.some((status) => status === "overdue")) {
+            return "overdue";
+          }
+          if (childStatuses.some((status) => status === "due-soon")) {
+            return "due-soon";
+          }
+          if (childStatuses.some((status) => status === "ahead")) {
+            return "ahead";
+          }
+          if (childStatuses.some((status) => status === "on-track")) {
+            return "on-track";
+          }
+          return "pending";
+        }
+
+        function refreshVisual(itemId) {
+          const item = items.get(itemId);
+          if (!item) {
+            return;
+          }
+          const status = computeStatus(item);
+          item.status = status;
+          item.element.dataset.status = status;
+          if (item.statusPill) {
+            item.statusPill.textContent = statusLabels[status];
+            item.statusPill.className = statusClasses[status];
+          }
+        }
+
+        function updateAncestors(itemId) {
+          const item = items.get(itemId);
+          if (!item || !item.parentId) {
+            return;
+          }
+          const parent = items.get(item.parentId);
+          if (!parent) {
+            return;
+          }
+          const children = parent.children.map((childId) =>
+            items.get(childId)
+          );
+          const someChecked = children.some(
+            (child) => child && child.checkbox.checked
+          );
+          const someIndeterminate = children.some(
+            (child) => child && child.checkbox.indeterminate
+          );
+          const allChecked = children.every(
+            (child) => child && child.checkbox.checked
+          );
+          if (!parent.checkbox.checked) {
+            parent.checkbox.indeterminate =
+              (someChecked && !allChecked) || someIndeterminate;
+          } else {
+            parent.checkbox.indeterminate = false;
+          }
+          refreshVisual(parent.id);
+          updateAncestors(parent.id);
+        }
+
+        function toggleItem(itemId, checked, options) {
+          const item = items.get(itemId);
+          if (!item) {
+            return;
+          }
+          const cascadeDown =
+            options && Object.prototype.hasOwnProperty.call(options, "cascadeDown")
+              ? options.cascadeDown
+              : true;
+          const cascadeUp =
+            options && Object.prototype.hasOwnProperty.call(options, "cascadeUp")
+              ? options.cascadeUp
+              : true;
+
+          item.checkbox.checked = checked;
+          item.checkbox.indeterminate = false;
+          if (checked) {
+            savedChecks[itemId] = true;
+          } else {
+            delete savedChecks[itemId];
+          }
+
+          if (cascadeDown) {
+            item.children.forEach((childId) => {
+              toggleItem(childId, checked, { cascadeDown: true, cascadeUp: false });
+            });
+          }
+
+          refreshVisual(itemId);
+
+          if (cascadeUp) {
+            updateAncestors(itemId);
+          }
+        }
+
+        function handleToggle(itemId, checked) {
+          const item = items.get(itemId);
+          if (!item) {
+            return;
+          }
+          const cascadeDown = item.type === "feature";
+          toggleItem(itemId, checked, {
+            cascadeDown,
+            cascadeUp: true,
+          });
+          updateProjectSummary();
+          persistState();
+        }
+
+        function persistState() {
+          if (!storage) {
+            return;
+          }
+          try {
+            storage.setItem(storageKey, JSON.stringify(savedChecks));
+          } catch (err) {
+            // Ignore storage errors (e.g., quota exceeded).
+          }
+        }
+
+        function updateProjectSummary() {
+          const counts = {
+            feature: { total: 0, complete: 0 },
+            method: { total: 0, complete: 0 },
+            test: { total: 0, complete: 0 },
+            overdue: 0,
+            dueSoon: 0,
+          };
+          let earliestPendingDue = null;
+
+          items.forEach((item) => {
+            const status = item.status;
+            if (item.type === "feature") {
+              counts.feature.total += 1;
+              if (item.checkbox.checked) {
+                counts.feature.complete += 1;
+              }
+            } else if (item.type === "method") {
+              counts.method.total += 1;
+              if (item.checkbox.checked) {
+                counts.method.complete += 1;
+              }
+            } else if (item.type === "test") {
+              counts.test.total += 1;
+              if (item.checkbox.checked) {
+                counts.test.complete += 1;
+              } else {
+                if (status === "overdue") {
+                  counts.overdue += 1;
+                } else if (status === "due-soon") {
+                  counts.dueSoon += 1;
+                }
+                if (item.dueDate) {
+                  if (
+                    earliestPendingDue === null ||
+                    item.dueDate < earliestPendingDue
+                  ) {
+                    earliestPendingDue = item.dueDate;
+                  }
+                }
+              }
+            }
+          });
+
+          featureProgressEl.textContent = `${counts.feature.complete} / ${counts.feature.total}`;
+          methodProgressEl.textContent = `${counts.method.complete} / ${counts.method.total}`;
+          testProgressEl.textContent = `${counts.test.complete} / ${counts.test.total}`;
+          overdueCountEl.textContent = String(counts.overdue);
+          dueSoonCountEl.textContent = String(counts.dueSoon);
+
+          let statusKey = "on-track";
+          if (counts.test.total > 0 && counts.test.complete === counts.test.total) {
+            statusKey = "complete";
+          } else if (counts.overdue > 0) {
+            statusKey = "overdue";
+          } else if (earliestPendingDue) {
+            const diff = Math.ceil((earliestPendingDue - today) / MS_PER_DAY);
+            if (diff < 0) {
+              statusKey = "overdue";
+            } else if (diff <= 7) {
+              statusKey = "due-soon";
+            } else if (diff <= 14) {
+              statusKey = "on-track";
+            } else {
+              statusKey = "ahead";
+            }
+          } else if (counts.test.total === 0) {
+            statusKey = "pending";
+          }
+
+          projectStatusEl.textContent = statusLabels[statusKey];
+          projectStatusEl.className = statusClasses[statusKey];
+        }
+
+        // Build the DOM tree.
+        data.features.forEach((featureData) => {
+          createFeature(featureData);
+        });
+
+        const typeRank = {
+          test: 0,
+          method: 1,
+          feature: 2,
+        };
+
+        items.forEach((item) => {
+          if (savedChecks[item.id]) {
+            item.checkbox.checked = true;
+          }
+        });
+
+        Array.from(items.values())
+          .sort((a, b) => typeRank[b.type] - typeRank[a.type])
+          .forEach((item) => {
+            if (item.children.length === 0) {
+              return;
+            }
+            const children = item.children
+              .map((childId) => items.get(childId))
+              .filter(Boolean);
+            const allChecked = children.every((child) => child.checkbox.checked);
+            const someChecked = children.some(
+              (child) => child.checkbox.checked || child.checkbox.indeterminate
+            );
+            item.checkbox.checked = allChecked;
+            item.checkbox.indeterminate = !allChecked && someChecked;
+            if (item.checkbox.checked) {
+              savedChecks[item.id] = true;
+            } else {
+              delete savedChecks[item.id];
+            }
+          });
+
+        Array.from(items.values())
+          .sort((a, b) => typeRank[a.type] - typeRank[b.type])
+          .forEach((item) => {
+            refreshVisual(item.id);
+          });
+
+        updateProjectSummary();
+        persistState();
+      })();
+    </script>
+  </body>
+</html>
