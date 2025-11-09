@@ -1008,11 +1008,11 @@
           projectStatusEl.className = statusClasses[statusKey];
         }
 
-        // Build the DOM tree (newest start date first).
+        // Build the DOM tree (oldest start date first).
         const sortedFeatures = [...data.features].sort((a, b) => {
           const aDate = parseDate(a.start) || new Date(0);
           const bDate = parseDate(b.start) || new Date(0);
-          return bDate - aDate;
+          return aDate - bDate;
         });
         sortedFeatures.forEach((featureData) => {
           createFeature(featureData);
