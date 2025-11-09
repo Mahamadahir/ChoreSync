@@ -68,7 +68,7 @@
         font-size: 0.85rem;
         color: #52606d;
       }
-      .legend__item {
+      .legend__button {
         display: inline-flex;
         align-items: center;
         gap: 0.4rem;
@@ -76,6 +76,20 @@
         padding: 0.35rem 0.6rem;
         border-radius: 999px;
         border: 1px solid #e1e7ef;
+        color: #52606d;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: background-color 0.2s ease, border-color 0.2s ease,
+          color 0.2s ease;
+      }
+      .legend__button:hover {
+        border-color: #c4cfde;
+        background: #f8fafc;
+      }
+      .legend__button--active {
+        border-color: #2563eb;
+        color: #1d4ed8;
+        box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.15);
       }
       .page__actions {
         display: flex;
@@ -340,14 +354,70 @@
             <span>Due Soon<br><strong id="due-soon-count">0</strong></span>
           </div>
         </div>
-        <div class="legend">
-          <span class="legend__item"><span class="status-pill status-pill--green">Complete</span>Complete</span>
-          <span class="legend__item"><span class="status-pill status-pill--blue">Ahead</span>Ahead of Schedule</span>
-          <span class="legend__item"><span class="status-pill status-pill--grey">On Track</span>On Track</span>
-          <span class="legend__item"><span class="status-pill status-pill--orange">Due Soon</span>Due within 7 days</span>
-          <span class="legend__item"><span class="status-pill status-pill--red">Behind</span>Overdue</span>
-          <span class="legend__item"><span class="feature-card__badge feature-card__badge--core">Core</span>Core Feature</span>
-          <span class="legend__item"><span class="feature-card__badge feature-card__badge--additional">Additional</span>Additional Feature</span>
+        <div class="legend" role="group" aria-label="Progress filters">
+          <button
+            type="button"
+            class="legend__button"
+            data-filter-type="status"
+            data-filter-value="complete"
+            aria-pressed="false"
+          >
+            <span class="status-pill status-pill--green">Complete</span>Complete
+          </button>
+          <button
+            type="button"
+            class="legend__button"
+            data-filter-type="status"
+            data-filter-value="ahead"
+            aria-pressed="false"
+          >
+            <span class="status-pill status-pill--blue">Ahead</span>Ahead of Schedule
+          </button>
+          <button
+            type="button"
+            class="legend__button"
+            data-filter-type="status"
+            data-filter-value="on-track"
+            aria-pressed="false"
+          >
+            <span class="status-pill status-pill--grey">On Track</span>On Track
+          </button>
+          <button
+            type="button"
+            class="legend__button"
+            data-filter-type="status"
+            data-filter-value="due-soon"
+            aria-pressed="false"
+          >
+            <span class="status-pill status-pill--orange">Due Soon</span>Due within 7 days
+          </button>
+          <button
+            type="button"
+            class="legend__button"
+            data-filter-type="status"
+            data-filter-value="overdue"
+            aria-pressed="false"
+          >
+            <span class="status-pill status-pill--red">Behind</span>Overdue
+          </button>
+          <button
+            type="button"
+            class="legend__button"
+            data-filter-type="category"
+            data-filter-value="core"
+            aria-pressed="false"
+          >
+            <span class="feature-card__badge feature-card__badge--core">Core</span>Core Feature
+          </button>
+          <button
+            type="button"
+            class="legend__button"
+            data-filter-type="category"
+            data-filter-value="additional"
+            aria-pressed="false"
+          >
+            <span class="feature-card__badge feature-card__badge--additional">Additional</span>Additional Feature
+          </button>
         </div>
         <div class="page__actions">
           <button type="button" id="collapse-toggle" class="page__button">Collapse All</button>
@@ -372,6 +442,9 @@
         const dueSoonCountEl = document.getElementById("due-soon-count");
         const projectStatusEl = document.getElementById("project-status");
         const collapseToggleButton = document.getElementById("collapse-toggle");
+        const legendButtons = Array.from(
+          document.querySelectorAll(".legend__button")
+        );
 
         const storageKey = "chore-sync-progress-v1";
         const storage = (() => {
@@ -400,6 +473,11 @@
 
         const items = new Map();
         const MS_PER_DAY = 24 * 60 * 60 * 1000;
+        const filterState = {
+          status: null,
+          category: null,
+        };
+        let filterUpdatePending = false;
         const today = (() => {
           const now = new Date();
           return new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -559,6 +637,7 @@
             startDate: parseDate(featureData.start),
             dueDate: parseDate(featureData.due),
             status: "pending",
+            category,
           };
           items.set(featureData.id, item);
 
@@ -812,6 +891,7 @@
             item.statusPill.textContent = statusLabels[status];
             item.statusPill.className = statusClasses[status];
           }
+          requestFilterUpdate();
         }
 
         function updateAncestors(itemId) {
@@ -880,10 +960,49 @@
           }
         }
 
+        function requestFilterUpdate() {
+          if (filterUpdatePending) {
+            return;
+          }
+          filterUpdatePending = true;
+          requestAnimationFrame(() => {
+            filterUpdatePending = false;
+            applyFilters();
+          });
+        }
+
+        function applyFilters() {
+          items.forEach((item) => {
+            if (item.type !== "feature") {
+              return;
+            }
+            const matchesStatus =
+              !filterState.status || item.status === filterState.status;
+            const matchesCategory =
+              !filterState.category || item.category === filterState.category;
+            item.element.hidden = !(matchesStatus && matchesCategory);
+          });
+          updateCollapseButtonState();
+        }
+
+        function updateLegendButtons() {
+          legendButtons.forEach((button) => {
+            const type = button.dataset.filterType;
+            const value = button.dataset.filterValue;
+            if (!type || !value) {
+              return;
+            }
+            const isActive = filterState[type] === value;
+            button.classList.toggle("legend__button--active", isActive);
+            button.setAttribute("aria-pressed", String(isActive));
+          });
+        }
+
         function anyFeatureExpanded() {
           return Array.from(items.values()).some(
             (item) =>
               item.type === "feature" &&
+              !item.element.hidden &&
               !item.element.classList.contains("feature-card--collapsed")
           );
         }
@@ -899,10 +1018,7 @@
 
         function setAllFeaturesCollapsed(shouldCollapse) {
           items.forEach((item) => {
-            if (
-              item.type === "feature" &&
-              typeof item.setCollapsedState === "function"
-            ) {
+            if (item.type === "feature" && item.setCollapsedState) {
               item.setCollapsedState(shouldCollapse, { silent: true });
             }
           });
@@ -1061,6 +1177,27 @@
         updateProjectSummary();
         persistState();
         updateCollapseButtonState();
+        applyFilters();
+
+        if (legendButtons.length > 0) {
+          legendButtons.forEach((button) => {
+            button.addEventListener("click", () => {
+              const type = button.dataset.filterType;
+              const value = button.dataset.filterValue;
+              if (!type || !value) {
+                return;
+              }
+              if (filterState[type] === value) {
+                filterState[type] = null;
+              } else {
+                filterState[type] = value;
+              }
+              updateLegendButtons();
+              applyFilters();
+            });
+          });
+          updateLegendButtons();
+        }
 
         if (collapseToggleButton) {
           collapseToggleButton.addEventListener("click", () => {

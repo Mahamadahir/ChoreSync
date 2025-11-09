@@ -10,8 +10,12 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 async def create_task_endpoint() -> None:
     """Accept payloads for creating a new task.
 
-    TODO: Validate request body, delegate to TaskScheduler.schedule_task, and return a
-    resource representation once persistence succeeds.
+    Inputs:
+        JSON payload describing task metadata (name, due_at, group_id, recurrence).
+    Output:
+        201 response with the created task representation or validation errors.
+    TODO: Parse/validate request model, pass data to TaskScheduler.schedule_task, translate domain errors into HTTP responses,
+    TODO: and return the serialized task after persistence.
     """
     raise NotImplementedError("TODO: implement task creation endpoint")
 
@@ -20,8 +24,11 @@ async def create_task_endpoint() -> None:
 async def reassign_overdue_tasks_endpoint() -> None:
     """Trigger overdue task reassignment for a group.
 
-    TODO: Extract group identifiers, call TaskScheduler.reassign_overdue_tasks, and craft
-    an audit-friendly response for the client.
+    Inputs:
+        Query/body parameters specifying group_id and optional timestamp.
+    Output:
+        JSON summary of reassignment results (counts, affected tasks).
+    TODO: Authorize caller, extract group/timestamp, invoke TaskScheduler.reassign_overdue_tasks, and return an audit-friendly summary.
     """
     raise NotImplementedError("TODO: implement overdue task reassignment endpoint")
 
@@ -30,7 +37,10 @@ async def reassign_overdue_tasks_endpoint() -> None:
 async def generate_recurring_tasks_endpoint() -> None:
     """Generate future instances for a recurring task.
 
-    TODO: Authorize the requester, call TaskScheduler.generate_recurring_instances, and
-    enqueue calendar sync jobs for impacted members.
+    Inputs:
+        Body specifying task_id and projection horizon.
+    Output:
+        JSON containing number of occurrences generated and any warnings.
+    TODO: Validate/authorize requester, call TaskScheduler.generate_recurring_instances, trigger downstream calendar sync jobs, and return results.
     """
     raise NotImplementedError("TODO: implement recurring task generation endpoint")

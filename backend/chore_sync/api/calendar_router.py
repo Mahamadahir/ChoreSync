@@ -10,8 +10,11 @@ router = APIRouter(prefix="/calendars", tags=["calendars"])
 async def sync_google_calendar_endpoint() -> None:
     """Kick off an incremental sync against Google Calendar for the authenticated user.
 
-    TODO: Resolve the current user, call CalendarSyncService.sync_google_calendar, and
-    return correlation identifiers for client-side polling.
+    Inputs:
+        Authenticated user context plus optional query params (since token).
+    Output:
+        Accepted response containing job/correlation id for tracking.
+    TODO: Resolve user + credentials, parse optional since timestamps, invoke CalendarSyncService.sync_google_calendar asynchronously, and return job metadata.
     """
     raise NotImplementedError("TODO: implement Google Calendar sync endpoint")
 
@@ -20,8 +23,11 @@ async def sync_google_calendar_endpoint() -> None:
 async def sync_apple_calendar_endpoint() -> None:
     """Kick off an incremental sync against Apple Calendar for the authenticated user.
 
-    TODO: Resolve CalDAV credentials, call CalendarSyncService.sync_apple_calendar, and
-    handle any required two-factor prompts with async workflows.
+    Inputs:
+        Authenticated user context; may include since timestamp.
+    Output:
+        Response acknowledging sync kickoff with tracking information.
+    TODO: Resolve CalDAV credentials, call CalendarSyncService.sync_apple_calendar, handle 2FA prompts if required, and return correlation data.
     """
     raise NotImplementedError("TODO: implement Apple Calendar sync endpoint")
 
@@ -30,7 +36,10 @@ async def sync_apple_calendar_endpoint() -> None:
 async def sync_outlook_calendar_endpoint() -> None:
     """Kick off an incremental sync against Outlook via Microsoft Graph for the user.
 
-    TODO: Acquire Microsoft Graph tokens, call CalendarSyncService.sync_outlook_calendar,
-    and register delta link checkpoints for subsequent sync calls.
+    Inputs:
+        Authenticated user context plus optional deltaLink parameter.
+    Output:
+        Response with sync job identifier and next steps.
+    TODO: Acquire Microsoft Graph tokens, call CalendarSyncService.sync_outlook_calendar, register deltaLink checkpoints, and return tracking metadata.
     """
     raise NotImplementedError("TODO: implement Outlook Calendar sync endpoint")
