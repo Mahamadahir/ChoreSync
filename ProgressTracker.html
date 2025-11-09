@@ -77,6 +77,27 @@
         border-radius: 999px;
         border: 1px solid #e1e7ef;
       }
+      .page__actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-bottom: 1.5rem;
+      }
+      .page__button {
+        border: 1px solid #d1d9e6;
+        background: #f8fafc;
+        color: #0f172a;
+        padding: 0.4rem 1rem;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.2s ease, border-color 0.2s ease;
+      }
+      .page__button:hover {
+        background: #e2e8f0;
+        border-color: #c4cfde;
+      }
       .feature-card {
         background: #ffffff;
         border: 1px solid #e1e7ef;
@@ -117,6 +138,28 @@
       .feature-card__title {
         font-weight: 600;
         font-size: 1.15rem;
+      }
+      .feature-card__title-row {
+        display: inline-flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .feature-card__badge {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        border-radius: 999px;
+        padding: 0.1rem 0.6rem;
+        font-weight: 600;
+      }
+      .feature-card__badge--core {
+        background: #dbeafe;
+        color: #1d4ed8;
+      }
+      .feature-card__badge--additional {
+        background: #f5d0fe;
+        color: #a21caf;
       }
       .feature-card__dates {
         font-size: 0.85rem;
@@ -303,6 +346,11 @@
           <span class="legend__item"><span class="status-pill status-pill--grey">On Track</span>On Track</span>
           <span class="legend__item"><span class="status-pill status-pill--orange">Due Soon</span>Due within 7 days</span>
           <span class="legend__item"><span class="status-pill status-pill--red">Behind</span>Overdue</span>
+          <span class="legend__item"><span class="feature-card__badge feature-card__badge--core">Core</span>Core Feature</span>
+          <span class="legend__item"><span class="feature-card__badge feature-card__badge--additional">Additional</span>Additional Feature</span>
+        </div>
+        <div class="page__actions">
+          <button type="button" id="collapse-toggle" class="page__button">Collapse All</button>
         </div>
       </header>
       <section id="feature-container"></section>
@@ -323,6 +371,7 @@
         const overdueCountEl = document.getElementById("overdue-count");
         const dueSoonCountEl = document.getElementById("due-soon-count");
         const projectStatusEl = document.getElementById("project-status");
+        const collapseToggleButton = document.getElementById("collapse-toggle");
 
         const storageKey = "chore-sync-progress-v1";
         const storage = (() => {
@@ -444,6 +493,9 @@
           const featureCard = document.createElement("section");
           featureCard.className = "feature-card";
           featureCard.dataset.id = featureData.id;
+          const category =
+            featureData.category === "additional" ? "additional" : "core";
+          featureCard.dataset.category = category;
 
           const header = document.createElement("header");
           header.className = "feature-card__header";
@@ -465,11 +517,21 @@
           title.className = "feature-card__title";
           title.textContent = featureData.title;
 
+          const titleRow = document.createElement("span");
+          titleRow.className = "feature-card__title-row";
+          titleRow.appendChild(title);
+
+          const badge = document.createElement("span");
+          badge.className = `feature-card__badge feature-card__badge--${category}`;
+          badge.textContent =
+            category === "additional" ? "Additional" : "Core";
+          titleRow.appendChild(badge);
+
           const dates = document.createElement("span");
           dates.className = "feature-card__dates";
           dates.textContent = formatRange(featureData.start, featureData.due);
 
-          label.appendChild(title);
+          label.appendChild(titleRow);
           label.appendChild(dates);
           info.appendChild(checkbox);
           info.appendChild(label);
@@ -520,12 +582,16 @@
 
           featureCard.appendChild(body);
 
-          const setCollapsedState = (collapsed) => {
+          const setCollapsedState = (collapsed, options = {}) => {
             featureCard.classList.toggle("feature-card--collapsed", collapsed);
             toggleButton.setAttribute("aria-expanded", String(!collapsed));
             toggleButton.textContent = collapsed ? "Expand" : "Collapse";
+            if (!options.silent) {
+              updateCollapseButtonState();
+            }
           };
-          setCollapsedState(false);
+          setCollapsedState(false, { silent: true });
+          item.setCollapsedState = setCollapsedState;
 
           checkbox.addEventListener("change", (event) => {
             handleToggle(event.target.id, event.target.checked);
@@ -533,9 +599,10 @@
 
           toggleButton.addEventListener("click", (event) => {
             event.stopPropagation();
-            setCollapsedState(
-              !featureCard.classList.contains("feature-card--collapsed")
+            const nextState = !featureCard.classList.contains(
+              "feature-card--collapsed"
             );
+            item.setCollapsedState(nextState);
           });
 
           header.addEventListener("click", (event) => {
@@ -547,9 +614,10 @@
             ) {
               return;
             }
-            setCollapsedState(
-              !featureCard.classList.contains("feature-card--collapsed")
+            const nextState = !featureCard.classList.contains(
+              "feature-card--collapsed"
             );
+            item.setCollapsedState(nextState);
           });
 
           container.appendChild(featureCard);
@@ -812,6 +880,35 @@
           }
         }
 
+        function anyFeatureExpanded() {
+          return Array.from(items.values()).some(
+            (item) =>
+              item.type === "feature" &&
+              !item.element.classList.contains("feature-card--collapsed")
+          );
+        }
+
+        function updateCollapseButtonState() {
+          if (!collapseToggleButton) {
+            return;
+          }
+          collapseToggleButton.textContent = anyFeatureExpanded()
+            ? "Collapse All"
+            : "Expand All";
+        }
+
+        function setAllFeaturesCollapsed(shouldCollapse) {
+          items.forEach((item) => {
+            if (
+              item.type === "feature" &&
+              typeof item.setCollapsedState === "function"
+            ) {
+              item.setCollapsedState(shouldCollapse, { silent: true });
+            }
+          });
+          updateCollapseButtonState();
+        }
+
         function handleToggle(itemId, checked) {
           const item = items.get(itemId);
           if (!item) {
@@ -911,8 +1008,13 @@
           projectStatusEl.className = statusClasses[statusKey];
         }
 
-        // Build the DOM tree.
-        data.features.forEach((featureData) => {
+        // Build the DOM tree (newest start date first).
+        const sortedFeatures = [...data.features].sort((a, b) => {
+          const aDate = parseDate(a.start) || new Date(0);
+          const bDate = parseDate(b.start) || new Date(0);
+          return bDate - aDate;
+        });
+        sortedFeatures.forEach((featureData) => {
           createFeature(featureData);
         });
 
@@ -958,6 +1060,14 @@
 
         updateProjectSummary();
         persistState();
+        updateCollapseButtonState();
+
+        if (collapseToggleButton) {
+          collapseToggleButton.addEventListener("click", () => {
+            const shouldCollapse = anyFeatureExpanded();
+            setAllFeaturesCollapsed(shouldCollapse);
+          });
+        }
       })();
     </script>
   </body>
