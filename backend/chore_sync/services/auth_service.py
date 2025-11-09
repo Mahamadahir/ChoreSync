@@ -42,3 +42,18 @@ class AccountService:
         """Rotate a user's password securely."""
         # TODO: Verify the current credential, hash the new password, and invalidate related sessions.
         raise NotImplementedError("TODO: implement password change flow")
+
+    def sign_in_with_google(self, *, id_token: str, nonce: str | None = None) -> None:
+        """Sign a user in (or up) through Google identity tokens."""
+        # TODO: Validate the ID token, look up (or create) the linked user, and mint a session.
+        raise NotImplementedError("TODO: implement Google sign-in/up flow")
+
+    def sign_in_with_microsoft(self, *, authorization_code: str, redirect_uri: str) -> None:
+        """Sign a user in (or up) through the Microsoft identity platform."""
+        # TODO: Exchange the code for tokens, hydrate profile details, and issue local credentials.
+        raise NotImplementedError("TODO: implement Microsoft sign-in/up flow")
+
+    def sign_in_with_apple(self, *, identity_token: str, user_payload: dict | None = None) -> None:
+        """Sign a user in (or up) through Apple Sign In."""
+        # TODO: Verify token signatures, capture user metadata on first sign-in, and persist the linkage.
+        raise NotImplementedError("TODO: implement Apple sign-in/up flow")

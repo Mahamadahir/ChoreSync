@@ -34,3 +34,18 @@ def test_update_profile_todo() -> None:
 def test_change_password_todo() -> None:
     """AccountService.change_password should rotate credentials."""
     pytest.skip("TODO: add assertions for AccountService.change_password")
+
+
+def test_sign_in_with_google_todo() -> None:
+    """AccountService.sign_in_with_google should handle Google sign-in/up."""
+    pytest.skip("TODO: add assertions for AccountService.sign_in_with_google")
+
+
+def test_sign_in_with_microsoft_todo() -> None:
+    """AccountService.sign_in_with_microsoft should handle Microsoft sign-in/up."""
+    pytest.skip("TODO: add assertions for AccountService.sign_in_with_microsoft")
+
+
+def test_sign_in_with_apple_todo() -> None:
+    """AccountService.sign_in_with_apple should handle Apple sign-in/up."""
+    pytest.skip("TODO: add assertions for AccountService.sign_in_with_apple")

@@ -306,6 +306,54 @@ window.progressData = {
           ]
         },
         {
+          "id": "method-account-sso-google",
+          "title": "AccountService.sign_in_with_google",
+          "start": "2025-11-02",
+          "due": "2025-11-11",
+          "state": "pending",
+          "tests": [
+            {
+              "id": "test-account-sso-google",
+              "title": "test_auth_service::test_sign_in_with_google_todo",
+              "start": "2025-11-02",
+              "due": "2025-11-11",
+              "state": "pending"
+            }
+          ]
+        },
+        {
+          "id": "method-account-sso-microsoft",
+          "title": "AccountService.sign_in_with_microsoft",
+          "start": "2025-11-02",
+          "due": "2025-11-11",
+          "state": "pending",
+          "tests": [
+            {
+              "id": "test-account-sso-microsoft",
+              "title": "test_auth_service::test_sign_in_with_microsoft_todo",
+              "start": "2025-11-02",
+              "due": "2025-11-11",
+              "state": "pending"
+            }
+          ]
+        },
+        {
+          "id": "method-account-sso-apple",
+          "title": "AccountService.sign_in_with_apple",
+          "start": "2025-11-02",
+          "due": "2025-11-11",
+          "state": "pending",
+          "tests": [
+            {
+              "id": "test-account-sso-apple",
+              "title": "test_auth_service::test_sign_in_with_apple_todo",
+              "start": "2025-11-02",
+              "due": "2025-11-11",
+              "state": "pending"
+            }
+          ]
+        },
+        {
           "id": "method-authforms-login",
           "title": "AuthFormsController.handleLogin",
           "start": "2025-11-01",
