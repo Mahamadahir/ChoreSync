@@ -815,22 +815,22 @@ window.progressData = {
     {
       "id": "feature-task-templates",
       "title": "Task Templates",
-      "start": "2025-11-04",
-      "due": "2025-11-20",
+      "start": "2026-02-01",
+      "due": "2026-02-20",
       "state": "pending",
       "methods": [
         {
           "id": "method-tasktemplate-create",
           "title": "TaskTemplateService.create_template",
-          "start": "2025-11-04",
-          "due": "2025-11-16",
+          "start": "2026-02-01",
+          "due": "2026-02-07",
           "state": "pending",
           "tests": [
             {
               "id": "test-tasktemplate-create",
               "title": "test_task_template_service::test_create_template_todo",
-              "start": "2025-11-04",
-              "due": "2025-11-16",
+              "start": "2026-02-01",
+              "due": "2026-02-07",
               "state": "pending"
             }
           ]
@@ -838,15 +838,15 @@ window.progressData = {
         {
           "id": "method-tasktemplate-update",
           "title": "TaskTemplateService.update_template",
-          "start": "2025-11-05",
-          "due": "2025-11-17",
+          "start": "2026-02-02",
+          "due": "2026-02-09",
           "state": "pending",
           "tests": [
             {
               "id": "test-tasktemplate-update",
               "title": "test_task_template_service::test_update_template_todo",
-              "start": "2025-11-05",
-              "due": "2025-11-17",
+              "start": "2026-02-02",
+              "due": "2026-02-09",
               "state": "pending"
             }
           ]
@@ -854,15 +854,15 @@ window.progressData = {
         {
           "id": "method-tasktemplate-delete",
           "title": "TaskTemplateService.delete_template",
-          "start": "2025-11-05",
-          "due": "2025-11-17",
+          "start": "2026-02-02",
+          "due": "2026-02-09",
           "state": "pending",
           "tests": [
             {
               "id": "test-tasktemplate-delete",
               "title": "test_task_template_service::test_delete_template_todo",
-              "start": "2025-11-05",
-              "due": "2025-11-17",
+              "start": "2026-02-02",
+              "due": "2026-02-09",
               "state": "pending"
             }
           ]
@@ -870,15 +870,15 @@ window.progressData = {
         {
           "id": "method-tasktemplate-list",
           "title": "TaskTemplateService.list_templates",
-          "start": "2025-11-06",
-          "due": "2025-11-18",
+          "start": "2026-02-04",
+          "due": "2026-02-12",
           "state": "pending",
           "tests": [
             {
               "id": "test-tasktemplate-list",
               "title": "test_task_template_service::test_list_templates_todo",
-              "start": "2025-11-06",
-              "due": "2025-11-18",
+              "start": "2026-02-04",
+              "due": "2026-02-12",
               "state": "pending"
             }
           ]
@@ -886,15 +886,15 @@ window.progressData = {
         {
           "id": "method-tasktemplate-instantiate",
           "title": "TaskTemplateService.instantiate_template",
-          "start": "2025-11-06",
-          "due": "2025-11-19",
+          "start": "2026-02-05",
+          "due": "2026-02-15",
           "state": "pending",
           "tests": [
             {
               "id": "test-tasktemplate-instantiate",
               "title": "test_task_template_service::test_instantiate_template_todo",
-              "start": "2025-11-06",
-              "due": "2025-11-19",
+              "start": "2026-02-05",
+              "due": "2026-02-15",
               "state": "pending"
             }
           ]
@@ -902,15 +902,15 @@ window.progressData = {
         {
           "id": "method-tasktemplate-sync",
           "title": "TaskTemplateService.sync_template_library",
-          "start": "2025-11-07",
-          "due": "2025-11-20",
+          "start": "2026-02-07",
+          "due": "2026-02-20",
           "state": "pending",
           "tests": [
             {
               "id": "test-tasktemplate-sync",
               "title": "test_task_template_service::test_sync_template_library_todo",
-              "start": "2025-11-07",
-              "due": "2025-11-20",
+              "start": "2026-02-07",
+              "due": "2026-02-20",
               "state": "pending"
             }
           ]
@@ -920,22 +920,22 @@ window.progressData = {
     {
       "id": "feature-playbooks",
       "title": "Template-Driven Playbooks",
-      "start": "2025-11-07",
-      "due": "2025-11-24",
+      "start": "2026-02-21",
+      "due": "2026-03-10",
       "state": "pending",
       "methods": [
         {
           "id": "method-playbook-create",
           "title": "PlaybookService.create_playbook",
-          "start": "2025-11-07",
-          "due": "2025-11-18",
+          "start": "2026-02-21",
+          "due": "2026-03-01",
           "state": "pending",
           "tests": [
             {
               "id": "test-playbook-create",
               "title": "test_playbook_service::test_create_playbook_todo",
-              "start": "2025-11-07",
-              "due": "2025-11-18",
+              "start": "2026-02-21",
+              "due": "2026-03-01",
               "state": "pending"
             }
           ]
@@ -943,15 +943,15 @@ window.progressData = {
         {
           "id": "method-playbook-update",
           "title": "PlaybookService.update_playbook",
-          "start": "2025-11-08",
-          "due": "2025-11-19",
+          "start": "2026-02-23",
+          "due": "2026-03-03",
           "state": "pending",
           "tests": [
             {
               "id": "test-playbook-update",
               "title": "test_playbook_service::test_update_playbook_todo",
-              "start": "2025-11-08",
-              "due": "2025-11-19",
+              "start": "2026-02-23",
+              "due": "2026-03-03",
               "state": "pending"
             }
           ]
@@ -959,15 +959,15 @@ window.progressData = {
         {
           "id": "method-playbook-delete",
           "title": "PlaybookService.delete_playbook",
-          "start": "2025-11-08",
-          "due": "2025-11-19",
+          "start": "2026-02-23",
+          "due": "2026-03-03",
           "state": "pending",
           "tests": [
             {
               "id": "test-playbook-delete",
               "title": "test_playbook_service::test_delete_playbook_todo",
-              "start": "2025-11-08",
-              "due": "2025-11-19",
+              "start": "2026-02-23",
+              "due": "2026-03-03",
               "state": "pending"
             }
           ]
@@ -975,15 +975,15 @@ window.progressData = {
         {
           "id": "method-playbook-list",
           "title": "PlaybookService.list_playbooks",
-          "start": "2025-11-09",
-          "due": "2025-11-20",
+          "start": "2026-02-25",
+          "due": "2026-03-04",
           "state": "pending",
           "tests": [
             {
               "id": "test-playbook-list",
               "title": "test_playbook_service::test_list_playbooks_todo",
-              "start": "2025-11-09",
-              "due": "2025-11-20",
+              "start": "2026-02-25",
+              "due": "2026-03-04",
               "state": "pending"
             }
           ]
@@ -991,15 +991,15 @@ window.progressData = {
         {
           "id": "method-playbook-activate",
           "title": "PlaybookService.activate_playbook",
-          "start": "2025-11-10",
-          "due": "2025-11-22",
+          "start": "2026-02-28",
+          "due": "2026-03-08",
           "state": "pending",
           "tests": [
             {
               "id": "test-playbook-activate",
               "title": "test_playbook_service::test_activate_playbook_todo",
-              "start": "2025-11-10",
-              "due": "2025-11-22",
+              "start": "2026-02-28",
+              "due": "2026-03-08",
               "state": "pending"
             }
           ]
@@ -1007,15 +1007,15 @@ window.progressData = {
         {
           "id": "method-playbook-archive",
           "title": "PlaybookService.archive_completed_playbook",
-          "start": "2025-11-10",
-          "due": "2025-11-24",
+          "start": "2026-03-01",
+          "due": "2026-03-10",
           "state": "pending",
           "tests": [
             {
               "id": "test-playbook-archive",
               "title": "test_playbook_service::test_archive_completed_playbook_todo",
-              "start": "2025-11-10",
-              "due": "2025-11-24",
+              "start": "2026-03-01",
+              "due": "2026-03-10",
               "state": "pending"
             }
           ]
@@ -1025,22 +1025,22 @@ window.progressData = {
     {
       "id": "feature-insights",
       "title": "Insights & Fairness Dashboard",
-      "start": "2025-11-09",
-      "due": "2025-11-28",
+      "start": "2026-03-11",
+      "due": "2026-03-31",
       "state": "pending",
       "methods": [
         {
           "id": "method-insights-refresh",
           "title": "InsightsService.refresh_group_insights",
-          "start": "2025-11-09",
-          "due": "2025-11-20",
+          "start": "2026-03-11",
+          "due": "2026-03-21",
           "state": "pending",
           "tests": [
             {
               "id": "test-insights-refresh",
               "title": "test_insights_service::test_refresh_group_insights_todo",
-              "start": "2025-11-09",
-              "due": "2025-11-20",
+              "start": "2026-03-11",
+              "due": "2026-03-21",
               "state": "pending"
             }
           ]
@@ -1048,15 +1048,15 @@ window.progressData = {
         {
           "id": "method-insights-member",
           "title": "InsightsService.fetch_member_metrics",
-          "start": "2025-11-10",
-          "due": "2025-11-21",
+          "start": "2026-03-12",
+          "due": "2026-03-22",
           "state": "pending",
           "tests": [
             {
               "id": "test-insights-member",
               "title": "test_insights_service::test_fetch_member_metrics_todo",
-              "start": "2025-11-10",
-              "due": "2025-11-21",
+              "start": "2026-03-12",
+              "due": "2026-03-22",
               "state": "pending"
             }
           ]
@@ -1064,15 +1064,15 @@ window.progressData = {
         {
           "id": "method-insights-report",
           "title": "InsightsService.export_fairness_report",
-          "start": "2025-11-11",
-          "due": "2025-11-23",
+          "start": "2026-03-14",
+          "due": "2026-03-25",
           "state": "pending",
           "tests": [
             {
               "id": "test-insights-report",
               "title": "test_insights_service::test_export_fairness_report_todo",
-              "start": "2025-11-11",
-              "due": "2025-11-23",
+              "start": "2026-03-14",
+              "due": "2026-03-25",
               "state": "pending"
             }
           ]
@@ -1080,15 +1080,15 @@ window.progressData = {
         {
           "id": "method-insights-alerts",
           "title": "InsightsService.evaluate_alerts",
-          "start": "2025-11-12",
-          "due": "2025-11-24",
+          "start": "2026-03-16",
+          "due": "2026-03-27",
           "state": "pending",
           "tests": [
             {
               "id": "test-insights-alerts",
               "title": "test_insights_service::test_evaluate_alerts_todo",
-              "start": "2025-11-12",
-              "due": "2025-11-24",
+              "start": "2026-03-16",
+              "due": "2026-03-27",
               "state": "pending"
             }
           ]
@@ -1096,15 +1096,15 @@ window.progressData = {
         {
           "id": "method-insights-feedback",
           "title": "InsightsService.track_insight_feedback",
-          "start": "2025-11-13",
-          "due": "2025-11-28",
+          "start": "2026-03-18",
+          "due": "2026-03-31",
           "state": "pending",
           "tests": [
             {
               "id": "test-insights-feedback",
               "title": "test_insights_service::test_track_insight_feedback_todo",
-              "start": "2025-11-13",
-              "due": "2025-11-28",
+              "start": "2026-03-18",
+              "due": "2026-03-31",
               "state": "pending"
             }
           ]
@@ -1114,22 +1114,22 @@ window.progressData = {
     {
       "id": "feature-inventory",
       "title": "Shared Shopping & Inventory",
-      "start": "2025-11-10",
-      "due": "2025-11-30",
+      "start": "2026-04-01",
+      "due": "2026-04-20",
       "state": "pending",
       "methods": [
         {
           "id": "method-inventory-add",
           "title": "InventoryService.add_inventory_item",
-          "start": "2025-11-10",
-          "due": "2025-11-20",
+          "start": "2026-04-01",
+          "due": "2026-04-10",
           "state": "pending",
           "tests": [
             {
               "id": "test-inventory-add",
               "title": "test_inventory_service::test_add_inventory_item_todo",
-              "start": "2025-11-10",
-              "due": "2025-11-20",
+              "start": "2026-04-01",
+              "due": "2026-04-10",
               "state": "pending"
             }
           ]
@@ -1137,15 +1137,15 @@ window.progressData = {
         {
           "id": "method-inventory-update",
           "title": "InventoryService.update_inventory_item",
-          "start": "2025-11-11",
-          "due": "2025-11-21",
+          "start": "2026-04-03",
+          "due": "2026-04-12",
           "state": "pending",
           "tests": [
             {
               "id": "test-inventory-update",
               "title": "test_inventory_service::test_update_inventory_item_todo",
-              "start": "2025-11-11",
-              "due": "2025-11-21",
+              "start": "2026-04-03",
+              "due": "2026-04-12",
               "state": "pending"
             }
           ]
@@ -1153,15 +1153,15 @@ window.progressData = {
         {
           "id": "method-inventory-remove",
           "title": "InventoryService.remove_inventory_item",
-          "start": "2025-11-12",
-          "due": "2025-11-22",
+          "start": "2026-04-04",
+          "due": "2026-04-13",
           "state": "pending",
           "tests": [
             {
               "id": "test-inventory-remove",
               "title": "test_inventory_service::test_remove_inventory_item_todo",
-              "start": "2025-11-12",
-              "due": "2025-11-22",
+              "start": "2026-04-04",
+              "due": "2026-04-13",
               "state": "pending"
             }
           ]
@@ -1169,15 +1169,15 @@ window.progressData = {
         {
           "id": "method-inventory-sync",
           "title": "InventoryService.sync_shopping_list",
-          "start": "2025-11-13",
-          "due": "2025-11-24",
+          "start": "2026-04-05",
+          "due": "2026-04-15",
           "state": "pending",
           "tests": [
             {
               "id": "test-inventory-sync",
               "title": "test_inventory_service::test_sync_shopping_list_todo",
-              "start": "2025-11-13",
-              "due": "2025-11-24",
+              "start": "2026-04-05",
+              "due": "2026-04-15",
               "state": "pending"
             }
           ]
@@ -1185,15 +1185,15 @@ window.progressData = {
         {
           "id": "method-inventory-consume",
           "title": "InventoryService.consume_item",
-          "start": "2025-11-14",
-          "due": "2025-11-26",
+          "start": "2026-04-07",
+          "due": "2026-04-18",
           "state": "pending",
           "tests": [
             {
               "id": "test-inventory-consume",
               "title": "test_inventory_service::test_consume_item_todo",
-              "start": "2025-11-14",
-              "due": "2025-11-26",
+              "start": "2026-04-07",
+              "due": "2026-04-18",
               "state": "pending"
             }
           ]
@@ -1201,15 +1201,15 @@ window.progressData = {
         {
           "id": "method-inventory-reconcile",
           "title": "InventoryService.reconcile_purchase",
-          "start": "2025-11-15",
-          "due": "2025-11-30",
+          "start": "2026-04-09",
+          "due": "2026-04-20",
           "state": "pending",
           "tests": [
             {
               "id": "test-inventory-reconcile",
               "title": "test_inventory_service::test_reconcile_purchase_todo",
-              "start": "2025-11-15",
-              "due": "2025-11-30",
+              "start": "2026-04-09",
+              "due": "2026-04-20",
               "state": "pending"
             }
           ]
@@ -1219,22 +1219,22 @@ window.progressData = {
     {
       "id": "feature-guest-mode",
       "title": "Guest & Visitor Mode",
-      "start": "2025-11-12",
-      "due": "2025-12-02",
+      "start": "2026-04-21",
+      "due": "2026-05-10",
       "state": "pending",
       "methods": [
         {
           "id": "method-guest-create",
           "title": "GuestAccessService.create_guest_invite",
-          "start": "2025-11-12",
-          "due": "2025-11-24",
+          "start": "2026-04-21",
+          "due": "2026-04-30",
           "state": "pending",
           "tests": [
             {
               "id": "test-guest-create",
               "title": "test_guest_access_service::test_create_guest_invite_todo",
-              "start": "2025-11-12",
-              "due": "2025-11-24",
+              "start": "2026-04-21",
+              "due": "2026-04-30",
               "state": "pending"
             }
           ]
@@ -1242,15 +1242,15 @@ window.progressData = {
         {
           "id": "method-guest-revoke",
           "title": "GuestAccessService.revoke_guest_access",
-          "start": "2025-11-13",
-          "due": "2025-11-25",
+          "start": "2026-04-22",
+          "due": "2026-05-01",
           "state": "pending",
           "tests": [
             {
               "id": "test-guest-revoke",
               "title": "test_guest_access_service::test_revoke_guest_access_todo",
-              "start": "2025-11-13",
-              "due": "2025-11-25",
+              "start": "2026-04-22",
+              "due": "2026-05-01",
               "state": "pending"
             }
           ]
@@ -1258,15 +1258,15 @@ window.progressData = {
         {
           "id": "method-guest-list",
           "title": "GuestAccessService.list_guest_sessions",
-          "start": "2025-11-14",
-          "due": "2025-11-27",
+          "start": "2026-04-24",
+          "due": "2026-05-04",
           "state": "pending",
           "tests": [
             {
               "id": "test-guest-list",
               "title": "test_guest_access_service::test_list_guest_sessions_todo",
-              "start": "2025-11-14",
-              "due": "2025-11-27",
+              "start": "2026-04-24",
+              "due": "2026-05-04",
               "state": "pending"
             }
           ]
@@ -1274,15 +1274,15 @@ window.progressData = {
         {
           "id": "method-guest-convert",
           "title": "GuestAccessService.convert_guest_to_member",
-          "start": "2025-11-15",
-          "due": "2025-11-29",
+          "start": "2026-04-26",
+          "due": "2026-05-07",
           "state": "pending",
           "tests": [
             {
               "id": "test-guest-convert",
               "title": "test_guest_access_service::test_convert_guest_to_member_todo",
-              "start": "2025-11-15",
-              "due": "2025-11-29",
+              "start": "2026-04-26",
+              "due": "2026-05-07",
               "state": "pending"
             }
           ]
@@ -1290,15 +1290,15 @@ window.progressData = {
         {
           "id": "method-guest-limits",
           "title": "GuestAccessService.apply_guest_limits",
-          "start": "2025-11-16",
-          "due": "2025-12-02",
+          "start": "2026-04-28",
+          "due": "2026-05-10",
           "state": "pending",
           "tests": [
             {
               "id": "test-guest-limits",
               "title": "test_guest_access_service::test_apply_guest_limits_todo",
-              "start": "2025-11-16",
-              "due": "2025-12-02",
+              "start": "2026-04-28",
+              "due": "2026-05-10",
               "state": "pending"
             }
           ]
@@ -1308,22 +1308,22 @@ window.progressData = {
     {
       "id": "feature-nudge-engine",
       "title": "Smart Nudge Engine",
-      "start": "2025-11-13",
-      "due": "2025-12-05",
+      "start": "2026-05-11",
+      "due": "2026-05-31",
       "state": "pending",
       "methods": [
         {
           "id": "method-nudge-evaluate",
           "title": "SmartNudgeService.evaluate_nudges",
-          "start": "2025-11-13",
-          "due": "2025-11-23",
+          "start": "2026-05-11",
+          "due": "2026-05-20",
           "state": "pending",
           "tests": [
             {
               "id": "test-nudge-evaluate",
               "title": "test_nudge_service::test_evaluate_nudges_todo",
-              "start": "2025-11-13",
-              "due": "2025-11-23",
+              "start": "2026-05-11",
+              "due": "2026-05-20",
               "state": "pending"
             }
           ]
@@ -1331,15 +1331,15 @@ window.progressData = {
         {
           "id": "method-nudge-campaign",
           "title": "SmartNudgeService.schedule_nudge_campaign",
-          "start": "2025-11-14",
-          "due": "2025-11-25",
+          "start": "2026-05-13",
+          "due": "2026-05-23",
           "state": "pending",
           "tests": [
             {
               "id": "test-nudge-campaign",
               "title": "test_nudge_service::test_schedule_nudge_campaign_todo",
-              "start": "2025-11-14",
-              "due": "2025-11-25",
+              "start": "2026-05-13",
+              "due": "2026-05-23",
               "state": "pending"
             }
           ]
@@ -1347,15 +1347,15 @@ window.progressData = {
         {
           "id": "method-nudge-record",
           "title": "SmartNudgeService.record_nudge_response",
-          "start": "2025-11-15",
-          "due": "2025-11-27",
+          "start": "2026-05-15",
+          "due": "2026-05-25",
           "state": "pending",
           "tests": [
             {
               "id": "test-nudge-record",
               "title": "test_nudge_service::test_record_nudge_response_todo",
-              "start": "2025-11-15",
-              "due": "2025-11-27",
+              "start": "2026-05-15",
+              "due": "2026-05-25",
               "state": "pending"
             }
           ]
@@ -1363,15 +1363,15 @@ window.progressData = {
         {
           "id": "method-nudge-preferences",
           "title": "SmartNudgeService.adjust_user_preferences",
-          "start": "2025-11-16",
-          "due": "2025-11-30",
+          "start": "2026-05-17",
+          "due": "2026-05-28",
           "state": "pending",
           "tests": [
             {
               "id": "test-nudge-preferences",
               "title": "test_nudge_service::test_adjust_user_preferences_todo",
-              "start": "2025-11-16",
-              "due": "2025-11-30",
+              "start": "2026-05-17",
+              "due": "2026-05-28",
               "state": "pending"
             }
           ]
@@ -1379,15 +1379,15 @@ window.progressData = {
         {
           "id": "method-nudge-pause",
           "title": "SmartNudgeService.pause_nudge_channel",
-          "start": "2025-11-17",
-          "due": "2025-12-05",
+          "start": "2026-05-18",
+          "due": "2026-05-31",
           "state": "pending",
           "tests": [
             {
               "id": "test-nudge-pause",
               "title": "test_nudge_service::test_pause_nudge_channel_todo",
-              "start": "2025-11-17",
-              "due": "2025-12-05",
+              "start": "2026-05-18",
+              "due": "2026-05-31",
               "state": "pending"
             }
           ]
@@ -2217,8 +2217,8 @@ window.progressData = {
     {
       "id": "feature-calendar-views",
       "title": "feature-calendar-views",
-      "start": "",
-      "due": "",
+      "start": "2025-11-05",
+      "due": "2025-11-21",
       "state": "pending",
       "methods": [
         {
