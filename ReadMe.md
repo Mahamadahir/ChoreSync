@@ -10,6 +10,14 @@ Detailed project and implementation trackers live in `ProgressTracker.html`.
 
 ## Getting Started
 
+### Virtual Environment Setup
+To keep backend tooling isolated, create a per-repo virtual environment in the project root (PowerShell examples shown):
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+Once activated, the `python`/`pip` commands below automatically run inside the venv. On macOS/Linux use `source .venv/bin/activate`.
+
 ### Backend (FastAPI + Django scaffolding)
 1. Create and activate a Python 3.11+ virtual environment.
 2. Install dependencies (and test tooling) from the backend project:
