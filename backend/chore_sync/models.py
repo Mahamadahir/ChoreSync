@@ -1,7 +1,12 @@
 """Domain entity definitions for ChoreSync."""
+from random import choices
+from datetime import timedelta
+
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 import uuid
+
+
 
 # TODO(Model Test Ideas):
 # - Validation paths: required fields, uniqueness, and custom clean/validator logic.
@@ -19,20 +24,21 @@ class User(AbstractUser):
     groups_joined = models.ManyToManyField(
         'Group',
         through='GroupMembership',
-        related_name= 'members',
+        related_name= 'joined_users',
         blank=True
     )
-    username = None
-    USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = [] #For superuser setup
+
+    def __str__(self):
+        return self.email or self.username
+
 
 class Group(models.Model):
     """Represents a household or team coordinating chores."""
     # TODO: Define fields for canonical name, slug, owner/admin references, membership_limit, fairness_policy configuration,
     # TODO: default timezone, and lifecycle timestamps; ensure uniqueness of slug per owner and cascade rules for memberships.
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=100)
-    group_code = models.CharField(max_length=100)
+    name = models.CharField(max_length=100, verbose_name='Group Name')
+    group_code = models.CharField(max_length=100, unique=True)
     owner = models.ForeignKey(User,
                               on_delete=models.SET_NULL,
                               null=True,
@@ -43,7 +49,6 @@ class Group(models.Model):
             ('on_create', 'Every time a new task is created'),
             ('after_n_tasks', 'After x tasks are created'),
             ('after_n_weeks', 'After x weeks pass'),
-            ('monthly', 'Monthly')
         ],
         default= 'on_create'
     )
@@ -68,6 +73,7 @@ class GroupMembership(models.Model):
         choices=[('member', 'Member'), ('moderator', 'Moderator')],
         default='member'
     )
+    joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         unique_together = ('user', 'group')
@@ -76,11 +82,101 @@ class GroupMembership(models.Model):
         return f"{self.user.email} in {self.group.name}"
 
 
-class Task:
+class TaskTemplate(models.Model):
     """Describes a chore scheduled for a group with optional recurrence."""
     # TODO: Capture title/description, linked group, creator, cadence/recurrence pattern, due window, assignee,
     # TODO: effort estimates, status enum, and hooks for analytics/audit timestamps.
 
+    #Recurance resolved here.
+    recurring_choice = models.CharField(
+        max_length=50,
+        choices = [
+        ('none', 'No repeat'),
+        ('every_n_days', 'After x days'),
+    ],
+        default= 'none'
+    )
+    recur_value = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Used to store n for n_days"
+    )
+    next_due = models.DateTimeField()
+    active = models.BooleanField(default=True)
+
+    #Task details
+    name = models.CharField(max_length=100)
+    details = models.TextField(blank=True)
+    estimated_hours = models.FloatField(default=1.0)
+
+    #ownership of task - Task template not assigned - occurrence is assigned
+    creator = models.ForeignKey(
+        'User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_tasks',
+        help_text="User who created this task"
+        )
+    group = models.ForeignKey(
+        'Group',
+        on_delete=models.CASCADE,
+        related_name='tasks',
+        help_text='Group this task belongs to'
+    )
+
+    #history of Task Template
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+    #Ensures that recurring tasks have a recurring value and non-recurring tasks don't
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.recurring_choice == 'none' and self.recur_value:
+            raise ValidationError("Recur value should only be set if recurrence is enabled.")
+        if self.recurring_choice != 'none' and not self.recur_value:
+            raise ValidationError("Please provide a recur_value for repeating tasks.")
+
+    def get_next_due_date(self, from_date=None):
+        """Compute the next due date for this task template."""
+        from_date = from_date or self.next_due
+
+        recur_value = int(self.recur_value or 0)
+
+        if self.recurring_choice == 'every_n_days' and recur_value > 0:
+            return from_date + timedelta(days=recur_value)
+
+        return None
+    def __str__(self):
+        return f"{self.name} ({self.group.name})"
+
+
+class TaskOccurrence(models.Model):
+    template = models.ForeignKey(
+        'TaskTemplate',
+        on_delete=models.CASCADE,
+        related_name='occurrences'
+)
+
+    assigned_to = models.ForeignKey(
+        'User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_tasks',
+        help_text="Current assignee for the task"
+    )
+    deadline = models.DateTimeField()
+    completed = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ('template', 'due_date')
+        ordering = ['due_date']
+
+    def __str__(self):
+        return f"{self.template.name} on {self.deadline:%Y-%m-%d}"
 
 class Calendar:
     """Represents an external or in-app calendar source associated with a user."""
