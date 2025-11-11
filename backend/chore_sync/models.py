@@ -1,6 +1,7 @@
 """Domain entity definitions for ChoreSync."""
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+import uuid
 
 # TODO(Model Test Ideas):
 # - Validation paths: required fields, uniqueness, and custom clean/validator logic.
@@ -15,11 +16,65 @@ class User(AbstractUser):
     # TODO: Add profile fields (display_name, locale, preferred_time_zone), communication preferences,
     # TODO: and soft-delete/audit timestamps; enforce unique email + username constraints and hook into notification routing.
     email = models.EmailField(unique=True)
+    groups_joined = models.ManyToManyField(
+        'Group',
+        through='GroupMembership',
+        related_name= 'members',
+        blank=True
+    )
+    username = None
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = [] #For superuser setup
 
-class Group:
+class Group(models.Model):
     """Represents a household or team coordinating chores."""
     # TODO: Define fields for canonical name, slug, owner/admin references, membership_limit, fairness_policy configuration,
     # TODO: default timezone, and lifecycle timestamps; ensure uniqueness of slug per owner and cascade rules for memberships.
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100)
+    group_code = models.CharField(max_length=100)
+    owner = models.ForeignKey(User,
+                              on_delete=models.SET_NULL,
+                              null=True,
+                              related_name='owned_groups')
+    reassignment_rule = models.CharField(
+        max_length=50,
+        choices=[
+            ('on_create', 'Every time a new task is created'),
+            ('after_n_tasks', 'After x tasks are created'),
+            ('after_n_weeks', 'After x weeks pass'),
+            ('monthly', 'Monthly')
+        ],
+        default= 'on_create'
+    )
+    reassignment_value = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text= "Used to store n for n_task and n_weeks"
+    )
+    last_reassigned_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='Timestamps of last reassignment'
+    )
+    def __str__(self):
+        return self.group_code
+
+class GroupMembership(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='members')
+    role = models.CharField(
+        max_length=20,
+        choices=[('member', 'Member'), ('moderator', 'Moderator')],
+        default='member'
+    )
+
+    class Meta:
+        unique_together = ('user', 'group')
+
+    def __str__(self):
+        return f"{self.user.email} in {self.group.name}"
+
 
 class Task:
     """Describes a chore scheduled for a group with optional recurrence."""
