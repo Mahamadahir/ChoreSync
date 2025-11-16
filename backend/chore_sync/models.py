@@ -1,11 +1,13 @@
 """Domain entity definitions for ChoreSync."""
-from random import choices
-from datetime import timedelta
-
-from django.contrib.auth.models import AbstractUser
-from django.db import models
 import uuid
-
+from datetime import timedelta
+from django.conf import settings
+from django.utils import timezone
+from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
+from django.db import models
+from django.db.models import ForeignKey
+from django.db.models.fields import CharField
 
 
 # TODO(Model Test Ideas):
@@ -18,8 +20,6 @@ import uuid
 
 class User(AbstractUser):
     """Represents a platform user with identity and notification preferences."""
-    # TODO: Add profile fields (display_name, locale, preferred_time_zone), communication preferences,
-    # TODO: and soft-delete/audit timestamps; enforce unique email + username constraints and hook into notification routing.
     email = models.EmailField(unique=True)
     groups_joined = models.ManyToManyField(
         'Group',
@@ -34,12 +34,11 @@ class User(AbstractUser):
 
 class Group(models.Model):
     """Represents a household or team coordinating chores."""
-    # TODO: Define fields for canonical name, slug, owner/admin references, membership_limit, fairness_policy configuration,
-    # TODO: default timezone, and lifecycle timestamps; ensure uniqueness of slug per owner and cascade rules for memberships.
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100, verbose_name='Group Name')
     group_code = models.CharField(max_length=100, unique=True)
-    owner = models.ForeignKey(User,
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL,
                               on_delete=models.SET_NULL,
                               null=True,
                               related_name='owned_groups')
@@ -66,7 +65,7 @@ class Group(models.Model):
         return self.group_code
 
 class GroupMembership(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='members')
     role = models.CharField(
         max_length=20,
@@ -84,8 +83,7 @@ class GroupMembership(models.Model):
 
 class TaskTemplate(models.Model):
     """Describes a chore scheduled for a group with optional recurrence."""
-    # TODO: Capture title/description, linked group, creator, cadence/recurrence pattern, due window, assignee,
-    # TODO: effort estimates, status enum, and hooks for analytics/audit timestamps.
+
 
     #Recurance resolved here.
     recurring_choice = models.CharField(
@@ -111,7 +109,7 @@ class TaskTemplate(models.Model):
 
     #ownership of task - Task template not assigned - occurrence is assigned
     creator = models.ForeignKey(
-        'User',
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -132,7 +130,7 @@ class TaskTemplate(models.Model):
 
     #Ensures that recurring tasks have a recurring value and non-recurring tasks don't
     def clean(self):
-        from django.core.exceptions import ValidationError
+
         if self.recurring_choice == 'none' and self.recur_value:
             raise ValidationError("Recur value should only be set if recurrence is enabled.")
         if self.recurring_choice != 'none' and not self.recur_value:
@@ -160,7 +158,7 @@ class TaskOccurrence(models.Model):
 )
 
     assigned_to = models.ForeignKey(
-        'User',
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -172,17 +170,111 @@ class TaskOccurrence(models.Model):
     completed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        unique_together = ('template', 'due_date')
-        ordering = ['due_date']
+        unique_together = ('template', 'deadline')
+        ordering = ['deadline']
 
     def __str__(self):
         return f"{self.template.name} on {self.deadline:%Y-%m-%d}"
 
-class Calendar:
+class Calendar(models.Model):
     """Represents an external or in-app calendar source associated with a user."""
-    # TODO: Store provider type (google/outlook/internal), owning user, OAuth credential reference, sync window,
-    # TODO: default reminder settings, and last_sync timestamps/flags.
 
+    #user related fields
+
+    PROVIDER_CHOICES = [
+        ('google', 'Google Calendar'),
+        ('microsoft', 'Microsoft Outlook'),
+        ('internal', 'Built-in Calendar'),
+    ]
+
+    user = ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name = 'calendars'
+    )
+    provider = CharField(
+        max_length=20,
+        choices = PROVIDER_CHOICES,
+        default = 'internal'
+    )
+    external_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="ID used by external provider to identify the calendar",
+        default = None
+    )
+    name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Name of the calendar to display in the UI"
+    )
+
+    description = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Optional user-provided description for the calendar"
+    )
+
+    #credentials
+    credential = models.ForeignKey(
+        'ExternalCredential',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='calendars',
+        help_text="OAuth2 credentials used to sync this calendar"
+    )
+    #Sync details
+    sync_enabled = models.BooleanField(default=False)
+    back_sync_enabled = models.BooleanField(default=False, help_text="Push app events to external provider?")
+
+    sync_token = models.CharField(
+        max_length=512,
+        null=True,
+        blank=True,
+        help_text="Provider-specific sync token for incremental sync"
+    )
+
+    last_synced_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this calendar was last synced"
+    )
+
+    sync_window_days = models.PositiveIntegerField(
+        default=365,
+        help_text="Sync events within X days from now"
+    )
+
+    default_reminder_minutes = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Default reminder time in minutes before event start"
+    )
+
+    timezone = models.CharField(
+        max_length=50,
+        default="UTC",
+        help_text="Timezone identifier"
+    )
+
+    color = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        help_text="Display color for the calendar (if supported by provider)"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'provider', 'external_id')
+        verbose_name = "Calendar"
+        verbose_name_plural = "Calendars"
+
+    def __str__(self):
+        return f"{self.user.email} - {self.name or self.provider}"
 
 class Event:
     """Represents a calendar event produced from a task or external sync."""
@@ -236,11 +328,80 @@ class TaskVote:
     # TODO: and uniqueness constraints (one vote per decision per member).
 
 
-class ExternalCredential:
-    """Stores provider-specific credential handles for calendar sync."""
-    # TODO: Store user reference, provider identifier, encrypted secret blob/refresh token handle, scopes granted,
-    # TODO: and expiration/refresh bookkeeping.
+class ExternalCredential(models.Model):
+    """
+    Stores provider-specific OAuth2 credentials for external calendar sync (Google/Microsoft).
+    Each credential represents an OAuth grant from a user to a given provider.
+    """
 
+    PROVIDER_CHOICES = [
+        ('google', 'Google'),
+        ('microsoft', 'Microsoft'),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='external_credentials'
+    )
+
+    provider = models.CharField(
+        max_length=20,
+        choices=PROVIDER_CHOICES
+    )
+
+    # Use a JSONField to store tokens. In production, this should be ENCRYPTED.
+    # TODO: Encrypt this field before production
+    secret = models.JSONField(
+        help_text="JSON blob of OAuth2 tokens, including access and refresh tokens"
+    )
+
+    # Optional email or identifier for linked account (useful for multi-account support)
+    account_email = models.EmailField(
+        null=True,
+        blank=True,
+        help_text="Email of the provider account if available"
+    )
+
+    # Space-separated or JSON list of scopes granted
+    scopes = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Scopes granted during OAuth login (for debugging or extension)"
+    )
+
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Expiry datetime of the OAuth2 access token"
+    )
+
+    last_refreshed_at = models.DateTimeField(
+        auto_now=True,
+        help_text="When the token was last refreshed"
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
+    class Meta:
+        verbose_name = "External Credential"
+        verbose_name_plural = "External Credentials"
+        unique_together = ("user", "provider", "account_email")  # Prevent duplicate credentials
+
+    def __str__(self):
+        return f"{self.user.email} - {self.provider} ({self.account_email or 'default'})"
+
+    # Utility: Check if access token is expired
+    def is_expired(self) -> bool:
+        return self.expires_at and timezone.now() >= self.expires_at
+
+    # Utility: Mark this credential as refreshed
+    def mark_refreshed(self, new_secret: dict, new_expires_at):
+        self.secret = new_secret
+        self.expires_at = new_expires_at
+        self.save(update_fields=["secret", "expires_at", "last_refreshed_at"])
 
 class GroupCalendar:
     """Represents the aggregate calendar for a group."""

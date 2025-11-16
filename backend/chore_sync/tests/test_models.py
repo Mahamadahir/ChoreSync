@@ -1,38 +1,63 @@
 """Placeholder tests for chore_sync.domain.models entities."""
 from __future__ import annotations
 
+from datetime import timedelta
+from tkinter.font import names
+
 import pytest
 
 from chore_sync import models
 from django.utils import timezone
 
 
+@pytest.fixture
+def user(db):
+    """Fixture to create a test user."""
+    return models.User.objects.create_user(
+        username='testuser',
+        email='testuser@example.com',
+        password='Testpass123!'
+    )
+
+@pytest.fixture
+def group(db, user):
+    """Fixture to create a group owned by the test user."""
+    return models.Group.objects.create(
+        name="Test Group",
+        group_code="TEST123",           # Required unique field
+        owner=user                      # Set the user as group owner
+    )
+
 @pytest.mark.django_db
-def test_user_entity_todo() -> None:
+def test_user_entity(user, group) -> None:
     """models.User should model platform members."""
 
     # check if user is created properly
-    user = models.User.objects.create_user(
-        username='testing',
-        email='mrmahamadahir@gmail.com',
-        password='Test_password123'
-    )
-    assert user.email == 'mrmahamadahir@gmail.com'
-    assert user.check_password('Test_password123')
+
+
+    assert user.email == 'testuser@example.com'
+    assert user.check_password('Testpass123!')
+    assert user.username == 'testuser'
     assert user.is_active
 
 @pytest.mark.django_db
-def test_user_can_join_group():
-    group = models.Group.objects.create(name = 'Testing')
-    user = models.User.objects.create_user(
-        username='testing',
-        email='mrmahamadahir@gmail.com',
-        password='Test_password123'
+def test_user_can_join_group(user, group):
+    # Create a group membership manually due to `through` relation
+    membership = models.GroupMembership.objects.create(
+        user=user,
+        group=group,
+        role='member'
     )
-    user.groups_joined.add(group)
 
+    # Assert that the group appears in the user’s joined groups
     assert group in user.groups_joined.all()
 
+    # Assert that the user shows up in the group's members
+    assert user in group.members.all()
+
+    # Validate role and joined_at fields
+    assert membership.role == 'member'
+    assert membership.joined_at <= timezone.now()
 
 @pytest.mark.django_db
 def test_group_entity_todo() -> None:
@@ -54,11 +79,12 @@ def test_group_entity_todo() -> None:
     assert group.reassignment_value == 6
     assert group.last_reassigned_at == tested_time
 
-
-
-
 @pytest.mark.django_db
 def test_task_entity_todo() -> None:
+    now = timezone.now()
+    past = now - timedelta(days=1)
+    future = now + timedelta(days=1)
+
     """models.Task should describe a scheduled chore."""
     user = models.User.objects.create_user(
         username='testing',
@@ -67,23 +93,41 @@ def test_task_entity_todo() -> None:
     )
     group = models.Group.objects.create(name='Testing', owner=user, group_code='abc234')
     task_template = models.TaskTemplate.objects.create(
-        next_due = timezone.now(),
+        next_due = future,
         active = True,
         name = 'single task template',
         details = 'This is a test',
         creator = user,
         group = group
     )
-    task_occurance = models.TaskOccurance.object.create(
+    task_occurrence = models.TaskOccurrence.objects.create(
         template = task_template,
         assigned_to = user,
-        deadline = 
+        deadline = past,
     )
+    assert task_occurrence.template == task_template
+    assert task_occurrence.assigned_to == user
+    assert task_occurrence.template.next_due == future
+    assert task_occurrence.template.active == True
+    assert task_occurrence.deadline == past
 
-
+@pytest.mark.django_db
 def test_calendar_entity_todo() -> None:
     """models.Calendar should represent a syncable calendar."""
-    pytest.skip("TODO: add assertions for models.Calendar")
+    test_user = models.User.objects.create_user(
+        username='testing',
+        email='mrmahamadahir@gmail.com',
+        password='Test_password123'
+    )
+    calendar = models.Calendar.objects.create(
+        user = test_user,
+        name = 'Test Calendar',
+        description = 'This is a testing Calendar to ensure that Calender is stored correctly in DB',
+
+    )
+    assert calendar.user == test_user
+    assert calendar.name == 'Test Calendar'
+    assert calendar.description =='This is a testing Calendar to ensure that Calender is stored correctly in DB'
 
 
 def test_event_entity_todo() -> None:
