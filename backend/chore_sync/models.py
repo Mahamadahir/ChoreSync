@@ -9,6 +9,8 @@ from django.db import models
 from django.db.models import ForeignKey
 from django.db.models.fields import CharField
 
+from tests.test_models import group
+
 
 # TODO(Model Test Ideas):
 # - Validation paths: required fields, uniqueness, and custom clean/validator logic.
@@ -276,39 +278,183 @@ class Calendar(models.Model):
     def __str__(self):
         return f"{self.user.email} - {self.name or self.provider}"
 
-class Event:
-    """Represents a calendar event produced from a task or external sync."""
-    # TODO: Include start/end, recurrence instance identifiers, link to originating task or calendar, provider event ids,
-    # TODO: attendee metadata, and status values for cancellation/rescheduling.
+class Event(models.Model):
+    """Represents a calendar event (internal, task-derived, or external)."""
+
+    SOURCE_CHOICES = [
+        ('external', 'External calendar event'),
+        ('task', 'Generated from a task occurrence'),
+        ('manual', 'Manual in-app event'),
+    ]
+
+    calendar = models.ForeignKey(
+        'Calendar',
+        on_delete=models.CASCADE,
+        related_name='events'
+    )
+
+    source = models.CharField(
+        max_length=20,
+        choices=SOURCE_CHOICES,
+        default='manual',
+        help_text="Where this event originated (external feed, task, or manual)."
+    )
+
+    # Link back to a task occurrence ONLY if source='task'
+    task_occurrence = models.OneToOneField(
+        'TaskOccurrence',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='event',
+        help_text="Task occurrence that generated this event (if any)."
+    )
+
+    # Core timing + display fields
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+
+    start = models.DateTimeField()
+    end = models.DateTimeField()
+
+    is_all_day = models.BooleanField(
+        default=False,
+        help_text="Treat as an all-day event when rendering / syncing."
+    )
+
+    # Availability / free-time logic
+    blocks_availability = models.BooleanField(
+        default=True,
+        help_text="If False, this event is ignored when computing free time."
+    )
+
+    # External sync metadata
+    external_event_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="ID of this event in the external provider's calendar API."
+    )
+    external_calendar_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Provider's calendar ID at the time of sync (for safety)."
+    )
+
+    status = models.CharField(
+        max_length=20,
+        default='confirmed',
+        help_text="confirmed / cancelled / tentative / etc."
+    )
+
+    # Debug-only: original provider payload
+    raw_payload = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Optional raw provider payload for debugging and edge cases. "
+            "Only populated in DEBUG for external events."
+        )
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['start']
+
+    def __str__(self):
+        return self.title
+
+class Message(models.Model):
+    group = models.ForeignKey(
+        'Group',
+        on_delete=models.CASCADE,
+        related_name='messages'
+    )
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='messages'
+    )
+    content = models.TextField()
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['timestamp']
 
 
-class RecurringTaskOccurrence:
-    """Concrete scheduled instance of a recurring task."""
-    # TODO: Persist foreign key to parent Task recurrence definition, occurrence index/date, assigned member,
-    # TODO: completion metadata, and any skip/defer reasons.
+class MessageReceipt(models.Model):
+    """Per-user read status for a message (simple receipts)."""
 
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name='receipts'
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='message_receipts'
+    )
+    seen_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the user first read the message (null = not seen yet)."
+    )
 
-class Message:
-    """Represents a chat message exchanged among group members."""
-    # TODO: Capture sender FK, target group/thread, plaintext/body, optional attachments, delivery timestamps,
-    # TODO: and moderation flags (deleted/edited markers).
-
-
-class MessageReceipt:
-    """Tracks per-user read status for a message."""
-    # TODO: Associate message + recipient membership, store delivery/read timestamps, reaction payloads,
-    # TODO: and unread-count bookkeeping fields.
-
+    class Meta:
+        unique_together = ('message', 'user')
 
 class TaskSwap:
     """Captures a swap request between two members for a task."""
     # TODO: Persist initiator/target members, task reference, proposed schedule, approval status enum,
     # TODO: justification text, and audit trail for moderator decisions.
+    task = models.ForeignKey(
+        TaskOccurrence,
+        on_delete=models.CASCADE,
+    )
+    from_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='swaps_initiated'
+    )
+    to_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='swaps_accepted'
+    )
+    accepted = models.BooleanField(
+        null=True,
+    )
+    reason = models.TextField(
+        blank=True,
+        null=True,
+    )
+    timestamp = models.DateTimeField(auto_now_add=True)
 
 
 class Notification:
     """Represents an in-app notification dispatched to a user."""
     # TODO: Define type identifiers, payload JSON, severity, delivery channel, sent/read timestamps, and expiry policies.
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='notifications'
+    )
+    NOTIFICATION_CHOICES = [
+        ('task_assigned', 'Task assigned'),
+        ('task_swap', 'Task Swap'),
+        ('group_invite', 'Group Invite'),
+    ]
+    content = models.TextField()
+    read = models.BooleanField(default=False)
+    dismissed = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
 
 
 class TaskProposal:
@@ -409,7 +555,4 @@ class GroupCalendar:
     # TODO: for color schemes / conflict resolution strategies.
 
 
-class SyncedEvent:
-    """Tracks linkage between an in-app event and an external provider copy."""
-    # TODO: Persist mapping between Event and provider event id, sync status, last_synced_at, checksum/hashes,
-    # TODO: and drift/conflict resolution metadata.
+

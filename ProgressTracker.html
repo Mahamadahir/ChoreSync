@@ -460,16 +460,49 @@
         })();
 
         let savedChecks = {};
+        let manualLocks = {};
         if (storage) {
           try {
             const parsed = JSON.parse(storage.getItem(storageKey) || "{}");
             if (parsed && typeof parsed === "object") {
-              savedChecks = parsed;
+              const isStructuredState =
+                Object.prototype.hasOwnProperty.call(parsed, "checked") ||
+                Object.prototype.hasOwnProperty.call(parsed, "manualLocks") ||
+                Object.prototype.hasOwnProperty.call(parsed, "manualOverrides");
+              if (isStructuredState) {
+                if (parsed.checked && typeof parsed.checked === "object") {
+                  savedChecks = { ...parsed.checked };
+                }
+                const manualSource =
+                  parsed.manualLocks ||
+                  parsed.manualOverrides ||
+                  {};
+                if (manualSource && typeof manualSource === "object") {
+                  manualLocks = Object.keys(manualSource).reduce(
+                    (acc, key) => {
+                      if (manualSource[key]) {
+                        acc[key] = true;
+                      }
+                      return acc;
+                    },
+                    {}
+                  );
+                }
+              } else {
+                savedChecks = parsed;
+              }
             }
           } catch (err) {
             savedChecks = {};
+            manualLocks = {};
           }
         }
+        manualLocks = manualLocks || {};
+        Object.keys(manualLocks).forEach((key) => {
+          if (!savedChecks[key]) {
+            delete manualLocks[key];
+          }
+        });
 
         const items = new Map();
         const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -1030,6 +1063,15 @@
           if (!item) {
             return;
           }
+          if (item.children.length > 0) {
+            if (checked) {
+              manualLocks[itemId] = true;
+            } else {
+              delete manualLocks[itemId];
+            }
+          } else if (!checked) {
+            delete manualLocks[itemId];
+          }
           const cascadeDown = item.type === "feature";
           toggleItem(itemId, checked, {
             cascadeDown,
@@ -1044,7 +1086,13 @@
             return;
           }
           try {
-            storage.setItem(storageKey, JSON.stringify(savedChecks));
+            storage.setItem(
+              storageKey,
+              JSON.stringify({
+                checked: savedChecks,
+                manualLocks,
+              })
+            );
           } catch (err) {
             // Ignore storage errors (e.g., quota exceeded).
           }
@@ -1159,13 +1207,22 @@
             const someChecked = children.some(
               (child) => child.checkbox.checked || child.checkbox.indeterminate
             );
-            item.checkbox.checked = allChecked;
-            item.checkbox.indeterminate = !allChecked && someChecked;
-            if (item.checkbox.checked) {
-              savedChecks[item.id] = true;
-            } else {
+            const hasManualLock = Boolean(manualLocks[item.id]);
+            if (!hasManualLock) {
+              item.checkbox.checked = allChecked;
+              if (item.checkbox.checked) {
+                savedChecks[item.id] = true;
+              } else {
+                delete savedChecks[item.id];
+              }
+            } else if (!item.checkbox.checked) {
+              // Clean up stale locks if the checkbox is no longer selected.
+              delete manualLocks[item.id];
               delete savedChecks[item.id];
+            } else {
+              savedChecks[item.id] = true;
             }
+            item.checkbox.indeterminate = !item.checkbox.checked && someChecked;
           });
 
         Array.from(items.values())

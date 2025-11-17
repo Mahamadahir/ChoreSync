@@ -21,12 +21,64 @@ def user(db):
 
 @pytest.fixture
 def group(db, user):
+    test_time = timezone.now()
     """Fixture to create a group owned by the test user."""
-    return models.Group.objects.create(
+    group = models.Group.objects.create(
         name="Test Group",
         group_code="TEST123",           # Required unique field
-        owner=user                      # Set the user as group owner
+        owner=user,
+        reassignment_rule = 'after_n_tasks',
+        reassignment_value=6,
+        last_reassigned_at = test_time
+    # Set the user as group owner
     )
+    return group , test_time
+
+@pytest.fixture
+def membership(db, user,group):
+    """Fixture to create a membership owned by the test user."""
+    group_instance, _ = group
+    test_time = timezone.now()
+    membership = models.GroupMembership.objects.create(
+        user=user,
+        group=group_instance,
+        role='member'
+    )
+    return membership, test_time
+
+@pytest.fixture
+def task_template(db, user, group):
+    """Fixture to create a task template owned by the test user."""
+    group, test_time = group
+    task_template = models.TaskTemplate.objects.create(
+        next_due=test_time,
+        active=True,
+        name='single task template',
+        details='This is a test',
+        creator=user,
+        group=group
+    )
+    return task_template, test_time
+@pytest.fixture
+def task_occurrence(db, user, task_template):
+    """Fixture to create a task occurrence owned by the test user."""
+    task_template, test_time = task_template
+    task_occurrence = models.TaskOccurrence.objects.create(
+        template=task_template,
+        assigned_to=user,
+        deadline=test_time,
+    )
+
+    return task_occurrence, test_time
+@pytest.fixture
+def calendar(user):
+    return models.Calendar.objects.create(
+        user = user,
+        name = 'Test Calendar',
+        description = 'This is a testing Calendar to ensure that Calender is stored correctly in DB',
+
+    )
+
 
 @pytest.mark.django_db
 def test_user_entity(user, group) -> None:
@@ -41,90 +93,63 @@ def test_user_entity(user, group) -> None:
     assert user.is_active
 
 @pytest.mark.django_db
-def test_user_can_join_group(user, group):
-    # Create a group membership manually due to `through` relation
-    membership = models.GroupMembership.objects.create(
-        user=user,
-        group=group,
-        role='member'
-    )
+def test_user_can_join_group(user, group, membership):
+    membership, test_time = membership
+    group, group_time = group
 
     # Assert that the group appears in the user’s joined groups
     assert group in user.groups_joined.all()
 
     # Assert that the user shows up in the group's members
-    assert user in group.members.all()
+    assert membership in group.members.all()
 
     # Validate role and joined_at fields
     assert membership.role == 'member'
-    assert membership.joined_at <= timezone.now()
+    assert membership.joined_at >= test_time
 
 @pytest.mark.django_db
-def test_group_entity_todo() -> None:
-    """models.Group should capture household metadata."""
-    user = models.User.objects.create_user(
-        username='testing',
-        email='mrmahamadahir@gmail.com',
-        password='Test_password123'
-    )
-    group = models.Group.objects.create(name='Testing', owner = user, group_code = 'abc234')
-    group.reassignment_rule = 'after_n_tasks'
-    group.reassignment_value = 6
+def test_group_entity(user, group) -> None:
+
+
+    group , tested_time = group
+
     tested_time = timezone.now()
     group.last_reassigned_at = tested_time
-    assert group.name == 'Testing'
+    assert group.name == 'Test Group'
     assert group.owner == user
-    assert group.group_code == 'abc234'
+    assert group.group_code == 'TEST123'
     assert group.reassignment_rule == 'after_n_tasks'
     assert group.reassignment_value == 6
     assert group.last_reassigned_at == tested_time
 
 @pytest.mark.django_db
-def test_task_entity_todo() -> None:
-    now = timezone.now()
-    past = now - timedelta(days=1)
-    future = now + timedelta(days=1)
-
+def test_task_entity_todo(user, group, task_occurrence, task_template) -> None:
     """models.Task should describe a scheduled chore."""
-    user = models.User.objects.create_user(
-        username='testing',
-        email='mrmahamadahir@gmail.com',
-        password='Test_password123'
-    )
-    group = models.Group.objects.create(name='Testing', owner=user, group_code='abc234')
-    task_template = models.TaskTemplate.objects.create(
-        next_due = future,
-        active = True,
-        name = 'single task template',
-        details = 'This is a test',
-        creator = user,
-        group = group
-    )
-    task_occurrence = models.TaskOccurrence.objects.create(
-        template = task_template,
-        assigned_to = user,
-        deadline = past,
-    )
+
+    task_occurrence, occurrence_time = task_occurrence
+    group, _ = group
+    task_template, template_time = task_template
+
+    assert task_template.group == group
+    assert task_template.recurring_choice == 'none'
+    assert task_template.recur_value is None
+    assert task_template.next_due == template_time
+    assert task_template.name == 'single task template'
+    assert task_template.details == 'This is a test'
+    assert task_template.estimated_hours == 1.0
+    assert task_template.created_at >= template_time
+    assert task_template.updated_at >= template_time
+
+
     assert task_occurrence.template == task_template
     assert task_occurrence.assigned_to == user
-    assert task_occurrence.template.next_due == future
     assert task_occurrence.template.active == True
-    assert task_occurrence.deadline == past
+    assert task_occurrence.deadline == occurrence_time
 
 @pytest.mark.django_db
-def test_calendar_entity_todo() -> None:
+def test_calendar_entity(user, calendar) -> None:
     """models.Calendar should represent a syncable calendar."""
-    test_user = models.User.objects.create_user(
-        username='testing',
-        email='mrmahamadahir@gmail.com',
-        password='Test_password123'
-    )
-    calendar = models.Calendar.objects.create(
-        user = test_user,
-        name = 'Test Calendar',
-        description = 'This is a testing Calendar to ensure that Calender is stored correctly in DB',
-
-    )
+    test_user = user
     assert calendar.user == test_user
     assert calendar.name == 'Test Calendar'
     assert calendar.description =='This is a testing Calendar to ensure that Calender is stored correctly in DB'

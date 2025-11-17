@@ -248,22 +248,7 @@ window.progressData = {
             }
           ]
         },
-        {
-          "id": "method-model-synced-event",
-          "title": "models.SyncedEvent entity",
-          "start": "2025-11-14",
-          "due": "2025-11-14",
-          "state": "pending",
-          "tests": [
-            {
-              "id": "test-model-synced-event",
-              "title": "test_models::test_synced_event_entity_todo",
-              "start": "2025-11-14",
-              "due": "2025-11-14",
-              "state": "pending"
-            }
-          ]
-        }
+
       ],
       "category": "core"
     },
