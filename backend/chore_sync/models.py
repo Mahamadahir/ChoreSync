@@ -68,7 +68,7 @@ class Group(models.Model):
 
 class GroupMembership(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='members') #when owner leaves group stays - creator will be the default owner - Will give to the user who has been in the group the longest after creator leaves.
+    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='members')
     role = models.CharField(
         max_length=20,
         choices=[('member', 'Member'), ('moderator', 'Moderator')],
