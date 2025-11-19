@@ -9,7 +9,7 @@ from django.db import models
 from django.db.models import ForeignKey
 from django.db.models.fields import CharField
 
-from tests.test_models import group
+from tests.test_models import group, task_template
 
 
 # TODO(Model Test Ideas):
@@ -68,7 +68,7 @@ class Group(models.Model):
 
 class GroupMembership(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='members')
+    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='members') #when owner leaves group stays - creator will be the default owner - Will give to the user who has been in the group the longest after creator leaves.
     role = models.CharField(
         max_length=20,
         choices=[('member', 'Member'), ('moderator', 'Moderator')],
@@ -439,7 +439,6 @@ class TaskSwap:
 
 class Notification:
     """Represents an in-app notification dispatched to a user."""
-    # TODO: Define type identifiers, payload JSON, severity, delivery channel, sent/read timestamps, and expiry policies.
     recipient = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -461,6 +460,74 @@ class TaskProposal:
     """Captures a proposed chore awaiting group approval."""
     # TODO: Store proposing member, payload (title, description, suggested cadence), target group, attachment refs,
     # TODO: voting deadline/thresholds, and approval state transitions.
+    STATE_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('expired', 'Expired'),
+    ]
+    state = models.CharField(
+        max_length=20,
+        choices=STATE_CHOICES,
+        default='pending',
+        help_text="Current approval state of the proposal."
+    )
+    proposed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='proposed_swaps',
+        help_text="User who created this proposal"
+    )
+    group = models.ForeignKey(
+        'Group',
+        on_delete=models.CASCADE,
+        related_name='task_proposals',
+        help_text="Group this proposal was put forward to"
+    )
+    task_template = models.ForeignKey(
+        'TaskTemplate',
+        on_delete=models.CASCADE,
+        related_name='proposal',
+        help_text="The underlying task template being proposed"
+    )
+
+    reason = models.TextField(
+        blank=True,
+    )
+    voting_deadline = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When proposal will expire - if not accepted or rejected before this deadline"
+    )
+    approved = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def in_open(self) -> bool:
+        return self.state == 'pending'
+
+    def __str__(self):
+        return f"Proposal for '{self.task_template.name}'in {self.group.name}"
+
+
+class TaskVote:
+    """Represents a member's vote for a specific task decision."""
+    # TODO: Link member to proposal/decision, include chosen option, confidence/notes, timestamps,
+    # TODO: and uniqueness constraints (one vote per decision per member).
+
+    proposal = models.ForeignKey(
+        'TaskProposal',
+        on_delete=models.CASCADE,
+        related_name='votes',
+        help_text= "The proposal being voted on"
+    )
+
+    voter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+
+    )
 
 
 class TaskPreference:
@@ -468,10 +535,6 @@ class TaskPreference:
     # TODO: Map member -> task/proposal with preference enum/weight, optional reasons, and tracking for last_updated.
 
 
-class TaskVote:
-    """Represents a member's vote for a specific task decision."""
-    # TODO: Link member to proposal/decision, include chosen option, confidence/notes, timestamps,
-    # TODO: and uniqueness constraints (one vote per decision per member).
 
 
 class ExternalCredential(models.Model):
