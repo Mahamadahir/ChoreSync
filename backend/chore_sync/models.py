@@ -398,7 +398,7 @@ class MessageReceipt(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name='message_receipts'
+        related_name='messages_receipts'
     )
     seen_at = models.DateTimeField(
         null=True,
@@ -474,7 +474,9 @@ class TaskProposal:
     )
     proposed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name='proposed_swaps',
         help_text="User who created this proposal"
     )
@@ -528,6 +530,30 @@ class TaskVote:
         on_delete=models.CASCADE,
 
     )
+    VOTE_CHOICES = [
+        ('support', 'Support'),
+        ('reject', 'Reject'),
+        ('abstain', 'Abstain'),
+    ]
+    choice = models.CharField(
+        max_length=20,
+        choices=VOTE_CHOICES,
+        help_text="The member's decision for this proposal."
+    )
+    note = models.TextField(
+        blank=True,
+        help_text="Optional comment or reasoning for the vote."
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    class Meta:
+        unique_together = ('proposal', 'voter')
+        verbose_name = "Task vote"
+        verbose_name_plural = "Task votes"
+
+    def __str__(self):
+        return f"{self.voter} voted {self.choice} on {self.proposal_id}"
 
 
 class TaskPreference:
