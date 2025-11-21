@@ -1,0 +1,1049 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{array}
+\usepackage{setspace}
+\usepackage{parskip}
+
+\setlist[itemize]{topsep=2pt,parsep=0pt,partopsep=0pt}
+\setlist[enumerate]{topsep=2pt,parsep=0pt,partopsep=0pt}
+
+\title{ChoreSync System Design Document}
+\author{Mahamad Dahir}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\newpage
+
+\section{Overview}
+
+\subsection{Product Summary}
+
+ChoreSync is a group chore-management and scheduling application. It helps small groups (households, flatmates, student houses, etc.) coordinate recurring chores fairly, taking into account:
+
+\begin{itemize}
+    \item Each member's existing time commitments (via calendar integration).
+    \item Individual preferences toward specific tasks.
+    \item Flexible task swapping and proposals.
+\end{itemize}
+
+ChoreSync combines task templates (e.g.\ ``Take out bins every 2 days'') with per-instance task occurrences, an internal event model, and optional integration with external calendars (Google, Microsoft). Users interact with the system via a Vue SPA; the backend is a Django application backed by PostgreSQL.
+
+\subsection{Goals and Non-Goals}
+
+\subsubsection*{Goals}
+
+ChoreSync has three main categories of goals: product goals, architecture goals, and delivery/process goals.
+
+\paragraph{Product goals}
+
+\begin{itemize}
+    \item Provide a fair, transparent way to assign and track household or group chores over time, including recurring tasks and one-off jobs.
+    \item Make it easy for members to see \emph{exactly} what they need to do and when, via:
+    \begin{itemize}
+        \item A clear “My Tasks” view backed by task occurrences.
+        \item Calendar views that consolidate in-app tasks and external events.
+        \item Lightweight group chat and rich notifications (bell + feed + optional digests).
+    \end{itemize}
+    \item Support collaboration features around chores:
+    \begin{itemize}
+        \item Task proposals and voting flows so groups can agree on what chores exist.
+        \item Open-ended task swaps where anyone in the group can pick up offered tasks.
+        \item Optional additional modules such as playbooks, insights/fairness dashboards,
+              shared inventory, and guest access once the core experience is stable.
+    \end{itemize}
+    \item Be availability-aware by integrating with external calendars (Google, Outlook, etc.)
+          and using events to inform task scheduling and reassignment.
+\end{itemize}
+
+\paragraph{Architecture and technical goals}
+
+\begin{itemize}
+    \item Build a clean, layered architecture:
+    \begin{itemize}
+        \item Django models as the persistence layer.
+        \item A dedicated service layer (e.g.\ \texttt{AccountService}, \texttt{TaskScheduler},
+              \texttt{CalendarSyncService}, \texttt{NotificationService}) encapsulating domain logic.
+        \item Thin API/controllers on the backend and frontend that delegate to services.
+    \end{itemize}
+    \item Treat tests as first-class citizens:
+    \begin{itemize}
+        \item Each method or controller in the progress tracker has a matching test case.
+        \item Aim for broad coverage of domain behaviour, not just happy paths.
+    \end{itemize}
+    \item Provide a coherent calendar and sync story:
+    \begin{itemize}
+        \item One unified \texttt{Event} model that handles internal, task-derived, and external events.
+        \item Provider-specific sync services (Google, Outlook, etc.) that push/pull events, not todos.
+        \item Credential management with clear boundaries between auth, sync, and provider adapters.
+    \end{itemize}
+    \item Make the system deployable and maintainable:
+    \begin{itemize}
+        \item Containerise the app (Docker) and support a simple health/bootstrapping story.
+        \item Keep provider integrations and optional modules isolated so they can evolve or be disabled.
+    \end{itemize}
+\end{itemize}
+
+\paragraph{Delivery and scope goals}
+
+\begin{itemize}
+    \item Deliver the project in phased, test-driven slices (as outlined in the progress tracker):
+    \begin{itemize}
+        \item Domain model foundations.
+        \item Accounts \& profiles.
+        \item Membership management.
+        \item Task scheduling engine \& lifecycle.
+        \item Calendar views and sync.
+        \item Messaging, notifications, and digests.
+        \item Fairness/insights, templates/playbooks, and other “Additional” tracks.
+    \end{itemize}
+    \item Keep a clear distinction between \textbf{Core} features (must-have for MVP) and
+          \textbf{Additional} features (nice-to-have, can be deferred if needed).
+    \item Maintain a single progress tracker as the source of truth for methods and tests to implement.
+\end{itemize}
+
+\subsubsection*{Non-Goals (for now)}
+
+\begin{itemize}
+    \item Native mobile apps (Android/iOS). The initial target is a web SPA backed by Django.
+    \item Enterprise multi-tenant features, SSO for large organisations, or complex RBAC beyond basic roles
+          (member / moderator / owner).
+    \item Fully offline operation or complex conflict resolution for offline edits.
+    \item Acting as a general “life OS”:
+    \begin{itemize}
+        \item Deep finance/billing, budgeting, or household accounting.
+        \item Advanced AI/ML scheduling, recommendation, or “smart nudge” systems beyond a simple rules-based nudging engine.
+    \end{itemize}
+    \item Tight coupling to any single calendar or provider:
+    \begin{itemize}
+        \item The goal is provider-agnostic adapters for calendars, not deep integration with every feature
+              of Google Tasks, Microsoft To Do, etc.
+        \item External todo/task APIs are out of scope; chores are represented and synced as events.
+    \end{itemize}
+    \item Heavy back-office tooling beyond the Django admin and basic moderation screens needed for debugging and support.
+\end{itemize}
+
+\subsection{Scope of This Document}
+
+This document covers:
+
+\begin{itemize}
+    \item Domain and data model design (including on-delete behaviour).
+    \item Service layer and domain error strategy.
+    \item API structure and major endpoints.
+    \item Frontend architecture at a high level.
+    \item Calendar/event design and the ``tasks as events'' decision.
+    \item Key business logic (assignment, swaps, proposals) at a conceptual level.
+    \item Testing and phased roadmap.
+\end{itemize}
+
+\section{Users and Use Cases}
+
+\subsection{Personas}
+
+\paragraph{Household Member / Group Member}
+
+\begin{itemize}
+    \item Wants to know what chores they are responsible for and when.
+    \item Wants to swap or avoid certain tasks occasionally.
+    \item Wants reminders and visibility of upcoming chores.
+\end{itemize}
+
+\paragraph{Group Owner / Admin}
+
+\begin{itemize}
+    \item Creates or invites a group.
+    \item Sets up initial chores and recurrence.
+    \item Oversees members and can moderate proposals if necessary.
+\end{itemize}
+
+\subsection{Core User Flows}
+
+\subsubsection*{Account and Group Setup}
+
+\begin{itemize}
+    \item User signs up and logs in.
+    \item They create a new group or join an existing one via a code.
+    \item They become a member (and possibly owner) of that group.
+\end{itemize}
+
+\subsubsection*{Chore Creation and Approval}
+
+\begin{itemize}
+    \item A member proposes a new chore (TaskTemplate) with recurrence.
+    \item Group members vote on the proposal.
+    \item Once approved, the task becomes active and generates occurrences over time.
+\end{itemize}
+
+\subsubsection*{Task Assignment and Completion}
+
+\begin{itemize}
+    \item The system assigns specific TaskOccurrences to members based on group rules and task preferences (future algorithm).
+    \item Users see a ``My Tasks'' list of upcoming occurrences.
+    \item They mark tasks completed; completion timestamps are recorded.
+\end{itemize}
+
+\subsubsection*{Task Swaps}
+
+\begin{itemize}
+    \item A member can open a swap request for a task occurrence they are assigned.
+    \item Any eligible group member can accept the swap.
+    \item Assignment is updated, and both parties are notified.
+\end{itemize}
+
+\subsubsection*{Calendar and Availability}
+
+\begin{itemize}
+    \item A user connects one or more external calendars (e.g.\ Google, Microsoft).
+    \item The system pulls events into internal Event rows tied to the user's calendars.
+    \item Task occurrences can be surfaced as calendar events internally and optionally pushed back to external providers.
+    \item Availability algorithms can avoid scheduling tasks over busy periods.
+\end{itemize}
+
+\subsubsection*{Messaging and Notifications}
+
+\begin{itemize}
+    \item Members send messages within a group.
+    \item Notifications are generated for key events: new assignments, swaps, proposals, group invites, and possibly messages.
+    \item Users can mark notifications as read or dismiss them.
+\end{itemize}
+
+\section{System Architecture}
+
+\subsection{High-Level Architecture}
+
+\begin{itemize}
+    \item \textbf{Frontend}: Vue SPA (Single Page Application).
+    \item \textbf{Backend}: Django application (REST-style APIs and admin).
+    \item \textbf{Database}: PostgreSQL.
+    \item \textbf{Real-Time} (optional / partial): Django Channels/WebSockets for group chat and notifications.
+\end{itemize}
+
+Data flow:
+
+\begin{verbatim}
+Vue SPA  <->  Django API Views (DRF / function views)
+         <->  Services (AuthService, TaskService, CalendarService, NotificationService)
+         <->  Django ORM Models
+         <->  PostgreSQL
+\end{verbatim}
+
+\subsection{Tech Stack}
+
+\begin{itemize}
+    \item \textbf{Backend}
+    \begin{itemize}
+        \item Django (core framework, ORM, admin, auth).
+        \item Django Channels (for WebSocket-based messaging/notifications, if needed).
+    \end{itemize}
+    \item \textbf{Frontend}
+    \begin{itemize}
+        \item Vue 3 SPA (router, component-based views).
+    \end{itemize}
+    \item \textbf{Database}
+    \begin{itemize}
+        \item PostgreSQL (primary persistence).
+    \end{itemize}
+    \item \textbf{External services}
+    \begin{itemize}
+        \item Google Calendar / Microsoft Outlook via OAuth2 and REST APIs
+              (via \texttt{ExternalCredential} + \texttt{Calendar}/\texttt{Event}).
+    \end{itemize}
+\end{itemize}
+
+\subsection{Layering and Responsibilities}
+
+\paragraph{Models (\texttt{models.py})}
+\begin{itemize}
+    \item Define persistence layer and relationships.
+    \item Expose small helper methods (e.g.\ \texttt{TaskTemplate.get\_next\_due\_date}).
+    \item Avoid complex workflows.
+\end{itemize}
+
+\paragraph{Services (\texttt{chore\_sync/services/...})}
+\begin{itemize}
+    \item Encapsulate business logic per domain area:
+    \begin{itemize}
+        \item \texttt{AuthService}
+        \item \texttt{TaskService}
+        \item \texttt{CalendarService}
+        \item \texttt{NotificationService}
+        \item (optional) \texttt{MessagingService}
+    \end{itemize}
+    \item Use models and raise domain errors.
+    \item Return either model instances, dict projections, or DTOs.
+\end{itemize}
+
+\paragraph{API Layer (views)}
+\begin{itemize}
+    \item Thin HTTP adapters.
+    \item Parse requests \textrightarrow\ call services \textrightarrow\ map domain errors to HTTP responses \textrightarrow\ serialise results to JSON.
+\end{itemize}
+
+\paragraph{Admin (\texttt{admin.py})}
+\begin{itemize}
+    \item Back-office UI for internal debugging/operations.
+    \item Uses inlines, search, filters for \texttt{Group}, \texttt{TaskTemplate}, \texttt{TaskOccurrence}, \texttt{Event}, \texttt{Notification}, etc.
+\end{itemize}
+
+\paragraph{Frontend}
+\begin{itemize}
+    \item Vue pages for auth, groups, tasks, calendar, messaging, notifications.
+    \item Calls REST APIs and handles responses and domain errors.
+\end{itemize}
+
+\section{Domain Model and Data Design}
+
+\subsection{Entity Overview (Conceptual)}
+
+\paragraph{User}
+\begin{itemize}
+    \item Custom \texttt{AbstractUser} subclass with unique email.
+    \item Many-to-many to \texttt{Group} through \texttt{GroupMembership}.
+\end{itemize}
+
+\paragraph{Group}
+\begin{itemize}
+    \item Represents a household or team.
+    \item Has owner, name, \texttt{group\_code} for joining.
+    \item Contains reassignment policy fields (\texttt{reassignment\_rule}, \texttt{reassignment\_value}, \texttt{last\_reassigned\_at}).
+\end{itemize}
+
+\paragraph{GroupMembership}
+\begin{itemize}
+    \item Join table between \texttt{User} and \texttt{Group}.
+    \item Has role (\texttt{member}, \texttt{moderator}), \texttt{joined\_at}.
+\end{itemize}
+
+\paragraph{TaskTemplate}
+\begin{itemize}
+    \item Describes a chore type and recurrence (e.g.\ ``bins every 2 days'').
+    \item Fields for recurrence choice (\texttt{none}, \texttt{every\_n\_days}), \texttt{recur\_value}, \texttt{next\_due}, \texttt{active}.
+    \item Owned by a \texttt{Group} and optionally a \texttt{creator}.
+\end{itemize}
+
+\paragraph{TaskOccurrence}
+\begin{itemize}
+    \item A scheduled instance of a template at a specific \texttt{deadline}.
+    \item Linked to \texttt{TaskTemplate}, optionally \texttt{assigned\_to} a \texttt{User}.
+    \item Tracks completion status and \texttt{completed\_at}.
+\end{itemize}
+
+\paragraph{TaskPreference}
+\begin{itemize}
+    \item Stores a user's preference toward a \texttt{TaskTemplate} (e.g.\ prefer / neutral / avoid).
+    \item Used to influence assignment decisions.
+\end{itemize}
+
+\paragraph{TaskSwap}
+\begin{itemize}
+    \item Represents an open-ended swap request for a \texttt{TaskOccurrence}.
+    \item Has \texttt{from\_user}, optional \texttt{to\_user}, status/accepted flag, reason, timestamps.
+\end{itemize}
+
+\paragraph{TaskProposal}
+\begin{itemize}
+    \item A proposal to introduce or change a \texttt{TaskTemplate} in a group.
+    \item Tracks state (\texttt{pending}, \texttt{approved}, \texttt{rejected}, \texttt{expired}), reason, voting deadline, link to template and group.
+\end{itemize}
+
+\paragraph{TaskVote}
+\begin{itemize}
+    \item A member's vote on a \texttt{TaskProposal}.
+    \item Stores voter, choice (\texttt{support}, \texttt{reject}, \texttt{abstain}), optional note, timestamps.
+\end{itemize}
+
+\paragraph{ExternalCredential}
+\begin{itemize}
+    \item OAuth2 credentials for external providers (Google/Microsoft).
+    \item Linked to a \texttt{User}, provider, secrets JSON blob, scopes, expiry, last refreshed.
+\end{itemize}
+
+\paragraph{Calendar}
+\begin{itemize}
+    \item Represents a calendar source for a user: \texttt{internal}, \texttt{google}, \texttt{microsoft}.
+    \item Linked to user and optionally \texttt{ExternalCredential}.
+    \item Holds sync flags (\texttt{sync\_enabled}, \texttt{back\_sync\_enabled}, \texttt{include\_in\_availability} in design), tokens, timezone, etc.
+\end{itemize}
+
+\paragraph{Event}
+\begin{itemize}
+    \item A calendar event associated with a \texttt{Calendar}.
+    \item Has \texttt{source} (\texttt{external}, \texttt{task}, \texttt{manual}), \texttt{start}, \texttt{end}, \texttt{title}, \texttt{description}, \texttt{is\_all\_day}, \texttt{blocks\_availability}.
+    \item For external events: stores external IDs and raw payload.
+    \item For task events: links \texttt{task\_occurrence}.
+\end{itemize}
+
+\paragraph{GroupCalendar}
+\begin{itemize}
+    \item Aggregate calendar settings for a group (e.g.\ timezone, whether to show member calendars or group tasks).
+\end{itemize}
+
+\paragraph{Message}
+\begin{itemize}
+    \item Chat messages within a group.
+    \item Linked to group and sender (user), with content and timestamp.
+\end{itemize}
+
+\paragraph{MessageReceipt}
+\begin{itemize}
+    \item Per-user read status for a \texttt{Message} (\texttt{seen\_at}).
+\end{itemize}
+
+\paragraph{Notification}
+\begin{itemize}
+    \item In-app notification to a user.
+    \item Has type (e.g.\ \texttt{task\_assigned}, \texttt{task\_swap}, \texttt{group\_invite}, \texttt{task\_proposal}, \texttt{message}), generic \texttt{content} text, and optional foreign keys to group/task occurrence/proposal/message.
+    \item Tracks \texttt{read}, \texttt{dismissed}, \texttt{created\_at}.
+\end{itemize}
+
+\subsection{Relationships (Summary)}
+
+\begin{itemize}
+    \item \texttt{User} 1--N \texttt{GroupMembership}, \texttt{GroupMembership} N--1 \texttt{Group}.
+    \item \texttt{Group} 1--N \texttt{TaskTemplate}, \texttt{TaskTemplate} 1--N \texttt{TaskOccurrence}.
+    \item \texttt{TaskOccurrence} 0--1 \texttt{Event} (via \texttt{task\_occurrence}).
+    \item \texttt{User} 1--N \texttt{Calendar} \textrightarrow{} \texttt{Calendar} 1--N \texttt{Event}.
+    \item \texttt{User} 1--N \texttt{ExternalCredential}.
+    \item \texttt{TaskTemplate} 1--N \texttt{TaskPreference} (per user).
+    \item \texttt{TaskProposal} 1--N \texttt{TaskVote}.
+    \item \texttt{Group} 1--N \texttt{Message}, \texttt{Message} 1--N \texttt{MessageReceipt}.
+    \item \texttt{User} 1--N \texttt{Notification}, each linking optionally to \texttt{Group}, \texttt{TaskOccurrence}, \texttt{TaskProposal}, \texttt{Message}.
+\end{itemize}
+
+\subsection{Significant Field Behaviour}
+
+\paragraph{Recurrence (\texttt{TaskTemplate})}
+
+\begin{itemize}
+    \item \texttt{recurring\_choice} / \texttt{recur\_value} must be consistent:
+    \begin{itemize}
+        \item If \texttt{recurring\_choice == 'none'} then \texttt{recur\_value} must be \texttt{null}.
+        \item If \texttt{recurring\_choice != 'none'} then \texttt{recur\_value} must be non-null.
+    \end{itemize}
+    \item Enforced via \texttt{clean()} on the model.
+\end{itemize}
+
+\paragraph{TaskOccurrence Uniqueness}
+
+\begin{itemize}
+    \item The pair \texttt{(template, deadline)} is unique to avoid duplicates for the same slot.
+\end{itemize}
+
+\paragraph{Event Source}
+
+\begin{itemize}
+    \item \texttt{external}: pulled from external providers; \texttt{external\_event\_id}/\texttt{external\_calendar\_id} set.
+    \item \texttt{task}: derived from a \texttt{TaskOccurrence} (one-to-one).
+    \item \texttt{manual}: created manually in the app (not tied to a task or external provider).
+\end{itemize}
+
+\paragraph{Events and Availability}
+
+\begin{itemize}
+    \item \texttt{blocks\_availability} indicates whether the event should count as ``busy time'' when computing free slots.
+\end{itemize}
+
+\subsection{On-Delete Behaviour}
+
+This section captures both the current \texttt{on\_delete} behaviours in \texttt{models.py} and the intended semantics.
+
+\subsubsection{User Deletion}
+
+\begin{itemize}
+    \item \texttt{GroupMembership(user, on\_delete=CASCADE)}: when a \texttt{User} is deleted, their group memberships are deleted.
+    \item \texttt{Group.owner (on\_delete=SET\_NULL)}: if an owner is deleted, the group remains but owner becomes \texttt{null}.
+    \item \texttt{TaskTemplate.creator (on\_delete=SET\_NULL)}: template remains; the ``creator'' info is lost.
+    \item \texttt{TaskOccurrence.assigned\_to (on\_delete=SET\_NULL)}: task occurrences persist; \texttt{assigned\_to} set to \texttt{null}.
+\end{itemize}
+
+Intended behaviour: when a user is deleted, future uncompleted tasks that were assigned to them may be automatically re-assigned based on the group's \texttt{reassignment\_rule}. This reassignment is handled in services (e.g.\ \texttt{TaskService.handle\_member\_removed(user)}).
+
+\begin{itemize}
+    \item \texttt{TaskSwap.from\_user / to\_user}: current implementation uses \texttt{CASCADE}. There are two possible semantics:
+    \begin{itemize}
+        \item Option A (current): \texttt{CASCADE} -- all swaps involving the user are deleted with the user.
+        \item Option B (future): \texttt{SET\_NULL} -- swap history retained but user fields nulled for privacy/anonymisation.
+    \end{itemize}
+    \item \texttt{Message.sender (on\_delete=SET\_NULL)}: messages remain but sender becomes \texttt{null}.
+    \item \texttt{Notification.recipient (on\_delete=CASCADE)}: user deletion removes their notifications.
+    \item \texttt{ExternalCredential.user (on\_delete=CASCADE)}: credentials deleted with user.
+\end{itemize}
+
+\subsubsection{Group Deletion}
+
+\begin{itemize}
+    \item \texttt{GroupMembership.group (on\_delete=CASCADE)}
+    \item \texttt{TaskTemplate.group (on\_delete=CASCADE)}
+    \item \texttt{TaskOccurrence.template} cascades via template.
+    \item \texttt{TaskProposal.group (on\_delete=CASCADE)}
+    \item \texttt{Message.group (on\_delete=CASCADE)}
+    \item \texttt{GroupCalendar.group (on\_delete=CASCADE)}
+\end{itemize}
+
+Deleting a group effectively deletes all domain data scoped to that group: memberships, tasks, task occurrences, proposals/votes, messages, and group calendar configuration. Notifications referencing that group either get deleted or lose their group link (depending on final \texttt{on\_delete} choice).
+
+\subsubsection{TaskTemplate Deletion}
+
+\begin{itemize}
+    \item \texttt{TaskOccurrence.template (on\_delete=CASCADE)}: all occurrences for that template are deleted.
+    \item \texttt{TaskProposal.task\_template (on\_delete=CASCADE)}: proposals tied to that template are deleted.
+    \item \texttt{TaskPreference.task\_template (on\_delete=CASCADE)}: preferences for that template are deleted.
+\end{itemize}
+
+Events linked to task occurrences are indirectly affected:
+
+\begin{itemize}
+    \item When occurrences are deleted, associated events (if linked) should be deleted as well. This is typically handled via a cascade or service-level clean-up.
+\end{itemize}
+
+\subsubsection{TaskOccurrence Deletion}
+
+\begin{itemize}
+    \item \texttt{TaskSwap.task (on\_delete=CASCADE)}: swap records for that occurrence are deleted.
+    \item \texttt{Event.task\_occurrence}: intended design is to delete task-derived events when the associated occurrence is deleted, to avoid orphaned ``ghost'' events.
+    \item \texttt{Notification.task\_occurrence (on\_delete=SET\_NULL)}: notifications remain as a history of what happened, but the link to the now-deleted occurrence is null.
+\end{itemize}
+
+\subsubsection{Calendar and Event Deletion}
+
+\begin{itemize}
+    \item \texttt{Calendar.user (on\_delete=CASCADE)}: when a user is deleted, their calendars and events are deleted.
+    \item \texttt{Calendar.credential (on\_delete=SET\_NULL)}: calendar remains if credential is removed, but will stop syncing.
+    \item \texttt{Event.calendar (on\_delete=CASCADE)}: deleting a calendar deletes its events.
+\end{itemize}
+
+External events are mirrors of external providers. Deleting the calendar in the app should not delete the events in the external provider unless explicitly part of a ``disconnect \& purge'' flow.
+
+\subsubsection{Message and Notification Deletion}
+
+\begin{itemize}
+    \item \texttt{MessageReceipt.message (on\_delete=CASCADE)}: removing a message removes all its receipts.
+    \item \texttt{Notification}: typically only cascaded on \texttt{recipient} deletion; may be bulk-archived or purged after a retention period.
+\end{itemize}
+
+\section{Service Layer Design}
+
+\subsection{Service Overview}
+
+\paragraph{AuthService}
+
+\begin{itemize}
+    \item Registration (enforcing password policy, uniqueness).
+    \item Login (via username or email).
+    \item Future: password reset, account deactivation.
+\end{itemize}
+
+\paragraph{TaskService}
+
+\begin{itemize}
+    \item Create and update \texttt{TaskTemplate}.
+    \item Generate and manage \texttt{TaskOccurrence}s.
+    \item Mark tasks complete.
+    \item Manage swaps and enforce swap rules.
+    \item Coordinate with \texttt{NotificationService} upon assignment changes.
+\end{itemize}
+
+\paragraph{CalendarService}
+
+\begin{itemize}
+    \item Manage \texttt{Calendar} objects for users.
+    \item Sync external events into internal \texttt{Event}s.
+    \item Push task-derived events to external calendars if \texttt{back\_sync\_enabled}.
+\end{itemize}
+
+\paragraph{NotificationService}
+
+\begin{itemize}
+    \item Create notifications for task assignment, swaps, proposals, messages.
+    \item List notifications for a user.
+    \item Mark as read/dismissed.
+\end{itemize}
+
+\paragraph{MessagingService (optional)}
+
+\begin{itemize}
+    \item Create messages.
+    \item Coordinate with WebSocket layer for real-time delivery.
+    \item Optionally create \texttt{Notification} entries for certain messages.
+\end{itemize}
+
+\subsection{Example Method Signatures (Conceptual)}
+
+\begin{itemize}
+    \item \texttt{AuthService.register\_user(username, email, password)}
+    \item \texttt{AuthService.login\_user(identifier, password)}
+    \item \texttt{TaskService.create\_task\_template(group, creator, name, recurrence, ...)}
+    \item \texttt{TaskService.generate\_occurrences\_for\_template(template)}
+    \item \texttt{TaskService.mark\_completed(occurrence\_id, user)}
+    \item \texttt{TaskService.offer\_swap(occurrence\_id, from\_user)}
+    \item \texttt{TaskService.accept\_swap(swap\_id, acting\_user)}
+    \item \texttt{CalendarService.sync\_calendars\_for\_user(user)}
+    \item \texttt{CalendarService.push\_task\_event(occurrence)}
+    \item \texttt{NotificationService.send\_task\_assigned(occurrence)}
+    \item \texttt{NotificationService.list\_for\_user(user, include\_read=False)}
+    \item \texttt{NotificationService.mark\_read(notification\_ids, user)}
+\end{itemize}
+
+\subsection{Domain Errors and Error Handling}
+
+Common domain exceptions include:
+
+\begin{itemize}
+    \item \textbf{Auth}
+    \begin{itemize}
+        \item \texttt{RegistrationError} (base).
+        \item \texttt{UsernameAlreadyTaken}.
+        \item \texttt{EmailAlreadyTaken}.
+        \item \texttt{WeakPassword} (with \texttt{.messages} from Django's password validators).
+        \item \texttt{InvalidCredentials}.
+        \item \texttt{InactiveAccount}.
+    \end{itemize}
+    \item \textbf{Tasks and Groups}
+    \begin{itemize}
+        \item \texttt{NotGroupMember}.
+        \item \texttt{InvalidSwap} (e.g.\ swap already accepted/closed).
+        \item \texttt{ProposalClosed} (proposal no longer pending).
+        \item \texttt{ForbiddenAction} (generic permission failures).
+    \end{itemize}
+\end{itemize}
+
+Services raise domain exceptions when a business rule is violated. The API layer catches them and maps to HTTP 4xx responses with clear messages. Technical issues (DB errors, external API failures) are either wrapped in generic domain errors or returned as 500-level responses with logging.
+
+\section{API Design (High Level)}
+
+\subsection{Authentication Endpoints}
+
+\begin{itemize}
+    \item \texttt{POST /api/signup/}
+    \begin{itemize}
+        \item Body: \texttt{\{ username, email, password \}}
+        \item Calls \texttt{AuthService.register\_user}.
+        \item Returns basic user info on success.
+    \end{itemize}
+    \item \texttt{POST /api/login/}
+    \begin{itemize}
+        \item Body: \texttt{\{ identifier, password \}} (identifier = email or username).
+        \item Calls \texttt{AuthService.login\_user}.
+        \item Establishes session or returns token.
+    \end{itemize}
+    \item \texttt{POST /api/logout/}
+    \item \texttt{GET /api/me/}: returns current authenticated user.
+\end{itemize}
+
+\subsection{Group and Membership Endpoints}
+
+\begin{itemize}
+    \item \texttt{GET /api/groups/} -- list groups for current user.
+    \item \texttt{POST /api/groups/} -- create a new group.
+    \item \texttt{GET /api/groups/\{id\}/} -- group details.
+    \item \texttt{POST /api/groups/\{id\}/join/} -- join with \texttt{group\_code}.
+    \item \texttt{GET /api/groups/\{id\}/members/} -- list members.
+\end{itemize}
+
+\subsection{Task and Swap Endpoints}
+
+\begin{itemize}
+    \item \texttt{GET /api/groups/\{id\}/tasks/} -- list templates for group.
+    \item \texttt{POST /api/groups/\{id\}/tasks/} -- create template (possibly via proposal flow).
+    \item \texttt{GET /api/tasks/occurrences/} -- list occurrences for current user (``My tasks'').
+    \item \texttt{POST /api/tasks/\{occurrence\_id\}/complete/}
+    \item \texttt{POST /api/tasks/\{occurrence\_id\}/swap/offer/}
+    \item \texttt{POST /api/swaps/\{swap\_id\}/accept/}
+\end{itemize}
+
+\subsection{Proposal and Voting Endpoints}
+
+\begin{itemize}
+    \item \texttt{GET /api/groups/\{id\}/proposals/}
+    \item \texttt{POST /api/groups/\{id\}/proposals/}
+    \item \texttt{POST /api/proposals/\{id\}/vote/}
+\end{itemize}
+
+\subsection{Calendar and Event Endpoints}
+
+\begin{itemize}
+    \item \texttt{GET /api/calendars/} -- list user calendars.
+    \item \texttt{POST /api/calendars/connect/} -- initiate OAuth.
+    \item \texttt{POST /api/calendars/sync/} -- trigger sync.
+    \item \texttt{GET /api/events/} -- view internal events.
+    \item Future: \texttt{GET /api/availability/} -- suggested free slots.
+\end{itemize}
+
+\subsection{Messaging and Notification Endpoints}
+
+\begin{itemize}
+    \item \texttt{GET /api/groups/\{id\}/messages/}
+    \item \texttt{POST /api/groups/\{id\}/messages/}
+    \item \texttt{GET /api/notifications/}
+    \item \texttt{POST /api/notifications/mark-read/}
+\end{itemize}
+
+\section{Frontend Architecture (Vue)}
+
+\subsection{Major Views}
+
+\begin{itemize}
+    \item \texttt{LoginView} / \texttt{SignupView}
+    \item \texttt{GroupListView}
+    \item \texttt{GroupDetailView} (tabs for ``Tasks'', ``Messages'', ``Settings'')
+    \item \texttt{MyTasksView}
+    \item \texttt{CalendarView} (combined internal events plus optionally external events)
+    \item \texttt{NotificationsView} / notification dropdown
+\end{itemize}
+
+\subsection{State Management}
+
+\begin{itemize}
+    \item Global auth state (current user).
+    \item Current group context.
+    \item Cached lists of:
+    \begin{itemize}
+        \item My tasks (\texttt{TaskOccurrence}).
+        \item Group tasks (\texttt{TaskTemplate}).
+        \item Notifications.
+        \item Messages.
+    \end{itemize}
+\end{itemize}
+
+\subsection{API Integration}
+
+\begin{itemize}
+    \item Axios (or similar) wrapper:
+    \begin{itemize}
+        \item Base URL.
+        \item Attaches session cookie or token.
+        \item Handles 401/403 as ``not logged in / no permission''.
+    \end{itemize}
+\end{itemize}
+
+\section{Security and Privacy}
+
+\subsection{Authentication}
+
+\begin{itemize}
+    \item Django auth with either:
+    \begin{itemize}
+        \item Session-based authentication and CSRF tokens, or
+        \item Token/JWT-based auth (if needed for external clients).
+    \end{itemize}
+    \item Password policy enforced via Django's \texttt{AUTH\_PASSWORD\_VALIDATORS} plus optional custom complexity validator.
+\end{itemize}
+
+\subsection{Authorisation}
+
+\begin{itemize}
+    \item Only members of a group may see/modify that group's data.
+    \item Only owner/moderator can change group settings and potentially approve proposals (depending on final rules).
+    \item Only the assignee (or moderators) can mark a task occurrence complete.
+    \item Only group members can accept a swap for that group.
+\end{itemize}
+
+\subsection{Data Privacy and Retention}
+
+\begin{itemize}
+    \item When a user is deleted:
+    \begin{itemize}
+        \item Memberships removed.
+        \item Assigned tasks are unassigned and may be re-assigned to remaining members.
+        \item Messages may be retained with sender set to \texttt{null} (anonymised).
+        \item OAuth credentials removed.
+    \end{itemize}
+    \item Notifications and messages may be retained for a reasonable period, with optional manual or automated purging.
+\end{itemize}
+
+\section{Algorithms and Logic (Conceptual)}
+
+\subsection{Task Assignment Algorithm (Future)}
+
+Inputs:
+
+\begin{itemize}
+    \item \texttt{TaskTemplate} and its recurrence.
+    \item Group members and their \texttt{TaskPreference}s.
+    \item Swap history (to avoid repeatedly forcing tasks on people who always swap out).
+    \item Availability from \texttt{Event} (busy times).
+    \item Group \texttt{reassignment\_rule} / \texttt{reassignment\_value}.
+\end{itemize}
+
+Goals:
+
+\begin{itemize}
+    \item Distribute tasks fairly across members over time.
+    \item Respect strong preferences (avoid tasks users hate, if possible).
+    \item Avoid assigning tasks in time windows where users are busy.
+\end{itemize}
+
+The algorithm will likely live in \texttt{TaskService} and be triggered:
+
+\begin{itemize}
+    \item On new task templates.
+    \item On a schedule (e.g.\ daily cron).
+    \item When membership changes significantly.
+\end{itemize}
+
+\subsection{Swap Logic}
+
+\begin{itemize}
+    \item Swaps are open-ended: \texttt{from\_user} creates a \texttt{TaskSwap} linked to a \texttt{TaskOccurrence}, with \texttt{to\_user} initially \texttt{null}.
+    \item Any eligible group member can accept:
+    \begin{itemize}
+        \item Sets \texttt{to\_user}.
+        \item Updates \texttt{TaskOccurrence.assigned\_to}.
+        \item Swap status becomes ``accepted/closed''.
+    \end{itemize}
+    \item Edge cases:
+    \begin{itemize}
+        \item Only one accept allowed; further attempts raise \texttt{InvalidSwap}.
+        \item If the originating task is completed or reassigned by other logic, swap becomes invalid.
+    \end{itemize}
+\end{itemize}
+
+\subsection{Proposal and Voting Logic}
+
+\begin{itemize}
+    \item Proposals start as \texttt{pending}.
+    \item Each group member can cast one vote (\texttt{support}, \texttt{reject}, \texttt{abstain}).
+    \item A proposal becomes:
+    \begin{itemize}
+        \item \texttt{approved} if:
+        \begin{itemize}
+            \item Required support ratio reached, and
+            \item All required votes cast (depending on rule).
+        \end{itemize}
+        \item \texttt{rejected} if majority reject.
+        \item \texttt{expired} if \texttt{voting\_deadline} passes without a decision.
+    \end{itemize}
+\end{itemize}
+
+Exact thresholds and formulas are configurable later.
+
+\section{Calendar and Sync Design}
+
+\subsection{Internal vs External Calendars}
+
+\paragraph{Internal Calendar}
+
+\begin{itemize}
+    \item There is at least one built-in \texttt{Calendar} per user (\texttt{provider='internal'}).
+    \item Contains task-derived events and optionally manual events.
+    \item Used for availability calculations.
+\end{itemize}
+
+\paragraph{External Calendars}
+
+\begin{itemize}
+    \item One \texttt{Calendar} per connected external calendar.
+    \item Linked to an \texttt{ExternalCredential}.
+    \item Flags:
+    \begin{itemize}
+        \item \texttt{sync\_enabled}: whether to pull events.
+        \item \texttt{back\_sync\_enabled}: whether to push task events out.
+        \item \texttt{include\_in\_availability}: whether events on this calendar block time.
+    \end{itemize}
+\end{itemize}
+
+\subsection{Event Model and Availability}
+
+\begin{itemize}
+    \item Single \texttt{Event} model for all events (internal + external + task-derived).
+    \item Availability queries use all \texttt{Event} rows for the user where \texttt{blocks\_availability=True} and \texttt{status} is not cancelled, optionally filtered by calendar configuration.
+\end{itemize}
+
+\subsection{Tasks to Events vs Todos (Design Choice)}
+
+\paragraph{Decision}
+
+Represent chores as \textbf{events}, not as todos, and let external providers handle display on their calendars.
+
+\begin{itemize}
+    \item ChoreSync pushes task occurrences into calendars as \texttt{Event} entries, rather than as external todo/task objects.
+    \item For Google, tasks will not be synced as ``Google Tasks''; instead, events appear directly in the calendar.
+\end{itemize}
+
+\paragraph{Reasons}
+
+\begin{itemize}
+    \item Calendar events have richer time semantics (start/end, busy-time semantics, etc.).
+    \item External providers already display events on calendars; no extra mapping required.
+    \item Keeps internal model simpler: a single \texttt{Event} abstraction used for availability and display.
+    \item Google Tasks / Microsoft To-Do are separate APIs with their own quirks; using events avoids multiple representations.
+\end{itemize}
+
+\paragraph{Implications}
+
+\begin{itemize}
+    \item The \texttt{TaskOccurrence} \textrightarrow{} \texttt{Event} relationship is primary for scheduling.
+    \item \texttt{CalendarService} only needs to manage events, not todo objects, when syncing.
+\end{itemize}
+
+\section{Messaging and Notifications}
+
+\subsection{Messaging}
+
+\begin{itemize}
+    \item Simple group chat per \texttt{Group}.
+    \item \texttt{Message}: \texttt{group}, \texttt{sender}, \texttt{content}, \texttt{timestamp}.
+    \item \texttt{MessageReceipt}: \texttt{message}, \texttt{user}, \texttt{seen\_at}.
+    \item Real-time updates via WebSockets for new messages (Django Channels).
+\end{itemize}
+
+\subsection{Notifications}
+
+\begin{itemize}
+    \item \texttt{Notification}:
+    \begin{itemize}
+        \item \texttt{recipient}
+        \item \texttt{type} (e.g.\ \texttt{task\_assigned}, \texttt{task\_swap}, \texttt{group\_invite}, \texttt{task\_proposal}, \texttt{message})
+        \item \texttt{content} (short text summary)
+        \item Optional links:
+        \begin{itemize}
+            \item \texttt{group}
+            \item \texttt{task\_occurrence}
+            \item \texttt{task\_proposal}
+            \item \texttt{message}
+        \end{itemize}
+        \item \texttt{read}, \texttt{dismissed}, \texttt{created\_at}
+    \end{itemize}
+\end{itemize}
+
+Backend services create notifications on key events. The frontend consumes \texttt{/api/notifications/} and displays a list or badge. Clicking a notification navigates to the relevant UI view using the associated foreign keys.
+
+\section{Testing and QA}
+
+\subsection{Testing Strategy}
+
+\begin{itemize}
+    \item \textbf{Unit tests for services}:
+    \begin{itemize}
+        \item \texttt{AuthService} (registration, password rules, login).
+        \item \texttt{TaskService} (create templates, occurrences, mark complete, swaps).
+        \item \texttt{CalendarService} (internal behaviour; external APIs mocked).
+        \item \texttt{NotificationService}.
+    \end{itemize}
+    \item \textbf{API tests}:
+    \begin{itemize}
+        \item Auth endpoints.
+        \item Group creation/join.
+        \item Basic task creation \& completion.
+        \item Swap flows.
+        \item Notifications listing \& marking read.
+    \end{itemize}
+    \item \textbf{Model tests}:
+    \begin{itemize}
+        \item Validation (e.g.\ \texttt{clean()} on \texttt{TaskTemplate}).
+        \item Critical \texttt{on\_delete} behaviour.
+    \end{itemize}
+\end{itemize}
+
+\subsection{Fixtures and Factories}
+
+\begin{itemize}
+    \item Factories for:
+    \begin{itemize}
+        \item User
+        \item Group \& GroupMembership
+        \item TaskTemplate \& TaskOccurrence
+        \item Calendar \& Event
+        \item Message \& Notification
+    \end{itemize}
+\end{itemize}
+
+\section{Roadmap and Phases}
+
+\subsection{Phase 1 -- MVP}
+
+\begin{itemize}
+    \item Auth: Signup / Login / Logout / Me.
+    \item Groups: Create / Join.
+    \item Tasks:
+    \begin{itemize}
+        \item Basic templates (no complex recurrence).
+        \item Occurrences and simple assignment.
+        \item Mark as completed.
+    \end{itemize}
+    \item Basic notifications for task assignment.
+    \item Simple group messaging.
+\end{itemize}
+
+\subsection{Phase 2 -- Swaps, Proposals, Preferences}
+
+\begin{itemize}
+    \item Open swap requests and acceptance.
+    \item Task proposals and voting.
+    \item Task preferences and simple preference-aware assignment.
+    \item Notification expansion (task proposals, swaps, messages).
+\end{itemize}
+
+\subsection{Phase 3 -- Calendars and Availability}
+
+\begin{itemize}
+    \item External calendar integration (Google, Microsoft).
+    \item Internal \texttt{Event} model fully wired.
+    \item Availability-aware assignment.
+    \item Pushing task occurrences as events back to external calendars.
+\end{itemize}
+
+\subsection{Phase 4 -- Polish and Performance}
+
+\begin{itemize}
+    \item UI polish and UX improvements.
+    \item More sophisticated assignment algorithm.
+    \item Optional data retention policies, archiving of old notifications/events.
+\end{itemize}
+
+\section{Decision Log (Project Choices)}
+
+\subsection{Service Layer vs Fat Views}
+
+\textbf{Decision:} Use services (\texttt{AuthService}, \texttt{TaskService}, etc.) instead of putting business logic in views.
+
+\textbf{Reason:} Better reuse, clearer testing, avoids duplicating logic across views/APIs.
+
+\subsection{Tasks as Events, Not Todos}
+
+\textbf{Decision:} Push chores as events into calendars, not as todo items in external providers.
+
+\textbf{Reason:}
+
+\begin{itemize}
+    \item Single \texttt{Event} model; simpler availability logic.
+    \item Avoids extra integration with Google Tasks / Microsoft To-Do.
+\end{itemize}
+
+\textbf{Impact:} \texttt{CalendarService} only manages events; no separate todo sync.
+
+\subsection{Notification Model: Single Table with Optional FKs}
+
+\textbf{Decision:} One \texttt{Notification} model with type and optional foreign keys to \texttt{Group}, \texttt{TaskOccurrence}, \texttt{TaskProposal}, \texttt{Message}.
+
+\textbf{Reason:} Single place to fetch and display all notifications; simpler queries and UI.
+
+\textbf{Impact:} Some sparse columns per row; normal for this pattern.
+
+\subsection{On-Delete Strategy}
+
+\textbf{Decision:} Prefer cascade for strictly dependent objects (occurrences, swaps, receipts); \texttt{SET\_NULL} for references where history is useful but user identity may be removed (sender, creator).
+
+\textbf{Reason:} Maintain integrity and avoid orphaned records while respecting user deletion and privacy.
+
+\textbf{Impact:} Service layer may perform additional clean-up or reassignment on certain deletions.
+
+\subsection{Domain Errors and Password Policy}
+
+\textbf{Decision:} Use clear domain exceptions (\texttt{WeakPassword}, \texttt{UsernameAlreadyTaken}, etc.) and Django password validators (plus custom complexity if desired).
+
+\textbf{Reason:} Better error messages to frontend; centralised business logic.
+
+\textbf{Impact:} API layer maps these errors to user-friendly JSON responses.
+
+\end{document}

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from models import User
+
 
 
 @dataclass
@@ -19,7 +21,14 @@ class AccountService:
         TODO: Validate uniqueness and password strength, hash + store credentials, create the User
         TODO: record plus default profile/preferences, emit onboarding notifications, and mint an
         TODO: activation/session token for immediate login if required.
+
         """
+        User.objects.create(
+            username=username,
+            email=email,
+            password=password,
+        )
+
         raise NotImplementedError("TODO: implement user registration flow")
 
     def authenticate_user(self, *, username: str, password: str) -> None:
