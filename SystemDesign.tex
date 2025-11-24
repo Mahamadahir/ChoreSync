@@ -9,6 +9,7 @@
 \usepackage{array}
 \usepackage{setspace}
 \usepackage{parskip}
+\usepackage{textcomp}
 
 \setlist[itemize]{topsep=2pt,parsep=0pt,partopsep=0pt}
 \setlist[enumerate]{topsep=2pt,parsep=0pt,partopsep=0pt}
@@ -128,6 +129,12 @@ ChoreSync has three main categories of goals: product goals, architecture goals,
         \item The goal is provider-agnostic adapters for calendars, not deep integration with every feature
               of Google Tasks, Microsoft To Do, etc.
         \item External todo/task APIs are out of scope; chores are represented and synced as events.
+    \end{itemize}
+    \item Pushing chores into external todo APIs as the primary mechanism:
+    \begin{itemize}
+        \item Option B (deferred): model \texttt{TaskList}/\texttt{ExternalTaskList} akin to \texttt{Calendar} and push to Google Tasks / Microsoft To Do.
+        \item Issues: provider behaviour varies (calendar overlays can be hidden; list/reminder semantics differ); requires a second sync layer (todos + calendars); two-way mapping back to \texttt{TaskOccurrence} is messy; in-app Events are still required.
+        \item Position: treat as a nice-to-have extra surface later, not the core sync path.
     \end{itemize}
     \item Heavy back-office tooling beyond the Django admin and basic moderation screens needed for debugging and support.
 \end{itemize}

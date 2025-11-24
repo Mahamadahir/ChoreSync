@@ -2,6 +2,7 @@
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{enumitem}
 \usepackage{parskip}
+\usepackage{amstext}
 
 \title{ChoreSync Decision Log}
 \author{}
@@ -54,6 +55,14 @@
     \item \textbf{Inclusion rules}: only calendars with \texttt{include\_in\_availability=True} and events with \texttt{blocks\_availability=True} count as busy time.
     \item \textbf{Sources}: internal calendar per user plus provider calendars (\texttt{google}, \texttt{microsoft}) linked to credentials.
     \item \textbf{Blocking scope}: all-day blocking events cover the whole day unless explicitly marked non-blocking; scheduling horizon follows sync/scheduling window configuration.
+\end{itemize}
+
+\section{External Task APIs (Deferred)}
+
+\begin{itemize}
+    \item \textbf{Option B}: push chores to external todo providers (Google Tasks, Microsoft To Do) via \texttt{TaskList}/\texttt{ExternalTaskList}-style models.
+    \item \textbf{Status}: deferred/non-goal for core experience; treat as an optional extra surface later.
+    \item \textbf{Reasons}: behaviours vary by provider/user settings (task overlays can be hidden; list/reminder semantics differ); would require a second sync layer (todos + calendars) and messy two-way mapping back to \texttt{TaskOccurrence}; in-app Events remain necessary.
 \end{itemize}
 
 \end{document}
