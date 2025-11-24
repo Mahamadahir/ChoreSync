@@ -260,6 +260,9 @@ def test_user_entity(user):
     assert user.username == 'testuser'
     assert user.is_active
     assert user.check_password('Testpass123!')
+    assert user.on_time_streak_days == 0
+    assert user.longest_on_time_streak_days == 0
+    assert user.last_streak_date is None
     assert str(user) == user.email
 
 
@@ -304,6 +307,7 @@ def test_task_template_defaults(task_template, group, user):
     assert t.creator == user
     assert t.recurring_choice == 'none'
     assert t.recur_value is None
+    assert t.importance == 'core'
     assert t.active is True
     assert t.estimated_hours == 1.0
     assert t.created_at is not None
@@ -572,10 +576,11 @@ def test_task_proposal_deleted_with_group(task_proposal, group):
 
 
 def test_task_proposal_deleted_with_task_template(task_proposal, task_template):
-    """Deleting the TaskTemplate should delete its proposals."""
+    """Deleting the TaskTemplate should keep proposals but null the FK."""
     proposal_id = task_proposal.id
     task_template.delete()
-    assert not models.TaskProposal.objects.filter(id=proposal_id).exists()
+    proposal = models.TaskProposal.objects.get(id=proposal_id)
+    assert proposal.task_template is None
 
 
 def test_task_proposal_proposed_by_set_null_on_user_delete(task_proposal, user):

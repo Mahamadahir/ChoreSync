@@ -421,15 +421,20 @@
         </div>
         <div class="page__actions">
           <button type="button" id="collapse-toggle" class="page__button">Collapse All</button>
+          <button type="button" id="save-progress" class="page__button">Save &amp; Sync</button>
         </div>
       </header>
       <section id="feature-container"></section>
     </main>
     <script src="progress-data.js"></script>
     <script>
-      (function () {
-        const data = window.progressData;
-        if (!data || !Array.isArray(data.features)) {
+      (async function () {
+        const DEFAULT_DATA = window.progressData || { features: [], generatedAt: null };
+        const PROGRESS_JSON_URL = "data/progress.json";
+        const SAVE_ENDPOINT = "http://localhost:3323/progress-sync";
+        const SAVE_DEBOUNCE_MS = 500;
+
+        if (!DEFAULT_DATA || !Array.isArray(DEFAULT_DATA.features)) {
           console.warn("Progress data unavailable.");
           return;
         }
@@ -442,61 +447,30 @@
         const dueSoonCountEl = document.getElementById("due-soon-count");
         const projectStatusEl = document.getElementById("project-status");
         const collapseToggleButton = document.getElementById("collapse-toggle");
+        const saveButton = document.getElementById("save-progress");
         const legendButtons = Array.from(
           document.querySelectorAll(".legend__button")
         );
 
-        const storageKey = "chore-sync-progress-v1";
-        const storage = (() => {
-          try {
-            const store = window.localStorage;
-            const testKey = "__progress-test__";
-            store.setItem(testKey, "ok");
-            store.removeItem(testKey);
-            return store;
-          } catch (err) {
-            return null;
-          }
-        })();
-
+        let data = { ...DEFAULT_DATA };
         let savedChecks = {};
         let manualLocks = {};
-        if (storage) {
-          try {
-            const parsed = JSON.parse(storage.getItem(storageKey) || "{}");
-            if (parsed && typeof parsed === "object") {
-              const isStructuredState =
-                Object.prototype.hasOwnProperty.call(parsed, "checked") ||
-                Object.prototype.hasOwnProperty.call(parsed, "manualLocks") ||
-                Object.prototype.hasOwnProperty.call(parsed, "manualOverrides");
-              if (isStructuredState) {
-                if (parsed.checked && typeof parsed.checked === "object") {
-                  savedChecks = { ...parsed.checked };
-                }
-                const manualSource =
-                  parsed.manualLocks ||
-                  parsed.manualOverrides ||
-                  {};
-                if (manualSource && typeof manualSource === "object") {
-                  manualLocks = Object.keys(manualSource).reduce(
-                    (acc, key) => {
-                      if (manualSource[key]) {
-                        acc[key] = true;
-                      }
-                      return acc;
-                    },
-                    {}
-                  );
-                }
-              } else {
-                savedChecks = parsed;
-              }
-            }
-          } catch (err) {
-            savedChecks = {};
-            manualLocks = {};
-          }
+        let latestSavePayload = null;
+        let saveTimer = null;
+
+        const snapshot = await loadSnapshot();
+        if (snapshot) {
+          data = {
+            ...data,
+            ...snapshot,
+            features: Array.isArray(snapshot.features)
+              ? snapshot.features
+              : data.features,
+          };
+          savedChecks = { ...(snapshot.checked || {}) };
+          manualLocks = { ...(snapshot.manualLocks || {}) };
         }
+
         manualLocks = manualLocks || {};
         Object.keys(manualLocks).forEach((key) => {
           if (!savedChecks[key]) {
@@ -537,6 +511,24 @@
           overdue: "status-pill status-pill--red",
           pending: "status-pill status-pill--grey",
         };
+
+        async function loadSnapshot() {
+          try {
+            const response = await fetch(PROGRESS_JSON_URL, {
+              cache: "no-store",
+            });
+            if (!response.ok) {
+              return null;
+            }
+            const parsed = await response.json();
+            if (parsed && typeof parsed === "object") {
+              return parsed;
+            }
+          } catch (err) {
+            console.warn("Could not load data/progress.json; using defaults", err);
+          }
+          return null;
+        }
 
         function parseDate(value) {
           if (!value) {
@@ -1081,20 +1073,45 @@
           persistState();
         }
 
-        function persistState() {
-          if (!storage) {
+        function persistState(options = {}) {
+          const payload = buildSavePayload();
+          latestSavePayload = payload;
+          if (options.force) {
+            sendSave(payload);
             return;
           }
+
+          if (saveTimer) {
+            clearTimeout(saveTimer);
+          }
+          saveTimer = setTimeout(() => {
+            sendSave(latestSavePayload);
+          }, SAVE_DEBOUNCE_MS);
+        }
+
+        function buildSavePayload() {
+          return {
+            version: 1,
+            updatedAt: new Date().toISOString(),
+            generatedAt: data.generatedAt || null,
+            features: data.features,
+            checked: savedChecks,
+            manualLocks,
+          };
+        }
+
+        async function sendSave(payload) {
           try {
-            storage.setItem(
-              storageKey,
-              JSON.stringify({
-                checked: savedChecks,
-                manualLocks,
-              })
-            );
+            await fetch(SAVE_ENDPOINT, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(payload),
+              keepalive: true,
+            });
           } catch (err) {
-            // Ignore storage errors (e.g., quota exceeded).
+            console.warn("Autosave failed; will retry on next change", err);
           }
         }
 
@@ -1260,6 +1277,12 @@
           collapseToggleButton.addEventListener("click", () => {
             const shouldCollapse = anyFeatureExpanded();
             setAllFeaturesCollapsed(shouldCollapse);
+          });
+        }
+
+        if (saveButton) {
+          saveButton.addEventListener("click", () => {
+            persistState({ force: true });
           });
         }
       })();

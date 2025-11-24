@@ -1,5 +1,7 @@
-window.progressData = {
+{
+  "version": 1,
   "generatedAt": "2025-10-28T15:32:18Z",
+  "updatedAt": "2025-11-24T07:15:54.290Z",
   "features": [
     {
       "id": "feature-domain-models",
@@ -247,8 +249,7 @@ window.progressData = {
               "state": "pending"
             }
           ]
-        },
-
+        }
       ],
       "category": "core"
     },
@@ -4039,5 +4040,20 @@ window.progressData = {
       ],
       "category": "additional"
     }
-  ]
-};
+  ],
+  "checked": {
+    "feature-design-docs": true,
+    "method-design-scheduler": true,
+    "test-design-scheduler": true,
+    "method-design-preferences": true,
+    "test-design-preferences": true,
+    "method-design-lifecycle": true,
+    "test-design-lifecycle": true
+  },
+  "manualLocks": {
+    "feature-design-docs": true,
+    "method-design-scheduler": true,
+    "method-design-preferences": true,
+    "method-design-lifecycle": true
+  }
+}

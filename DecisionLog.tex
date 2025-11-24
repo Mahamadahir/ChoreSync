@@ -1,0 +1,59 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{enumitem}
+\usepackage{parskip}
+
+\title{ChoreSync Decision Log}
+\author{}
+\date{\today}
+
+\setlist[itemize]{topsep=2pt,parsep=0pt,partopsep=0pt}
+
+\begin{document}
+
+\maketitle
+
+\section{Assignment Engine}
+
+\begin{itemize}
+    \item \textbf{Weights locked}: $W_{\text{avail}}=100$, $W_{\text{fair}}=10$, $W_{\text{pref}}=10$, $W_{\text{swap}}=5$ (default), $W_{\text{recur}}=0$, $W_{\text{streak}}=2$.
+    \item \textbf{Scoring formula}: $\text{score}(u) = S'_{\text{avail}} + S'_{\text{pref}} + S'_{\text{fair}} + S'_{\text{recur}} + S'_{\text{swap}} + S'_{\text{streak}}$ with per-signal calculations captured in \texttt{SystemDesign.tex}.
+    \item \textbf{Tie-break order}: stronger preference $\rightarrow$ fewer recent hours $\rightarrow$ lower swap-away count $\rightarrow$ seeded randomisation.
+    \item \textbf{Recurrence bias}: tracked but weight $0$; prevents long-term latching while keeping history.
+    \item \textbf{On-time streak}: use \texttt{User.on\_time\_streak\_days}, \texttt{longest\_on\_time\_streak\_days}, \texttt{last\_streak\_date} with daily evaluation.
+\end{itemize}
+
+\section{Lifecycle and Delete Policies}
+
+\begin{itemize}
+    \item \textbf{Task proposals}: keep proposals when a template is removed (\texttt{TaskProposal.task\_template = SET\_NULL}) to retain history.
+    \item \textbf{Swaps}: \texttt{from\_user}/\texttt{to\_user} are \texttt{SET\_NULL} on deletion; swap rows are preserved for analytics.
+    \item \textbf{User removal}: cascade memberships, votes, preferences, credentials, calendars/events, receipts, notifications; set-null creator/assignee/proposer/sender references; rely on services to reassign outstanding tasks.
+    \item \textbf{Occurrence removal}: delete swaps for the occurrence; detach linked events/notifications rather than deleting the events outright.
+\end{itemize}
+
+\section{Preferences}
+
+\begin{itemize}
+    \item \textbf{Default stance}: members are \texttt{neutral} for existing templates when they join; new templates default to \texttt{neutral} for existing members.
+    \item \textbf{Numeric mapping}: \texttt{prefer} $\mapsto +1$, \texttt{neutral} $\mapsto 0$, \texttt{avoid} $\mapsto -1$.
+    \item \textbf{Updates}: preferences can be set during voting, in a dedicated preferences UI, or prompted after repeated swap-aways.
+\end{itemize}
+
+\section{Swap Behaviour}
+
+\begin{itemize}
+    \item \textbf{Open-ended}: swaps start with \texttt{to\_user = null}; any eligible member may accept, which updates \texttt{assigned\_to} and closes the swap.
+    \item \textbf{Scheduler feedback}: swap-away vs swap-in counts feed the $S'_{\text{swap}}$ term for the relevant template.
+    \item \textbf{History preserved}: swap records remain even if participants are deleted, supporting fairness analytics.
+\end{itemize}
+
+\section{Availability Model}
+
+\begin{itemize}
+    \item \textbf{Inclusion rules}: only calendars with \texttt{include\_in\_availability=True} and events with \texttt{blocks\_availability=True} count as busy time.
+    \item \textbf{Sources}: internal calendar per user plus provider calendars (\texttt{google}, \texttt{microsoft}) linked to credentials.
+    \item \textbf{Blocking scope}: all-day blocking events cover the whole day unless explicitly marked non-blocking; scheduling horizon follows sync/scheduling window configuration.
+\end{itemize}
+
+\end{document}

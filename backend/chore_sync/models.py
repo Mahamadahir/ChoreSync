@@ -27,6 +27,21 @@ class User(AbstractUser):
         blank=True,
     )
 
+    on_time_streak_days = models.PositiveIntegerField(
+        default=0,
+        help_text="Consecutive days the user has met all task deadlines.",
+    )
+    longest_on_time_streak_days = models.PositiveIntegerField(
+        default=0,
+        help_text="Longest historical on-time streak in days.",
+    )
+    last_streak_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date on which the streak was last updated.",
+    )
+
+
     def __str__(self):
         return self.email or self.username
 
@@ -93,8 +108,24 @@ class GroupMembership(models.Model):
         return f"{self.user.email} in {self.group.name}"
 
 
+
 class TaskTemplate(models.Model):
     """Describes a chore scheduled for a group with optional recurrence."""
+
+    IMPORTANCE_CHOICES = [
+        ('core', 'Core'),
+        ('additional', 'Additional'),
+    ]
+
+    importance = models.CharField(
+        max_length=20,
+        choices=IMPORTANCE_CHOICES,
+        default='core',
+        help_text=(
+            "Core tasks are considered essential for new members; "
+            "additional tasks can be bulk-set to neutral on join."
+        ),
+    )
 
     # Recurrence
     recurring_choice = models.CharField(
@@ -612,9 +643,11 @@ class TaskProposal(models.Model):
 
     task_template = models.ForeignKey(
         TaskTemplate,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null = True,
+        blank = True,
         related_name='proposals',
-        help_text="The underlying task template being proposed.",
+        help_text="The underlying task template being proposed - if the proposal isn't accepted - we'll keep this for history.",
     )
 
     reason = models.TextField(

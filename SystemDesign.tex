@@ -453,9 +453,40 @@ Vue SPA  <->  Django API Views (DRF / function views)
     \item \texttt{blocks\_availability} indicates whether the event should count as ``busy time'' when computing free slots.
 \end{itemize}
 
+\subsection{Task Preferences Model}
+
+\paragraph{Domain model}
+\begin{itemize}
+    \item \texttt{TaskPreference} has \texttt{user} (\texttt{CASCADE}), \texttt{task\_template} (\texttt{CASCADE}), \texttt{preference} $\in \{\texttt{prefer}, \texttt{neutral}, \texttt{avoid}\}$, optional \texttt{reason}.
+    \item Uniqueness enforced per (\texttt{user}, \texttt{task\_template}).
+\end{itemize}
+
+\paragraph{Numeric weighting}
+\begin{itemize}
+    \item \texttt{prefer} $\mapsto +1$, \texttt{neutral} $\mapsto 0$, \texttt{avoid} $\mapsto -1$ (via \texttt{weight()} helper).
+    \item Scheduler uses this as $S_{\text{pref}}$ before scaling by $W_{\text{pref}}$.
+\end{itemize}
+
+\paragraph{Defaults and lifecycle}
+\begin{itemize}
+    \item When a user joins a group, they default to \texttt{neutral} for existing templates (explicit rows or implicit neutral handling).
+    \item When a new template is approved, existing members are treated as \texttt{neutral} until they express a preference.
+    \item Preferences may be updated during proposal voting, in a preferences UI, or prompted after repeated swaps away from a task.
+\end{itemize}
+
 \subsection{On-Delete Behaviour}
 
 This section captures both the current \texttt{on\_delete} behaviours in \texttt{models.py} and the intended semantics.
+
+\paragraph{Lifecycle summary}
+\begin{itemize}
+    \item \textbf{User}: deleting a user removes memberships, votes, preferences, credentials, calendars (and events), receipts, and notifications; references such as \texttt{creator}, \texttt{assigned\_to}, \texttt{proposed\_by}, \texttt{from\_user}, \texttt{to\_user}, \texttt{sender} are nulled where configured. Outstanding tasks are expected to be reassigned via services.
+    \item \textbf{Group}: deleting a group cascades to memberships, templates, occurrences, proposals/votes, preferences, swaps for those occurrences, messages, group-linked notifications, and \texttt{GroupCalendar} settings.
+    \item \textbf{GroupMembership}: removed automatically when user or group is deleted; reassignment flows should run before/after removal.
+    \item \textbf{TaskTemplate}: deleting a template deletes occurrences and preferences; proposals remain for history but lose the template link. Swaps/notifications/events tied to occurrences are handled by their own on-delete rules.
+    \item \textbf{TaskOccurrence}: deleting an occurrence deletes swaps, detaches task-linked events/notifications, and removes occurrence-specific notifications.
+    \item \textbf{Calendar/Event}: deleting a calendar removes in-app events; external providers are not touched unless explicit disconnect flows run.
+\end{itemize}
 
 \subsubsection{User Deletion}
 
@@ -469,11 +500,7 @@ This section captures both the current \texttt{on\_delete} behaviours in \texttt
 Intended behaviour: when a user is deleted, future uncompleted tasks that were assigned to them may be automatically re-assigned based on the group's \texttt{reassignment\_rule}. This reassignment is handled in services (e.g.\ \texttt{TaskService.handle\_member\_removed(user)}).
 
 \begin{itemize}
-    \item \texttt{TaskSwap.from\_user / to\_user}: current implementation uses \texttt{CASCADE}. There are two possible semantics:
-    \begin{itemize}
-        \item Option A (current): \texttt{CASCADE} -- all swaps involving the user are deleted with the user.
-        \item Option B (future): \texttt{SET\_NULL} -- swap history retained but user fields nulled for privacy/anonymisation.
-    \end{itemize}
+    \item \texttt{TaskSwap.from\_user / to\_user (on\_delete=SET\_NULL)}: swap history is retained but anonymised when a participant is deleted.
     \item \texttt{Message.sender (on\_delete=SET\_NULL)}: messages remain but sender becomes \texttt{null}.
     \item \texttt{Notification.recipient (on\_delete=CASCADE)}: user deletion removes their notifications.
     \item \texttt{ExternalCredential.user (on\_delete=CASCADE)}: credentials deleted with user.
@@ -496,7 +523,7 @@ Deleting a group effectively deletes all domain data scoped to that group: membe
 
 \begin{itemize}
     \item \texttt{TaskOccurrence.template (on\_delete=CASCADE)}: all occurrences for that template are deleted.
-    \item \texttt{TaskProposal.task\_template (on\_delete=CASCADE)}: proposals tied to that template are deleted.
+    \item \texttt{TaskProposal.task\_template (on\_delete=SET\_NULL)}: proposals persist for history but lose the direct template link.
     \item \texttt{TaskPreference.task\_template (on\_delete=CASCADE)}: preferences for that template are deleted.
 \end{itemize}
 
@@ -510,7 +537,7 @@ Events linked to task occurrences are indirectly affected:
 
 \begin{itemize}
     \item \texttt{TaskSwap.task (on\_delete=CASCADE)}: swap records for that occurrence are deleted.
-    \item \texttt{Event.task\_occurrence}: intended design is to delete task-derived events when the associated occurrence is deleted, to avoid orphaned ``ghost'' events.
+    \item \texttt{Event.task\_occurrence (on\_delete=SET\_NULL)}: task-derived events are detached when the occurrence is deleted; services may optionally prune or archive them to avoid ``ghost'' events.
     \item \texttt{Notification.task\_occurrence (on\_delete=SET\_NULL)}: notifications remain as a history of what happened, but the link to the now-deleted occurrence is null.
 \end{itemize}
 
@@ -758,74 +785,168 @@ Services raise domain exceptions when a business rule is violated. The API layer
         \item Messages may be retained with sender set to \texttt{null} (anonymised).
         \item OAuth credentials removed.
     \end{itemize}
-    \item Notifications and messages may be retained for a reasonable period, with optional manual or automated purging.
+\item Notifications and messages may be retained for a reasonable period, with optional manual or automated purging.
 \end{itemize}
 
 \section{Algorithms and Logic (Conceptual)}
 
-\subsection{Task Assignment Algorithm (Future)}
+\subsection{Task Scheduler Design}
 
-Inputs:
+\subsubsection*{When the scheduler runs}
 
 \begin{itemize}
-    \item \texttt{TaskTemplate} and its recurrence.
-    \item Group members and their \texttt{TaskPreference}s.
-    \item Swap history (to avoid repeatedly forcing tasks on people who always swap out).
-    \item Availability from \texttt{Event} (busy times).
-    \item Group \texttt{reassignment\_rule} / \texttt{reassignment\_value}.
+    \item On new occurrences (proposal approved \textrightarrow{} occurrences created).
+    \item When group \texttt{reassignment\_rule} triggers (\texttt{on\_create}, \texttt{after\_n\_tasks}, \texttt{after\_n\_weeks}).
+    \item When a member leaves the group and has outstanding tasks.
+    \item When a swap is accepted so that history metrics incorporate the swap.
 \end{itemize}
 
-Goals:
+\subsubsection*{Inputs}
 
 \begin{itemize}
-    \item Distribute tasks fairly across members over time.
-    \item Respect strong preferences (avoid tasks users hate, if possible).
-    \item Avoid assigning tasks in time windows where users are busy.
+    \item Eligible group members.
+    \item Availability window around the occurrence deadline (from \texttt{Calendar} and \texttt{Event}).
+    \item \texttt{TaskPreference} (or neutral if missing) for the template.
+    \item Historical workload in a rolling window (hours/tasks assigned).
+    \item Swap behaviour on the template (swaps away vs accepted swaps).
+    \item Recurrence history (previous assignee for the same template).
 \end{itemize}
 
-The algorithm will likely live in \texttt{TaskService} and be triggered:
+\subsubsection*{Scoring model (first pass)}
 
+For each eligible member $u$:
+\[
+\text{score}(u) = S'_{\text{avail}}(u) + S'_{\text{pref}}(u) + S'_{\text{fair}}(u) + S'_{\text{recur}}(u) + S'_{\text{swap}}(u) + S'_{\text{streak}}(u)
+\]
+
+\paragraph{$S'_{\text{avail}}(u)$ Availability}
 \begin{itemize}
-    \item On new task templates.
-    \item On a schedule (e.g.\ daily cron).
-    \item When membership changes significantly.
+    \item \textbf{Weight}: $W_{\text{avail}} = 100$ (range $[-100, 0]$).
+    \item \textbf{Calc}: conflict ratio $R_c$ of busy time $T_C$ in the required window $T_R$: $S_{\text{avail}}(u) = -\left( \frac{T_C}{T_R} \right)$, then $S'_{\text{avail}}(u) = 100 \times S_{\text{avail}}(u)$.
+    \item \textbf{Fields}: \texttt{TaskOccurrence.deadline}; \texttt{Calendar.include\_in\_availability}; \texttt{Event.blocks\_availability}, \texttt{Event.start}, \texttt{Event.end}.
 \end{itemize}
 
-\subsection{Swap Logic}
+\paragraph{$S'_{\text{fair}}(u)$ Fairness}
+\begin{itemize}
+    \item \textbf{Weight}: $W_{\text{fair}} = 10$ (range $[-10, +10]$).
+    \item \textbf{Calc}: workload $H(u)$ vs group median $H_{\text{median}}$ with cap $H_{\text{max\_dev}}$: $S_{\text{fair}}(u) = \frac{H_{\text{median}} - H(u)}{H_{\text{max\_dev}}}$, clamped to $[-1, +1]$, then $S'_{\text{fair}}(u) = 10 \times S_{\text{fair}}(u)$.
+    \item \textbf{Fields}: \texttt{TaskOccurrence.assigned\_to}, \texttt{TaskOccurrence.deadline}, \texttt{TaskTemplate.estimated\_hours}, \texttt{Group.members}.
+\end{itemize}
+
+\paragraph{$S'_{\text{pref}}(u)$ Preference}
+\begin{itemize}
+    \item \textbf{Weight}: $W_{\text{pref}} = 10$ (values $\{-10, 0, +10\}$).
+    \item \textbf{Calc}: preference weight from \texttt{TaskPreference.weight()} scaled by $10$.
+    \item \textbf{Fields}: \texttt{TaskPreference.user}, \texttt{TaskPreference.task\_template}, \texttt{TaskPreference.preference}.
+\end{itemize}
+
+\paragraph{$S'_{\text{swap}}(u)$ Swap behaviour}
+\begin{itemize}
+    \item \textbf{Weight}: $W_{\text{swap}}$ (default $5$), range $[-W_{\text{swap}}, +W_{\text{swap}}]$.
+    \item \textbf{Calc}: for this template only, $S_{\text{swap}}(u) = \frac{N_{\text{accept}} - N_{\text{away}}}{N_{\text{assigned}}}$ if $N_{\text{assigned}} > 0$ else $0$; then $S'_{\text{swap}}(u) = W_{\text{swap}} \times S_{\text{swap}}(u)$.
+    \item \textbf{Fields}: \texttt{TaskOccurrence.template}, \texttt{TaskOccurrence.assigned\_to}, \texttt{TaskSwap.from\_user}, \texttt{TaskSwap.to\_user}, \texttt{TaskSwap.status}.
+\end{itemize}
+
+\paragraph{$S'_{\text{recur}}(u)$ Recurrence}
+\begin{itemize}
+    \item \textbf{Weight}: $W_{\text{recur}} = 0$ (logging only).
+    \item \textbf{Calc}: $+1$ if user was assignee of previous occurrence of this template, else $0$.
+    \item \textbf{Fields}: \texttt{TaskOccurrence.template}, \texttt{TaskOccurrence.deadline}, \texttt{TaskOccurrence.assigned\_to}.
+\end{itemize}
+
+\paragraph{$S'_{\text{streak}}(u)$ On-time streak}
+\begin{itemize}
+    \item \textbf{Weight}: $W_{\text{streak}}$ (default $2$), range $[0, +W_{\text{streak}}]$.
+    \item \textbf{Calc}: $S_{\text{streak}}(u) = \min\left(1.0, \frac{L(u)}{L_{\text{target}}}\right)$ where $L(u)$ is current streak; $S'_{\text{streak}}(u) = W_{\text{streak}} \times S_{\text{streak}}(u)$.
+    \item \textbf{Fields}: \texttt{User.on\_time\_streak\_days} (with \texttt{longest\_on\_time\_streak\_days} tracked for history).
+\end{itemize}
+
+If all candidates score negative, the ``least bad'' candidate is selected and flagged as an unhappy assignment for UI/logging.
+
+\subsubsection*{Tie-breaking}
+
+\begin{enumerate}
+    \item Stronger preference (prefer \textrightarrow{} neutral \textrightarrow{} avoid).
+    \item Fewer recent hours assigned.
+    \item Lower swap-away count for this template.
+    \item Stable randomisation (seeded) to avoid ID bias.
+\end{enumerate}
+
+\subsubsection*{Recurring tasks}
 
 \begin{itemize}
-    \item Swaps are open-ended: \texttt{from\_user} creates a \texttt{TaskSwap} linked to a \texttt{TaskOccurrence}, with \texttt{to\_user} initially \texttt{null}.
-    \item Any eligible group member can accept:
-    \begin{itemize}
-        \item Sets \texttt{to\_user}.
-        \item Updates \texttt{TaskOccurrence.assigned\_to}.
-        \item Swap status becomes ``accepted/closed''.
-    \end{itemize}
-    \item Edge cases:
-    \begin{itemize}
-        \item Only one accept allowed; further attempts raise \texttt{InvalidSwap}.
-        \item If the originating task is completed or reassigned by other logic, swap becomes invalid.
-    \end{itemize}
+    \item Previous assignee tracked (for $S'_{\text{recur}}$), but $W_{\text{recur}} = 0$ to avoid stickiness.
+    \item Repeated swaps away are already reflected in $S'_{\text{swap}}$.
+    \item $S'_{\text{fair}}$ prevents long-term latching on one person.
+\end{itemize}
+
+\subsubsection*{On-time streak tracking}
+
+\begin{itemize}
+    \item Fields: \texttt{on\_time\_streak\_days}, \texttt{longest\_on\_time\_streak\_days}, \texttt{last\_streak\_date} on \texttt{User}.
+    \item Daily job increments or resets based on tasks due the previous day; days with no tasks neither increment nor break the streak.
+\end{itemize}
+
+\subsection{Availability Model}
+
+\paragraph{Calendar sources}
+\begin{itemize}
+    \item Multiple \texttt{Calendar} rows per user: \texttt{internal}, \texttt{google}, \texttt{microsoft}.
+    \item Internal primary calendar: \texttt{provider='internal'} with \texttt{external\_id = null}.
+    \item External calendars linked to \texttt{ExternalCredential} where available.
+\end{itemize}
+
+\paragraph{Event normalisation}
+\begin{itemize}
+    \item All time blocks become \texttt{Event} rows with \texttt{source} \texttt{'external'}, \texttt{'task'}, or \texttt{'manual'}.
+    \item External provider events store \texttt{external\_event\_id}; task events point to \texttt{task\_occurrence}.
+    \item Manual in-app events use \texttt{source='manual'}.
+\end{itemize}
+
+\paragraph{Computing availability}
+\begin{itemize}
+    \item Only calendars with \texttt{include\_in\_availability = True} are considered.
+    \item Only events with \texttt{blocks\_availability = True} count as busy.
+    \item Consider events within a scheduling horizon (e.g.\ \texttt{sync\_window\_days}).
+    \item All-day blocking events cover the full day unless explicitly marked non-blocking.
+\end{itemize}
+
+\paragraph{Group views and primary calendars}
+\begin{itemize}
+    \item Each user has an internal calendar that acts as the primary schedule.
+    \item Task-derived events can write to the assignee's calendar and/or a group aggregate view (controlled by \texttt{GroupCalendar}).
+    \item \texttt{GroupCalendar} toggles inclusion of member calendars and task-derived events in the aggregate view.
+\end{itemize}
+
+\subsection{Swap Behaviour}
+
+\paragraph{Model}
+\begin{itemize}
+    \item \texttt{TaskSwap} ties to a \texttt{TaskOccurrence}; \texttt{from\_user} / \texttt{to\_user} are \texttt{SET\_NULL} so history survives user deletion.
+    \item Status in \{\texttt{pending}, \texttt{accepted}, \texttt{rejected}, \texttt{cancelled}\}.
+\end{itemize}
+
+\paragraph{Open-ended swaps}
+\begin{itemize}
+    \item Created with \texttt{to\_user = null}; any eligible member may accept.
+    \item Acceptance sets \texttt{to\_user}, updates \texttt{TaskOccurrence.assigned\_to}, stamps \texttt{decided\_at}, and closes the swap.
+\end{itemize}
+
+\paragraph{Impact on fairness and scheduling}
+\begin{itemize}
+    \item Swap-away count reduces $S'_{\text{swap}}$ (and can influence recurrence bias).
+    \item Swap-in count provides a small positive nudge when fairness allows.
+    \item Guardrails remain soft: swaps are voluntary; the scheduler simply learns from behaviour.
 \end{itemize}
 
 \subsection{Proposal and Voting Logic}
 
 \begin{itemize}
-    \item Proposals start as \texttt{pending}.
-    \item Each group member can cast one vote (\texttt{support}, \texttt{reject}, \texttt{abstain}).
-    \item A proposal becomes:
-    \begin{itemize}
-        \item \texttt{approved} if:
-        \begin{itemize}
-            \item Required support ratio reached, and
-            \item All required votes cast (depending on rule).
-        \end{itemize}
-        \item \texttt{rejected} if majority reject.
-        \item \texttt{expired} if \texttt{voting\_deadline} passes without a decision.
-    \end{itemize}
+    \item Proposals start as \texttt{pending}; one vote per member (\texttt{support}/\texttt{reject}/\texttt{abstain}).
+    \item Approval: required support ratio reached once all members have voted or the ratio cannot be overturned by remaining votes.
+    \item Rejection: explicit rejection threshold or when support ratio cannot be met.
+    \item Expiry: \texttt{voting\_deadline} passes without a decision.
 \end{itemize}
-
-Exact thresholds and formulas are configurable later.
 
 \section{Calendar and Sync Design}
 
@@ -1045,5 +1166,45 @@ Backend services create notifications on key events. The frontend consumes \text
 \textbf{Reason:} Better error messages to frontend; centralised business logic.
 
 \textbf{Impact:} API layer maps these errors to user-friendly JSON responses.
+
+\subsection{Assignment Engine Weights}
+
+\textbf{Decision:} Use first-pass weights $W_{\text{avail}}=100$, $W_{\text{fair}}=10$, $W_{\text{pref}}=10$, $W_{\text{swap}}=5$ (default), $W_{\text{recur}}=0$, $W_{\text{streak}}=2$ in the scheduler scoring formula.
+
+\textbf{Reason:} Availability should dominate, with fairness and preferences providing strong secondary signals and behavioural nudges (swaps, streak) staying soft.
+
+\textbf{Impact:} Scheduler implementation and tests should mirror these weights; any adjustments must be logged and coordinated with analytics/UX expectations.
+
+\subsection{Swap Policy and History Retention}
+
+\textbf{Decision:} Swaps remain open-ended; accepting a swap updates the assignee and closes the request. Swap participants are nulled on user deletion to preserve history for analytics.
+
+\textbf{Reason:} Keeps swaps flexible for users while preserving behavioural signals for future assignments and fairness tracking.
+
+\textbf{Impact:} Services must update \texttt{TaskOccurrence.assigned\_to}, stamp \texttt{decided\_at}, and adjust assignment history; deletion flows must not destroy swap history.
+
+\subsection{Task Proposal Retention}
+
+\textbf{Decision:} When a \texttt{TaskTemplate} is deleted, keep related \texttt{TaskProposal} rows for history by nulling the template link.
+
+\textbf{Reason:} Preserves decision history even if the underlying template is removed.
+
+\textbf{Impact:} UI should handle proposals without a live template; data clean-up scripts should respect the historical record.
+
+\subsection{Preference Defaults}
+
+\textbf{Decision:} Default member preference is \texttt{neutral} for all templates unless explicitly set; missing rows are treated as neutral.
+
+\textbf{Reason:} Avoids forcing choices before onboarding completes while giving the scheduler a predictable baseline.
+
+\textbf{Impact:} Preference creation flows can bulk-create neutral rows or treat absence as neutral; analytics should not infer negative sentiment from missing data.
+
+\subsection{Availability Inputs}
+
+\textbf{Decision:} Only calendars with \texttt{include\_in\_availability=True} and events with \texttt{blocks\_availability=True} contribute to busy time.
+
+\textbf{Reason:} Keeps availability computation explicit and user-controlled.
+
+\textbf{Impact:} Scheduling logic and tests should ignore non-blocking calendars/events; UI should surface these toggles clearly.
 
 \end{document}
