@@ -430,8 +430,22 @@
     <script>
       (async function () {
         const DEFAULT_DATA = window.progressData || { features: [], generatedAt: null };
-        const PROGRESS_JSON_URL = "data/progress.json";
-        const SAVE_ENDPOINT = "http://localhost:3323/progress-sync";
+        const IS_HTTP_CONTEXT =
+          window.location && (window.location.protocol === "http:" || window.location.protocol === "https:");
+        const PROGRESS_JSON_URL = IS_HTTP_CONTEXT ? "data/progress.json" : null;
+        const wrapHost = (h) => {
+          if (!h) return null;
+          return h.includes(":") && !h.startsWith("[") ? `[${h}]` : h;
+        };
+        const thisHost = wrapHost(window.location.hostname || "localhost");
+        const candidateHosts = IS_HTTP_CONTEXT
+          ? [
+              `${window.location.protocol}//${thisHost}:3323`,
+              `${window.location.protocol}//127.0.0.1:3323`,
+              `${window.location.protocol}//localhost:3323`,
+              `${window.location.protocol}//[::1]:3323`,
+            ]
+          : [];
         const SAVE_DEBOUNCE_MS = 500;
 
         if (!DEFAULT_DATA || !Array.isArray(DEFAULT_DATA.features)) {
@@ -513,6 +527,9 @@
         };
 
         async function loadSnapshot() {
+          if (!PROGRESS_JSON_URL) {
+            return null;
+          }
           try {
             const response = await fetch(PROGRESS_JSON_URL, {
               cache: "no-store",
@@ -1101,18 +1118,37 @@
         }
 
         async function sendSave(payload) {
-          try {
-            await fetch(SAVE_ENDPOINT, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(payload),
-              keepalive: true,
-            });
-          } catch (err) {
-            console.warn("Autosave failed; will retry on next change", err);
+          if (!candidateHosts.length) {
+            return;
           }
+          const endpoints = candidateHosts.map((host) => `${host}/progress-sync`);
+          let lastError = null;
+          for (const endpoint of endpoints) {
+            try {
+              const response = await fetch(endpoint, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+                cache: "no-store",
+              });
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+              }
+              return;
+            } catch (err) {
+              lastError = err;
+              console.warn("Autosave attempt failed", {
+                endpoint,
+                error: err?.message || err,
+              });
+            }
+          }
+          console.warn("Autosave failed; will retry on next change", {
+            endpoints,
+            error: lastError?.message || lastError,
+          });
         }
 
         function updateProjectSummary() {

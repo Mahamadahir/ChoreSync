@@ -12,54 +12,14 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
 
 const PORT = Number(process.env.PROGRESS_SYNC_PORT || 3323);
 const REPO_ROOT = path.resolve(__dirname, "..");
 const OUTPUT_FILE = path.join(REPO_ROOT, "data", "progress.json");
-const COMMIT_MESSAGE = 'AUTOSAVE: Progress update via tracker.';
 
 function writeSnapshot(payload) {
   fs.mkdirSync(path.dirname(OUTPUT_FILE), { recursive: true });
   fs.writeFileSync(OUTPUT_FILE, JSON.stringify(payload, null, 2));
-}
-
-function hasChanges() {
-  try {
-    const status = execSync("git status --porcelain data/progress.json", {
-      cwd: REPO_ROOT,
-    })
-      .toString()
-      .trim();
-    return status.length > 0;
-  } catch (err) {
-    console.error("Could not inspect git status", err);
-    return false;
-  }
-}
-
-function gitCommitAndPush() {
-  if (!hasChanges()) {
-    return;
-  }
-
-  execSync("git add data/progress.json", {
-    cwd: REPO_ROOT,
-    stdio: "inherit",
-  });
-  execSync(`git commit -m "${COMMIT_MESSAGE}"`, {
-    cwd: REPO_ROOT,
-    stdio: "inherit",
-  });
-  const branch = execSync("git rev-parse --abbrev-ref HEAD", {
-    cwd: REPO_ROOT,
-  })
-    .toString()
-    .trim();
-  execSync(`git push origin ${branch}`, {
-    cwd: REPO_ROOT,
-    stdio: "inherit",
-  });
 }
 
 function sendResponse(res, statusCode, body) {
@@ -74,14 +34,11 @@ function sendResponse(res, statusCode, body) {
 
 function handlePayload(payload) {
   writeSnapshot(payload);
-  try {
-    gitCommitAndPush();
-  } catch (err) {
-    console.error("Git autosave failed", err);
-  }
+  console.log("Snapshot saved to data/progress.json at", new Date().toISOString());
 }
 
 const server = http.createServer((req, res) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   if (req.method === "OPTIONS") {
     sendResponse(res, 204, {});
     return;
