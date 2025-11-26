@@ -1,5 +1,7 @@
 """Domain entity definitions for ChoreSync."""
 import uuid
+import secrets
+
 from datetime import timedelta
 
 from django.conf import settings
@@ -20,6 +22,7 @@ from django.db import models
 class User(AbstractUser):
     """Represents a platform user with identity and notification preferences."""
     email = models.EmailField(unique=True)
+    email_verified = models.BooleanField(default=False)
     groups_joined = models.ManyToManyField(
         'Group',
         through='GroupMembership',
@@ -45,6 +48,36 @@ class User(AbstractUser):
     def __str__(self):
         return self.email or self.username
 
+class EmailVerificationToken(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='email_verification_tokens',
+    )
+    token = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    def is_expired(self) -> bool:
+        return timezone.now() >= self.expires_at
+
+    def mark_used(self) -> None:
+        self.used_at = timezone.now()
+        self.save(update_fields=['used_at'])
+
+    @classmethod
+    def generate_for_user(cls, user, *, lifetime_hours: int = 24):
+        token = secrets.token_urlsafe(32)
+        return cls.objects.create(
+            user=user,
+            token=token,
+            expires_at=timezone.now() + timedelta(hours=lifetime_hours),
+        )
 
 class Group(models.Model):
     """Represents a household or team coordinating chores."""

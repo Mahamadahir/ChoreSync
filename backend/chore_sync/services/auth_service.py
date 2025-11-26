@@ -2,7 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from models import User
+
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.contrib.auth import get_user_model
+from email_validator import validate_email as comp_validate_email, EmailNotValidError
+from domain_errors import UsernameAlreadyTaken, EmailAlreadyTaken, InvalidEmail, WeakPassword
+User = get_user_model()
 
 
 
@@ -10,6 +16,34 @@ from models import User
 class AccountService:
     """Encapsulates registration, authentication, and profile management."""
 
+    def _validate_email_address(self, email : str) ->str:
+        """Checks email systax, domain can receive mail and email not already registered
+            returned normalized email
+        """
+        try:
+            email_info = comp_validate_email(email, check_delverability = True)
+            normalised_email = email_info.normalized
+        except EmailNotValidError as exc:
+            raise InvalidEmail(exc) from exc
+        if User.objects.filter(email=normalised_email).exists():
+            raise EmailAlreadyTaken(f"This email : {normalised_email} is already registered on our system")
+        return normalised_email
+
+    def _validate_username(self, username : str) -> str:
+        """Checks if username in used -> returns normalised username"""
+        normalised_username = username.lower().strip()
+        if User.objects.filter(username=normalised_username).exists():
+            raise UsernameAlreadyTaken(f"This username : {normalised_username} is already in use.")
+        return normalised_username
+
+    def _validate_password_strength(self, password: str) -> str:
+        try:
+            validate_password(password)
+        except DjangoValidationError as exc:
+            raise WeakPassword("This password doesn't meet strength requirements") from exc
+
+
+        #TODO Create email verification methods.
     def register_user(self, *, username: str, email: str, password: str) -> None:
         """Create a new user account.
 
@@ -23,11 +57,7 @@ class AccountService:
         TODO: activation/session token for immediate login if required.
 
         """
-        User.objects.create(
-            username=username,
-            email=email,
-            password=password,
-        )
+
 
         raise NotImplementedError("TODO: implement user registration flow")
 
