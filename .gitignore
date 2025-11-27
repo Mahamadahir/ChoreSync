@@ -9,3 +9,10 @@ frontend/dist/
 coverage/
 *.log
 .DS_Store
+*.tex
+*.exe
+*aux
+*.pdf
+*.gz
+*.out
+*.toc

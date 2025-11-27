@@ -6,8 +6,13 @@ from dataclasses import dataclass
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from email_validator import validate_email as comp_validate_email, EmailNotValidError
 from domain_errors import UsernameAlreadyTaken, EmailAlreadyTaken, InvalidEmail, WeakPassword
+from models import Calendar, EmailVerificationToken
+from dtos.user_dtos import UserDTO
+
+
 User = get_user_model()
 
 
@@ -21,7 +26,7 @@ class AccountService:
             returned normalized email
         """
         try:
-            email_info = comp_validate_email(email, check_delverability = True)
+            email_info = comp_validate_email(email.lower().strip(), check_delverability = True)
             normalised_email = email_info.normalized
         except EmailNotValidError as exc:
             raise InvalidEmail(exc) from exc
@@ -36,7 +41,7 @@ class AccountService:
             raise UsernameAlreadyTaken(f"This username : {normalised_username} is already in use.")
         return normalised_username
 
-    def _validate_password_strength(self, password: str) -> str:
+    def _validate_password_strength(self, password: str) -> None:
         try:
             validate_password(password)
         except DjangoValidationError as exc:
@@ -57,6 +62,21 @@ class AccountService:
         TODO: activation/session token for immediate login if required.
 
         """
+
+        valid_email = self._validate_email_address(email)
+        valid_username = self._validate_username(username)
+        self._validate_password_strength(password)
+
+        try:
+            with transaction.atomic():
+                user = User.objects.create(
+                    username = valid_username,
+                    email = valid_email,
+                    password = password,
+                    is_active = True,
+                ),
+                #move to email logic
+                email_verification_token = EmailVerificationToken.generate_for_user(user)
 
 
         raise NotImplementedError("TODO: implement user registration flow")

@@ -10,7 +10,6 @@ from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.db import models
 
-
 # TODO(Model Test Ideas):
 # - Validation paths: required fields, uniqueness, and custom clean/validator logic.
 # - Relationship behavior: foreign-key/many-to-many linkage, cascade delete rules, and reverse lookups.
