@@ -78,6 +78,47 @@ class EmailVerificationToken(models.Model):
             expires_at=timezone.now() + timedelta(hours=lifetime_hours),
         )
 
+
+class PasswordResetToken(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='password_reset_tokens',
+    )
+    token = models.CharField(max_length=64, unique=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    def is_expired(self) -> bool:
+        return timezone.now() >= self.expires_at
+
+    def mark_used(self) -> None:
+        self.used_at = timezone.now()
+        self.save(update_fields=['used_at'])
+
+    @classmethod
+    def generate_for_user(cls, user, *, lifetime_hours: int = 1):
+        token = secrets.token_urlsafe(32)
+        return cls.objects.create(
+            user=user,
+            token=token,
+            expires_at=timezone.now() + timedelta(hours=lifetime_hours),
+        )
+
+
+class EmailLog(models.Model):
+    """Store logs of emails sent for auditing."""
+
+    to_address = models.EmailField()
+    subject = models.CharField(max_length=255)
+    body = models.TextField()
+    context = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Email to {self.to_address} at {self.created_at:%Y-%m-%d %H:%M}"
+
 class Group(models.Model):
     """Represents a household or team coordinating chores."""
 

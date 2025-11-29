@@ -3,6 +3,10 @@ from . import models
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.utils.translation import gettext_lazy as _
 
+# Register all models not already covered
+admin.site.register(models.EmailVerificationToken)
+admin.site.register(models.PasswordResetToken)
+admin.site.register(models.EmailLog)
 
 # -------------------------------------------------------------------
 # Group & Membership

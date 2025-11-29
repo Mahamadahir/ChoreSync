@@ -16,3 +16,6 @@ coverage/
 *.gz
 *.out
 *.toc
+secrets.env
+.env
+frontend/.env
