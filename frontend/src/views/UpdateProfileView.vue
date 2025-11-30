@@ -15,7 +15,19 @@
             <q-input v-model="email" type="email" label="Email" outlined dense />
           </div>
           <div class="col-12">
-            <q-input v-model="timezone" label="Timezone" outlined dense hint="e.g. UTC or America/New_York" />
+            <q-select
+              v-model="timezone"
+              :options="filteredTimezones"
+              label="Timezone"
+              outlined
+              dense
+              clearable
+              use-input
+              fill-input
+              input-debounce="0"
+              @filter="filterTimezones"
+              hint="Search and select your timezone"
+            />
           </div>
         </div>
 
@@ -77,13 +89,60 @@ const error = ref('');
 const currentPassword = ref('');
 const newPassword = ref('');
 const confirmPassword = ref('');
+const timezoneOptions = ref<string[]>([]);
+const filteredTimezones = ref<string[]>([]);
+
+function detectBrowserTimeZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
+function loadTimezones() {
+  let zones: string[] = [];
+  try {
+    zones = (Intl as any).supportedValuesOf?.('timeZone') || [];
+  } catch {
+    zones = [];
+  }
+  if (!zones.length) {
+    zones = [
+      'UTC',
+      'America/New_York',
+      'America/Chicago',
+      'America/Denver',
+      'America/Los_Angeles',
+      'Europe/London',
+      'Europe/Berlin',
+      'Europe/Paris',
+      'Asia/Kolkata',
+      'Asia/Tokyo',
+      'Australia/Sydney',
+    ];
+  }
+  timezoneOptions.value = zones;
+  filteredTimezones.value = zones;
+}
+
+function filterTimezones(val: string, update: (cb: () => void) => void) {
+  update(() => {
+    if (!val) {
+      filteredTimezones.value = timezoneOptions.value;
+      return;
+    }
+    const needle = val.toLowerCase();
+    filteredTimezones.value = timezoneOptions.value.filter((z) => z.toLowerCase().includes(needle));
+  });
+}
 
 async function loadProfile() {
   try {
     const resp = await authService.getProfile();
     displayName.value = resp.data.display_name || '';
     email.value = resp.data.email || '';
-    timezone.value = resp.data.timezone || '';
+    timezone.value = resp.data.timezone || detectBrowserTimeZone() || '';
   } catch (err: any) {
     error.value = err?.response?.data?.detail || 'Unable to load profile. Please log in again.';
   }
@@ -134,6 +193,7 @@ async function handlePasswordChange() {
 }
 
 onMounted(() => {
+  loadTimezones();
   loadProfile();
 });
 </script>

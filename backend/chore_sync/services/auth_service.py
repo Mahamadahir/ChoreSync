@@ -95,7 +95,7 @@ class AccountService:
             color="grey",
         )
 
-    def register_user(self, *, username: str, email: str, password: str) -> UserDTO:
+    def register_user(self, *, username: str, email: str, password: str, timezone: str | None = None) -> UserDTO:
         """
         Orchestrates full registration:
         - validate username/email/password
@@ -120,10 +120,13 @@ class AccountService:
                     password=password,
                     is_active=False,         # activate only after email verification
                 )
+                if timezone:
+                    setattr(user, "timezone", timezone.strip())
+                    user.save(update_fields=["timezone"])
                 self._create_internal_calendar(user)
 
         except IntegrityError as exc:
-            # Defensive: race conditions on unique constraints
+            # Edge case 2 separate users attempt to signup with the same username/email at the same time.
             msg = str(exc).lower()
             if "username" in msg:
                 raise UsernameAlreadyTaken(f"Username '{username_norm}' is already in use.") from exc

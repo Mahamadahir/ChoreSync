@@ -39,6 +39,13 @@
           :disable="isSubmitting"
           required
         />
+        <q-input
+          v-model="timezone"
+          label="Timezone (auto-detected; you can override)"
+          outlined
+          dense
+          readonly
+        />
         <q-btn
           type="submit"
           label="Sign Up"
@@ -53,7 +60,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { authService } from '../services/authService';
 
@@ -64,7 +71,16 @@ const confirmPassword = ref('');
 const error = ref('');
 const helperText = ref('You will be asked to check your inbox after signup.');
 const isSubmitting = ref(false);
+const timezone = ref('');
 const router = useRouter();
+
+function detectBrowserTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
 
 async function handleSignup() {
   error.value = '';
@@ -78,6 +94,7 @@ async function handleSignup() {
       username: username.value,
       email: email.value,
       password: password.value,
+      timezone: timezone.value,
     });
     router.push({ name: 'check-email', query: { email: email.value } });
   } catch (err: any) {
@@ -86,4 +103,8 @@ async function handleSignup() {
     isSubmitting.value = false;
   }
 }
+
+onMounted(() => {
+  timezone.value = detectBrowserTimeZone();
+});
 </script>

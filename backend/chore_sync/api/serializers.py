@@ -7,6 +7,7 @@ class SignupSerializer(serializers.Serializer):
     username = serializers.CharField(min_length=1, max_length=150)
     email = serializers.EmailField()
     password = serializers.CharField(min_length=8, write_only=True)
+    timezone = serializers.CharField(required=False, allow_blank=True, max_length=100)
 
 
 class LoginSerializer(serializers.Serializer):
