@@ -50,7 +50,7 @@ class ResetPasswordSerializer(serializers.Serializer):
 
 
 class ChangePasswordSerializer(serializers.Serializer):
-    current_password = serializers.CharField(min_length=1, write_only=True)
+    current_password = serializers.CharField(required=False, allow_blank=True, write_only=True)
     new_password = serializers.CharField(min_length=8, write_only=True)
     confirm_password = serializers.CharField(min_length=8, write_only=True)
 

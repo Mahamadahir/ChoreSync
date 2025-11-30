@@ -38,6 +38,9 @@ async function handleLogout() {
     // ignore errors on logout
   } finally {
     authStore.clear();
+    // redirect to login after logout without full reload
+    window.history.pushState({}, '', '/login');
+    window.dispatchEvent(new PopStateEvent('popstate'));
   }
 }
 </script>

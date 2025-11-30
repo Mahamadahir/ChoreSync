@@ -23,22 +23,49 @@
         />
         <q-input
           v-model="password"
+          :type="showPassword ? 'text' : 'password'"
           label="Password"
-          type="password"
           outlined
           dense
           :disable="isSubmitting"
+          @update:model-value="computeStrength"
+          stack-label
           required
-        />
+        >
+          <template #append>
+            <q-icon
+              :name="showPassword ? 'visibility_off' : 'visibility'"
+              class="cursor-pointer"
+              @click="showPassword = !showPassword"
+            />
+          </template>
+        </q-input>
         <q-input
           v-model="confirmPassword"
+          :type="showConfirm ? 'text' : 'password'"
           label="Confirm Password"
-          type="password"
           outlined
           dense
           :disable="isSubmitting"
+          stack-label
           required
+        >
+          <template #append>
+            <q-icon
+              :name="showConfirm ? 'visibility_off' : 'visibility'"
+              class="cursor-pointer"
+              @click="showConfirm = !showConfirm"
+            />
+          </template>
+        </q-input>
+        <q-linear-progress
+          :value="strengthValue"
+          :color="strengthColor"
+          track-color="grey-4"
+          size="12px"
+          class="q-mt-sm"
         />
+        <div class="text-caption text-grey-7 q-mt-xs">{{ strengthLabel }}</div>
         <q-input
           v-model="timezone"
           label="Timezone (auto-detected; you can override)"
@@ -83,6 +110,11 @@ const helperText = ref('You will be asked to check your inbox after signup.');
 const isSubmitting = ref(false);
 const timezone = ref('');
 const router = useRouter();
+const showPassword = ref(false);
+const showConfirm = ref(false);
+const strengthValue = ref(0);
+const strengthLabel = ref('Password strength');
+const strengthColor = ref('grey');
 
 function detectBrowserTimeZone(): string {
   try {
@@ -117,4 +149,26 @@ async function handleSignup() {
 onMounted(() => {
   timezone.value = detectBrowserTimeZone();
 });
+
+function computeStrength(value: string) {
+  const pwd = value || password.value;
+  let score = 0;
+  if (pwd.length >= 8) score += 0.25;
+  if (/[A-Z]/.test(pwd)) score += 0.2;
+  if (/[a-z]/.test(pwd)) score += 0.2;
+  if (/[0-9]/.test(pwd)) score += 0.15;
+  if (/[^A-Za-z0-9]/.test(pwd)) score += 0.2;
+  if (pwd.length >= 12) score += 0.1;
+  strengthValue.value = Math.min(score, 1);
+  if (score >= 0.8) {
+    strengthLabel.value = 'Strong';
+    strengthColor.value = 'green';
+  } else if (score >= 0.5) {
+    strengthLabel.value = 'Medium';
+    strengthColor.value = 'orange';
+  } else {
+    strengthLabel.value = 'Weak';
+    strengthColor.value = 'red';
+  }
+}
 </script>

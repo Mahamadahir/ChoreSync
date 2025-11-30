@@ -40,23 +40,41 @@
           <div class="col-12 col-md-6">
             <q-input
               v-model="newPassword"
-              type="password"
+              :type="showNewPassword ? 'text' : 'password'"
               label="New password"
               outlined
               dense
               autocomplete="new-password"
               @update:model-value="computeStrength"
-            />
+              stack-label
+            >
+              <template #append>
+                <q-icon
+                  :name="showNewPassword ? 'visibility_off' : 'visibility'"
+                  class="cursor-pointer"
+                  @click="showNewPassword = !showNewPassword"
+                />
+              </template>
+            </q-input>
           </div>
           <div class="col-12 col-md-6">
             <q-input
               v-model="confirmPassword"
-              type="password"
+              :type="showConfirmPassword ? 'text' : 'password'"
               label="Confirm new password"
               outlined
               dense
               autocomplete="new-password"
-            />
+              stack-label
+            >
+              <template #append>
+                <q-icon
+                  :name="showConfirmPassword ? 'visibility_off' : 'visibility'"
+                  class="cursor-pointer"
+                  @click="showConfirmPassword = !showConfirmPassword"
+                />
+              </template>
+            </q-input>
           </div>
           <div class="col-12">
             <q-linear-progress
@@ -97,6 +115,8 @@ const filteredTimezones = ref<TzOption[]>([]);
 const strengthValue = ref(0);
 const strengthLabel = ref('Password strength');
 const strengthColor = ref('grey');
+const showNewPassword = ref(false);
+const showConfirmPassword = ref(false);
 
 function detectBrowserTimeZoneOffset(): string | null {
   try {

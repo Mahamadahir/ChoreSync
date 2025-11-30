@@ -60,10 +60,13 @@ class AccountService:
         except EmailNotValidError as exc:
             raise InvalidEmail(str(exc)) from exc
 
-    def _validate_email_address(self, email: str) -> str:
-        """Validate email for registration (enforces uniqueness)."""
+    def _validate_email_address(self, email: str, *, exclude_user_id: int | None = None) -> str:
+        """Validate email, optionally excluding one user for uniqueness checks."""
         normalised_email = self._normalize_email(email)
-        if User.objects.filter(email=normalised_email).exists():
+        qs = User.objects.filter(email=normalised_email)
+        if exclude_user_id is not None:
+            qs = qs.exclude(pk=exclude_user_id)
+        if qs.exists():
             raise EmailAlreadyTaken(
                 f"This email address ({normalised_email}) is already registered."
             )
@@ -329,7 +332,7 @@ class AccountService:
                 dirty_fields.append("username")
 
         if email is not None:
-            new_email_norm = self._validate_email_address(email)
+            new_email_norm = self._validate_email_address(email, exclude_user_id=user.pk)
             if new_email_norm != user.email:
                 user.email = new_email_norm
                 user.email_verified = False
@@ -499,8 +502,9 @@ class AccountService:
         )
 
     def change_password(self, user: User, current_password: str, new_password: str) -> None:
-        if not user.check_password(current_password):
-            raise InvalidCredentials("Current password is incorrect.")
+        if user.has_usable_password():
+            if not current_password or not user.check_password(current_password):
+                raise InvalidCredentials("Current password is incorrect.")
         self._validate_password_strength(new_password)
         user.set_password(new_password)
         user.save(update_fields=["password"])

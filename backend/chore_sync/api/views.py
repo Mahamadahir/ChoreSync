@@ -357,7 +357,7 @@ class ChangePasswordAPIView(APIView):
             return Response({"detail": "Not authenticated"}, status=status.HTTP_401_UNAUTHORIZED)
         serializer = ChangePasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        current_password = serializer.validated_data["current_password"]
+        current_password = serializer.validated_data.get("current_password", "")
         new_password = serializer.validated_data["new_password"]
         svc = AccountService()
         try:

@@ -12,6 +12,7 @@ import ForgotPasswordView from './views/ForgotPasswordView.vue';
 import ResetPasswordView from './views/ResetPasswordView.vue';
 import { useAuthStore } from './stores/auth';
 import { authService } from './services/authService';
+import GoogleLoginView from './views/GoogleLoginView.vue';
 import { Quasar } from 'quasar';
 import '@quasar/extras/material-icons/material-icons.css';
 import 'quasar/src/css/index.sass';
@@ -25,6 +26,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/profile', name: 'profile', component: UpdateProfileView, meta: { requiresAuth: true } },
   { path: '/forgot-password', name: 'forgot-password', component: ForgotPasswordView, meta: { requiresGuest: true } },
   { path: '/reset-password', name: 'reset-password', component: ResetPasswordView, meta: { requiresGuest: true } },
+  { path: '/login/google', name: 'login-google', component: GoogleLoginView, meta: { requiresGuest: true } },
   // add more routes here
 ];
 
@@ -37,14 +39,17 @@ const router = createRouter({
 let bootstrapPromise: Promise<void> | null = null;
 
 const ensureAuthBootstrap = () => {
+  const authStore = useAuthStore(pinia);
+  if (authStore.hasBootstrapped) {
+    return Promise.resolve();
+  }
   if (!bootstrapPromise) {
-    const authStore = useAuthStore(pinia);
     bootstrapPromise = authService
       .getProfile()
       .then(() => authStore.setAuthenticated(true))
       .catch(() => authStore.clear())
       .finally(() => {
-        // allow subsequent calls to resolve immediately
+        authStore.markBootstrapped();
       });
   }
   return bootstrapPromise;

@@ -15,13 +15,22 @@
         />
         <q-input
           v-model="password"
+          :type="showPassword ? 'text' : 'password'"
           label="Password"
-          type="password"
           outlined
           dense
           :disable="isSubmitting"
           required
-        />
+          stack-label
+        >
+          <template #append>
+            <q-icon
+              :name="showPassword ? 'visibility_off' : 'visibility'"
+              class="cursor-pointer"
+              @click="showPassword = !showPassword"
+            />
+          </template>
+        </q-input>
         <q-btn
           type="submit"
           label="Log In"
@@ -61,6 +70,7 @@ const password = ref('');
 const error = ref('');
 const helperText = ref('Login will authenticate against the Django API.');
 const isSubmitting = ref(false);
+const showPassword = ref(false);
 const authStore = useAuthStore();
 const router = useRouter();
 
@@ -73,6 +83,7 @@ async function handleLogin() {
       password: password.value,
     });
     authStore.setAuthenticated(true);
+    authStore.markBootstrapped();
     helperText.value = 'Login successful.';
     // If backend returns inactive email, route to verify flow
     if (!response.data.email_verified) {
