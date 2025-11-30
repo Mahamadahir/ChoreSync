@@ -158,6 +158,8 @@ REST_FRAMEWORK = {
 CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
 
+# Google OAuth
+GOOGLE_OAUTH_CLIENT_ID = env('GOOGLE_OAUTH_CLIENT_ID', default='')
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/

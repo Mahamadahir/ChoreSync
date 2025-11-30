@@ -45,4 +45,7 @@ export const authService = {
   resetPassword(token: string, new_password: string, confirm_password: string) {
     return api.post('/api/auth/reset-password/', { token, new_password, confirm_password });
   },
+  loginWithGoogle(id_token: string) {
+    return api.post('/api/auth/google/', { id_token });
+  },
 };

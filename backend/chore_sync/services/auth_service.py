@@ -11,8 +11,11 @@ from django.core.mail import send_mail
 from django.db import transaction, IntegrityError
 from django.utils import timezone
 from django.db.models import Q
+import re
 
 from email_validator import validate_email as comp_validate_email, EmailNotValidError
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 
 from ..domain_errors import (
     UsernameAlreadyTaken,
@@ -26,7 +29,7 @@ from ..domain_errors import (
     InvalidCredentials,
     InactiveAccount,
 )
-from ..models import Calendar, EmailVerificationToken, PasswordResetToken, EmailLog
+from ..models import Calendar, EmailVerificationToken, PasswordResetToken, EmailLog, ExternalCredential
 from ..dtos.user_dtos import UserDTO
 
 
@@ -75,6 +78,16 @@ class AccountService:
         if qs.exists():
             raise UsernameAlreadyTaken(f"This username ({normalised_username}) is already in use.")
         return normalised_username
+
+    def _generate_unique_username(self, base: str) -> str:
+        """Generate a unique username from a base slug."""
+        slug = re.sub(r"[^a-z0-9]+", "", base.lower()) or "user"
+        candidate = slug
+        counter = 1
+        while User.objects.filter(username=candidate).exists():
+            candidate = f"{slug}{counter}"
+            counter += 1
+        return candidate
 
     def _validate_password_strength(self, password: str) -> None:
         """ Validate password with validators from settings
@@ -363,6 +376,65 @@ class AccountService:
         )
         return user, dto
 
+    def sign_in_with_google(self, *, id_token: str) -> tuple[User, UserDTO]:
+        client_id = getattr(settings, "GOOGLE_OAUTH_CLIENT_ID", None)
+        if not client_id:
+            raise RegistrationError("Google Sign-In is not configured.")
+        try:
+            payload = google_id_token.verify_oauth2_token(id_token, google_requests.Request(), client_id)
+        except Exception as exc:
+            raise InvalidCredentials("Invalid Google token.") from exc
+
+        email = payload.get("email")
+        email_verified = payload.get("email_verified", False)
+        sub = payload.get("sub")
+        if not email:
+            raise InvalidEmail("Google account is missing an email.")
+        if not email_verified:
+            raise InactiveAccount("Google has not verified this email.")
+
+        email_norm = self._normalize_email(email)
+        user = None
+        created = False
+        try:
+            user = User.objects.get(email=email_norm)
+        except User.DoesNotExist:
+            username_base = email_norm.split("@")[0]
+            username_norm = self._generate_unique_username(username_base)
+            with transaction.atomic():
+                user = User.objects.create_user(
+                    username=username_norm,
+                    email=email_norm,
+                    password=None,
+                    is_active=True,
+                    email_verified=True,
+                    timezone="UTC",
+                )
+                self._create_internal_calendar(user)
+            created = True
+
+        if not user.is_active or not getattr(user, "email_verified", False):
+            user.is_active = True
+            user.email_verified = True
+            user.save(update_fields=["is_active", "email_verified"])
+
+        # Upsert external credential record
+        if sub:
+            ExternalCredential.objects.update_or_create(
+                user=user,
+                provider="google",
+                account_email=email_norm,
+                defaults={"secret": {"sub": sub}},
+            )
+
+        dto = UserDTO(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            is_active=user.is_active,
+            email_verified=getattr(user, "email_verified", False),
+        )
+        return user, dto
 
     def send_password_reset(self, email: str) -> None:
         email_norm = self._normalize_email(email)
@@ -432,44 +504,3 @@ class AccountService:
         self._validate_password_strength(new_password)
         user.set_password(new_password)
         user.save(update_fields=["password"])
-
-
-
-    def sign_in_with_google(self, *, id_token: str, nonce: str | None = None) -> None:
-        """Sign a user in (or up) through Google identity tokens.
-
-        Inputs:
-            id_token: Google-provided JWT from the client.
-            nonce: Optional nonce to prevent replay.
-        Output:
-            Session descriptor + profile or raises if token invalid/unlinked.
-        TODO: Validate JWT signature/claims, enforce nonce, resolve linked ExternalCredential, create
-        TODO: the account on first sign-in, and mint local session tokens + audit logs.
-        """
-        raise NotImplementedError("TODO: implement Google sign-in/up flow")
-
-    def sign_in_with_microsoft(self, *, authorization_code: str, redirect_uri: str) -> None:
-        """Sign a user in (or up) through the Microsoft identity platform.
-
-        Inputs:
-            authorization_code: OAuth code from Microsoft.
-            redirect_uri: Redirect URI used during the authorization request.
-        Output:
-            Local session/profile data or raises on token exchange failure.
-        TODO: Exchange the code for tokens, validate tenant/app scopes, pull profile details, upsert
-        TODO: the linked user credential, and issue local authentication tokens + telemetry.
-        """
-        raise NotImplementedError("TODO: implement Microsoft sign-in/up flow")
-
-    def sign_in_with_apple(self, *, identity_token: str, user_payload: dict | None = None) -> None:
-        """Sign a user in (or up) through Apple Sign In.
-
-        Inputs:
-            identity_token: Apple-issued JWT containing subject + email.
-            user_payload: Optional user info payload returned only on first authorization.
-        Output:
-            Authenticated session descriptor or raises on signature/consent errors.
-        TODO: Verify Apple signature + nonce, extract stable user identifier, capture name/email on
-        TODO: first pass, persist ExternalCredential link, and mint local tokens/audit logs.
-        """
-        raise NotImplementedError("TODO: implement Apple sign-in/up flow")

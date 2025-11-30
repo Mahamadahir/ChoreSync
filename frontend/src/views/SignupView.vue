@@ -55,6 +55,16 @@
         />
       </q-form>
       <q-banner v-if="error" class="q-mt-md" type="warning" dense>{{ error }}</q-banner>
+      <q-separator class="q-my-md" />
+      <q-btn
+        outline
+        color="secondary"
+        icon="login"
+        class="full-width"
+        :disable="isSubmitting"
+        @click="router.push({ name: 'login-google' })"
+        label="Sign up with Google"
+      />
     </q-card>
   </div>
 </template>

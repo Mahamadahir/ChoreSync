@@ -36,6 +36,16 @@
       <div class="q-mt-md">
         <router-link class="text-primary" to="/forgot-password">Forgot your password?</router-link>
       </div>
+      <q-separator class="q-my-md" />
+      <q-btn
+        outline
+        color="secondary"
+        icon="login"
+        class="full-width"
+        :disable="isSubmitting"
+        @click="router.push({ name: 'login-google' })"
+        label="Continue with Google"
+      />
     </q-card>
   </div>
 </template>

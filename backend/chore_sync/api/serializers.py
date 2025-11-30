@@ -58,3 +58,7 @@ class ChangePasswordSerializer(serializers.Serializer):
         if data["new_password"] != data["confirm_password"]:
             raise serializers.ValidationError("Passwords do not match.")
         return data
+
+
+class GoogleLoginSerializer(serializers.Serializer):
+    id_token = serializers.CharField(min_length=10, write_only=True)

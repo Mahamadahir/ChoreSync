@@ -19,6 +19,7 @@ from chore_sync.api.serializers import (
     ForgotPasswordRequestSerializer,
     ResetPasswordSerializer,
     ChangePasswordSerializer,
+    GoogleLoginSerializer,
 )
 from chore_sync.services.auth_service import AccountService
 from django.contrib.auth import get_user_model
@@ -367,3 +368,30 @@ class ChangePasswordAPIView(APIView):
             return Response({"detail": exc.messages if hasattr(exc, 'messages') else str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({"detail": "Password changed successfully."}, status=status.HTTP_200_OK)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class GoogleLoginAPIView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        serializer = GoogleLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        svc = AccountService()
+        try:
+            user, user_dto = svc.sign_in_with_google(id_token=serializer.validated_data["id_token"])
+        except (InvalidCredentials, InvalidEmail, RegistrationError, InactiveAccount) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        login(request, user)
+        return Response(
+            {
+                "detail": "Login via Google successful.",
+                "username": user_dto.username,
+                "email": user_dto.email,
+                "email_verified": getattr(user_dto, "email_verified", False),
+                "is_active": user_dto.is_active,
+            },
+            status=status.HTTP_200_OK,
+        )
