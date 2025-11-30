@@ -1,55 +1,61 @@
 <template>
-  <div class="container py-5">
-    <div class="row justify-content-center">
-      <div class="col-md-6">
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <h1 class="h4 mb-3">Verifying email…</h1>
-            <div v-if="loading" class="text-muted">Please wait…</div>
-            <div v-if="message" class="alert alert-success">
-              {{ message }} <router-link to="/login">Log in</router-link>
-            </div>
-            <div v-if="error" class="alert alert-danger">
-              {{ error }}
-              <router-link :to="{ name: 'check-email', query: { email: email } }">Resend link</router-link>
-            </div>
-            <div class="mt-4">
-              <h2 class="h6 mb-2">Update your email</h2>
-              <p class="text-muted small">If you entered the wrong email, update it and we will send a new link.</p>
-              <form class="d-grid gap-3" @submit.prevent="handleUpdateEmail">
-                <div>
-                  <label class="form-label" for="newEmail">New email</label>
-                  <input
-                    id="newEmail"
-                    type="email"
-                    class="form-control"
-                    v-model="newEmail"
-                    required
-                  />
-                </div>
-                <button class="btn btn-secondary" type="submit" :disabled="updating">
-                  {{ updating ? 'Updating…' : 'Update email & resend link' }}
-                </button>
-              </form>
-              <div v-if="updateMessage" class="alert alert-success mt-3">{{ updateMessage }}</div>
-              <div v-if="updateError" class="alert alert-danger mt-3">{{ updateError }}</div>
-            </div>
-          </div>
-        </div>
+  <q-page class="q-pa-lg flex flex-center">
+    <q-card class="q-pa-lg" style="max-width: 520px; width: 100%;">
+      <div class="text-h5 q-mb-xs">Verify your email</div>
+      <div class="text-body2 text-grey-7 q-mb-md">
+        We're confirming your link. If something went wrong, you can resend or update your email below.
       </div>
-    </div>
-  </div>
+
+      <div v-if="loading" class="row items-center q-gutter-sm q-mb-md">
+        <q-spinner color="primary" size="24px" />
+        <span class="text-body2 text-grey-7">Please wait…</span>
+      </div>
+
+      <q-banner v-if="message" class="q-mb-md" type="positive" dense>
+        {{ message }}
+        <router-link class="text-weight-bold q-ml-xs" to="/login">Log in</router-link>
+      </q-banner>
+      <q-banner v-if="error" class="q-mb-md" type="warning" dense>
+        {{ error }}
+        <router-link
+          class="text-weight-bold q-ml-xs"
+          :to="{ name: 'check-email', query: { email: email } }"
+        >
+          Resend link
+        </router-link>
+      </q-banner>
+
+      <q-separator spaced />
+
+      <div class="text-subtitle1 q-mb-xs">Update your email</div>
+      <div class="text-body2 text-grey-7 q-mb-md">
+        If you typed the wrong address, update it and we'll send a fresh verification link.
+      </div>
+
+      <q-form @submit="handleUpdateEmail" class="q-gutter-md">
+        <q-input v-model="newEmail" type="email" label="New email" outlined dense required />
+        <q-btn
+          type="submit"
+          label="Update email & resend link"
+          color="primary"
+          class="full-width"
+          :loading="updating"
+        />
+      </q-form>
+
+      <q-banner v-if="updateMessage" class="q-mt-md" type="positive" dense>{{ updateMessage }}</q-banner>
+      <q-banner v-if="updateError" class="q-mt-md" type="warning" dense>{{ updateError }}</q-banner>
+    </q-card>
+  </q-page>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { authService } from '../services/authService';
-import { useAuthStore } from '../stores/auth';
 
 const route = useRoute();
 const router = useRouter();
-const authStore = useAuthStore();
 const message = ref('Submitting verification token...');
 const error = ref('');
 const loading = ref(true);
@@ -68,8 +74,7 @@ async function verify() {
     return;
   }
   try {
-    const response = await authService.verifyEmail(token);
-    authStore.setUser(response.data);
+    await authService.verifyEmail(token);
     message.value = 'Email verified. You can now log in.';
   } catch (err: any) {
     error.value = err?.response?.data?.detail || 'Verification failed.';
@@ -96,7 +101,6 @@ async function handleUpdateEmail() {
   updating.value = true;
   try {
     const response = await authService.updateEmail(token, newEmail.value);
-    authStore.setUser(response.data);
     updateMessage.value = 'Email updated. Check your inbox for a new verification link.';
     email.value = response.data.email;
   } catch (err: any) {

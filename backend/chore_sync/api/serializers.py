@@ -29,7 +29,7 @@ class UpdateEmailSerializer(serializers.Serializer):
 
 
 class ProfileSerializer(serializers.Serializer):
-    display_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    username = serializers.CharField(required=False, allow_blank=True, max_length=150)
     email = serializers.EmailField(required=False)
     timezone = serializers.CharField(required=False, allow_blank=True, max_length=100)
 

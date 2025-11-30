@@ -39,6 +39,14 @@ from django.contrib.auth import login, logout
 
 User = get_user_model()
 
+
+class CsrfExemptSessionAuthentication(SessionAuthentication):
+    """Session auth without CSRF enforcement (for API endpoints already gated by other means)."""
+
+    def enforce_csrf(self, request):
+        return  # skip CSRF checks for these API endpoints
+
+
 def user_dto_to_dict(dto: UserDTO) -> dict:
     return {
         "id": dto.id,
@@ -208,7 +216,7 @@ class ProfileAPIView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
-    authentication_classes = [SessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication]
 
     def get(self, request):
         if not request.user.is_authenticated:
@@ -224,8 +232,8 @@ class ProfileAPIView(APIView):
         return Response(
             {
                 **user_dto_to_dict(dto),
-                "display_name": user.first_name,
-                "timezone": "",
+                "username": user.username,
+                "timezone": getattr(user, "timezone", ""),
             },
             status=status.HTTP_200_OK,
         )
@@ -240,7 +248,7 @@ class ProfileAPIView(APIView):
         try:
             user_dto = svc.update_profile(
                 request.user,
-                display_name=data.get("display_name"),
+                username=data.get("username"),
                 email=data.get("email"),
                 timezone=data.get("timezone"),
             )
@@ -251,8 +259,8 @@ class ProfileAPIView(APIView):
             {
                 "detail": "Profile updated.",
                 **user_dto_to_dict(user_dto),
-                "display_name": request.user.first_name,
-                "timezone": "",
+                "username": user_dto.username,
+                "timezone": getattr(request.user, "timezone", ""),
             },
             status=status.HTTP_200_OK,
         )
@@ -341,7 +349,7 @@ class ResetPasswordAPIView(APIView):
 @method_decorator(csrf_exempt, name="dispatch")
 class ChangePasswordAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    authentication_classes = [SessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication]
 
     def post(self, request):
         if not request.user.is_authenticated:

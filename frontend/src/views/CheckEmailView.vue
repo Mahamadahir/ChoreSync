@@ -1,32 +1,28 @@
 <template>
-  <div class="container py-5">
-    <div class="row justify-content-center">
-      <div class="col-md-6">
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <h1 class="h4 mb-3">Check your inbox</h1>
-            <p v-if="email" class="text-muted">
-              We sent a verification link to {{ email }} (if the account exists).
-            </p>
-            <p v-else class="text-muted">Enter your email to resend a verification link.</p>
-
-            <form @submit.prevent="handleResend" class="d-grid gap-3">
-              <div>
-                <label class="form-label" for="email">Email</label>
-                <input class="form-control" id="email" type="email" v-model="email" required />
-              </div>
-              <button class="btn btn-secondary" type="submit" :disabled="isSending || cooldown > 0">
-                {{ cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend verification email' }}
-              </button>
-            </form>
-
-            <div v-if="message" class="alert alert-success mt-3">{{ message }}</div>
-            <div v-if="error" class="alert alert-danger mt-3">{{ error }}</div>
-          </div>
-        </div>
+  <q-page class="q-pa-lg flex flex-center">
+    <q-card class="q-pa-lg" style="max-width: 520px; width: 100%;">
+      <div class="text-h5 q-mb-xs">Check your inbox</div>
+      <div class="text-body2 text-grey-7 q-mb-md">
+        <span v-if="email">We sent a verification link to {{ email }} (if the account exists).</span>
+        <span v-else>Enter your email to resend a verification link.</span>
       </div>
-    </div>
-  </div>
+
+      <q-form @submit="handleResend" class="q-gutter-md">
+        <q-input v-model="email" type="email" label="Email" outlined dense required />
+        <q-btn
+          type="submit"
+          :label="cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend verification email'"
+          color="primary"
+          class="full-width"
+          :loading="isSending"
+          :disable="cooldown > 0"
+        />
+      </q-form>
+
+      <q-banner v-if="message" class="q-mt-md" type="positive" dense>{{ message }}</q-banner>
+      <q-banner v-if="error" class="q-mt-md" type="warning" dense>{{ error }}</q-banner>
+    </q-card>
+  </q-page>
 </template>
 
 <script setup lang="ts">

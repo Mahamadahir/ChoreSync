@@ -22,6 +22,11 @@ class User(AbstractUser):
     """Represents a platform user with identity and notification preferences."""
     email = models.EmailField(unique=True)
     email_verified = models.BooleanField(default=False)
+    timezone = models.CharField(
+        max_length=50,
+        default="UTC",
+        help_text="Preferred timezone for this user",
+    )
     groups_joined = models.ManyToManyField(
         'Group',
         through='GroupMembership',

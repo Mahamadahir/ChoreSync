@@ -66,15 +66,14 @@ class AccountService:
             )
         return normalised_email
 
-    def _validate_username(self, username: str) -> str:
-        """ Normalise username - ensure username is unique
-            Raises : UsernameAlreadyTaken
-        """
+    def _validate_username(self, username: str, *, exclude_user_id: int | None = None) -> str:
+        """Normalize username and ensure uniqueness (optionally excluding one user)."""
         normalised_username = username.strip().lower()
-        if User.objects.filter(username=normalised_username).exists():
-            raise UsernameAlreadyTaken(
-                f"This username ({normalised_username}) is already in use."
-            )
+        qs = User.objects.filter(username=normalised_username)
+        if exclude_user_id is not None:
+            qs = qs.exclude(pk=exclude_user_id)
+        if qs.exists():
+            raise UsernameAlreadyTaken(f"This username ({normalised_username}) is already in use.")
         return normalised_username
 
     def _validate_password_strength(self, password: str) -> None:
@@ -93,6 +92,7 @@ class AccountService:
             provider="internal",
             name=f"{user.get_username()}'s calendar",
             color="grey",
+            timezone=getattr(user, "timezone", "UTC"),
         )
 
     def register_user(self, *, username: str, email: str, password: str, timezone: str | None = None) -> UserDTO:
@@ -303,25 +303,31 @@ class AccountService:
             email_verified=user.email_verified,
         )
 
-    def update_profile(self, user: User, *, display_name: str | None = None, email: str | None = None, timezone: str | None = None) -> UserDTO:
+    def update_profile(self, user: User, *, username: str | None = None, email: str | None = None, timezone: str | None = None) -> UserDTO:
         """
-        Update basic profile fields. Currently maps display_name -> first_name.
-        If email changes, re-verification is required.
+        Update basic profile fields. Username uniqueness is enforced; email changes force re-verification.
         """
         dirty_fields: list[str] = []
-        if display_name is not None:
-            user.first_name = display_name
-            dirty_fields.append("first_name")
+
+        if username is not None and username.strip():
+            username_norm = self._validate_username(username, exclude_user_id=user.pk)
+            if username_norm != user.username:
+                user.username = username_norm
+                dirty_fields.append("username")
+
         if email is not None:
             new_email_norm = self._validate_email_address(email)
-            user.email = new_email_norm
-            user.email_verified = False
-            user.is_active = False
-            dirty_fields.extend(["email", "email_verified", "is_active"])
-            token_obj = EmailVerificationToken.generate_for_user(user)
-            self.start_email_verification(user, token_obj=token_obj)
+            if new_email_norm != user.email:
+                user.email = new_email_norm
+                user.email_verified = False
+                user.is_active = False
+                dirty_fields.extend(["email", "email_verified", "is_active"])
+                token_obj = EmailVerificationToken.generate_for_user(user)
+                self.start_email_verification(user, token_obj=token_obj)
 
-        # TODO: store timezone once a profile model/field exists
+        if timezone is not None and hasattr(user, "timezone"):
+            setattr(user, "timezone", timezone)
+            dirty_fields.append("timezone")
 
         if dirty_fields:
             user.save(update_fields=dirty_fields)
@@ -428,45 +434,6 @@ class AccountService:
         user.save(update_fields=["password"])
 
 
-
-    def get_profile(self, *, user_id: str) -> None:
-        """Fetch profile details for display in the client.
-
-        Inputs:
-            user_id: Identifier for the requesting account (or target user from admin).
-        Output:
-            Profile DTO containing identity info, notification preferences, stats, and linked accounts.
-        TODO: Query User + profile tables, join preferences/metrics, apply authorization filters,
-        TODO: and shape the response in a serializable structure for API delivery.
-        """
-        raise NotImplementedError("TODO: implement profile retrieval")
-
-    def update_profile(self, *, user_id: str, updates: dict) -> None:
-        """Apply partial updates to a profile.
-
-        Inputs:
-            user_id: Account being modified.
-            updates: Dict of fields (display_name, timezone, preferences) to patch.
-        Output:
-            Updated profile DTO or raises validation errors.
-        TODO: Validate and sanitize patch payloads, persist transactional updates, emit change events
-        TODO: to downstream systems (notifications, analytics), and refresh caches.
-        """
-        raise NotImplementedError("TODO: implement profile update flow")
-
-    def change_password(self, *, user_id: str, current_password: str, new_password: str) -> None:
-        """Rotate a user's password securely.
-
-        Inputs:
-            user_id: Target account owner.
-            current_password: Credential proof for confirmation.
-            new_password: Replacement secret to be set.
-        Output:
-            None. Should raise for invalid current credential or weak new password.
-        TODO: Verify current credential, enforce password policy, hash + store the new secret, revoke
-        TODO: related sessions/tokens, and emit notifications/audit events.
-        """
-        raise NotImplementedError("TODO: implement password change flow")
 
     def sign_in_with_google(self, *, id_token: str, nonce: str | None = None) -> None:
         """Sign a user in (or up) through Google identity tokens.

@@ -9,7 +9,7 @@
       <q-form @submit="handleSave" class="q-gutter-md">
         <div class="row q-col-gutter-md">
           <div class="col-12 col-md-6">
-            <q-input v-model="displayName" label="Display name" outlined dense />
+            <q-input v-model="username" label="Username" outlined dense />
           </div>
           <div class="col-12 col-md-6">
             <q-input v-model="email" type="email" label="Email" outlined dense />
@@ -18,7 +18,9 @@
             <q-select
               v-model="timezone"
               :options="filteredTimezones"
-              label="Timezone"
+              option-label="label"
+              option-value="value"
+              label="Timezone (UTC offset)"
               outlined
               dense
               clearable
@@ -26,7 +28,7 @@
               fill-input
               input-debounce="0"
               @filter="filterTimezones"
-              hint="Search and select your timezone"
+              hint="Select by UTC offset; common cities shown for context"
             />
           </div>
         </div>
@@ -35,17 +37,7 @@
 
         <div class="text-subtitle1">Change Password</div>
         <div class="row q-col-gutter-md">
-          <div class="col-12 col-md-4">
-            <q-input
-              v-model="currentPassword"
-              type="password"
-              label="Current password"
-              outlined
-              dense
-              autocomplete="current-password"
-            />
-          </div>
-          <div class="col-12 col-md-4">
+          <div class="col-12 col-md-6">
             <q-input
               v-model="newPassword"
               type="password"
@@ -53,9 +45,10 @@
               outlined
               dense
               autocomplete="new-password"
+              @update:model-value="computeStrength"
             />
           </div>
-          <div class="col-12 col-md-4">
+          <div class="col-12 col-md-6">
             <q-input
               v-model="confirmPassword"
               type="password"
@@ -64,6 +57,16 @@
               dense
               autocomplete="new-password"
             />
+          </div>
+          <div class="col-12">
+            <q-linear-progress
+              :value="strengthValue"
+              :color="strengthColor"
+              track-color="grey-4"
+              size="12px"
+              class="q-mt-sm"
+            />
+            <div class="text-caption text-grey-7 q-mt-xs">{{ strengthLabel }}</div>
           </div>
         </div>
 
@@ -80,50 +83,67 @@
 import { onMounted, ref } from 'vue';
 import { authService } from '../services/authService';
 
-const displayName = ref('');
+const username = ref('');
 const email = ref('');
 const timezone = ref('');
 const saving = ref(false);
 const message = ref('');
 const error = ref('');
-const currentPassword = ref('');
 const newPassword = ref('');
 const confirmPassword = ref('');
-const timezoneOptions = ref<string[]>([]);
-const filteredTimezones = ref<string[]>([]);
+type TzOption = { label: string; value: string };
+const timezoneOptions = ref<TzOption[]>([]);
+const filteredTimezones = ref<TzOption[]>([]);
+const strengthValue = ref(0);
+const strengthLabel = ref('Password strength');
+const strengthColor = ref('grey');
 
-function detectBrowserTimeZone(): string | null {
+function detectBrowserTimeZoneOffset(): string | null {
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+    const mins = new Date().getTimezoneOffset(); // minutes behind UTC
+    const offsetHours = -mins / 60;
+    const sign = offsetHours >= 0 ? '+' : '-';
+    const padded = Math.abs(offsetHours).toString().padStart(2, '0');
+    return `UTC${sign}${padded}`;
   } catch {
     return null;
   }
 }
 
 function loadTimezones() {
-  let zones: string[] = [];
-  try {
-    zones = (Intl as any).supportedValuesOf?.('timeZone') || [];
-  } catch {
-    zones = [];
-  }
-  if (!zones.length) {
-    zones = [
-      'UTC',
-      'America/New_York',
-      'America/Chicago',
-      'America/Denver',
-      'America/Los_Angeles',
-      'Europe/London',
-      'Europe/Berlin',
-      'Europe/Paris',
-      'Asia/Kolkata',
-      'Asia/Tokyo',
-      'Australia/Sydney',
-    ];
-  }
-  timezoneOptions.value = zones;
-  filteredTimezones.value = zones;
+  const offsets: TzOption[] = [
+    { value: 'UTC-12', label: 'UTC-12 — Baker Island' },
+    { value: 'UTC-11', label: 'UTC-11 — Midway' },
+    { value: 'UTC-10', label: 'UTC-10 — Hawaii' },
+    { value: 'UTC-09', label: 'UTC-9 — Alaska' },
+    { value: 'UTC-08', label: 'UTC-8 — Pacific (Los Angeles)' },
+    { value: 'UTC-07', label: 'UTC-7 — Mountain (Denver)' },
+    { value: 'UTC-06', label: 'UTC-6 — Central (Chicago)' },
+    { value: 'UTC-05', label: 'UTC-5 — Eastern (New York)' },
+    { value: 'UTC-04', label: 'UTC-4 — Atlantic (Caribbean)' },
+    { value: 'UTC-03', label: 'UTC-3 — Buenos Aires' },
+    { value: 'UTC-02', label: 'UTC-2 — South Georgia' },
+    { value: 'UTC-01', label: 'UTC-1 — Azores' },
+    { value: 'UTC+00', label: 'UTC+0 — London' },
+    { value: 'UTC+01', label: 'UTC+1 — Berlin/Paris/Rome' },
+    { value: 'UTC+02', label: 'UTC+2 — Athens/Cairo/Johannesburg' },
+    { value: 'UTC+03', label: 'UTC+3 — Moscow/Nairobi/Riyadh' },
+    { value: 'UTC+04', label: 'UTC+4 — Dubai' },
+    { value: 'UTC+05', label: 'UTC+5 — Karachi/Tashkent' },
+    { value: 'UTC+05:30', label: 'UTC+5:30 — India (Kolkata)' },
+    { value: 'UTC+06', label: 'UTC+6 — Dhaka' },
+    { value: 'UTC+07', label: 'UTC+7 — Bangkok/Jakarta' },
+    { value: 'UTC+08', label: 'UTC+8 — Beijing/Singapore/Perth' },
+    { value: 'UTC+09', label: 'UTC+9 — Tokyo/Seoul' },
+    { value: 'UTC+09:30', label: 'UTC+9:30 — Adelaide' },
+    { value: 'UTC+10', label: 'UTC+10 — Sydney/Brisbane' },
+    { value: 'UTC+11', label: 'UTC+11 — Magadan/Solomon Is.' },
+    { value: 'UTC+12', label: 'UTC+12 — Auckland/Fiji' },
+    { value: 'UTC+13', label: 'UTC+13 — Tonga' },
+    { value: 'UTC+14', label: 'UTC+14 — Kiritimati' },
+  ];
+  timezoneOptions.value = offsets;
+  filteredTimezones.value = offsets;
 }
 
 function filterTimezones(val: string, update: (cb: () => void) => void) {
@@ -133,16 +153,16 @@ function filterTimezones(val: string, update: (cb: () => void) => void) {
       return;
     }
     const needle = val.toLowerCase();
-    filteredTimezones.value = timezoneOptions.value.filter((z) => z.toLowerCase().includes(needle));
+    filteredTimezones.value = timezoneOptions.value.filter((z) => z.label.toLowerCase().includes(needle));
   });
 }
 
 async function loadProfile() {
   try {
     const resp = await authService.getProfile();
-    displayName.value = resp.data.display_name || '';
+    username.value = resp.data.username || '';
     email.value = resp.data.email || '';
-    timezone.value = resp.data.timezone || detectBrowserTimeZone() || '';
+    timezone.value = resp.data.timezone || detectBrowserTimeZoneOffset() || '';
   } catch (err: any) {
     error.value = err?.response?.data?.detail || 'Unable to load profile. Please log in again.';
   }
@@ -154,15 +174,15 @@ async function handleSave() {
   saving.value = true;
   try {
     const resp = await authService.updateProfile({
-      display_name: displayName.value,
+      username: username.value,
       email: email.value,
       timezone: timezone.value,
     });
     message.value = 'Profile saved.';
     email.value = resp.data.email || email.value;
-    displayName.value = resp.data.display_name || displayName.value;
+    username.value = resp.data.username || username.value;
 
-    if (currentPassword.value || newPassword.value || confirmPassword.value) {
+    if (newPassword.value || confirmPassword.value) {
       await handlePasswordChange();
     }
   } catch (err: any) {
@@ -179,14 +199,14 @@ async function handlePasswordChange() {
   }
   try {
     await authService.changePassword({
-      current_password: currentPassword.value,
+      current_password: '', // current password omitted per request
       new_password: newPassword.value,
       confirm_password: confirmPassword.value,
     });
     message.value = 'Password updated.';
-    currentPassword.value = '';
     newPassword.value = '';
     confirmPassword.value = '';
+    computeStrength('');
   } catch (err: any) {
     error.value = err?.response?.data?.detail || 'Unable to change password.';
   }
@@ -196,4 +216,26 @@ onMounted(() => {
   loadTimezones();
   loadProfile();
 });
+
+function computeStrength(value: string) {
+  const pwd = value || newPassword.value;
+  let score = 0;
+  if (pwd.length >= 8) score += 0.25;
+  if (/[A-Z]/.test(pwd)) score += 0.2;
+  if (/[a-z]/.test(pwd)) score += 0.2;
+  if (/[0-9]/.test(pwd)) score += 0.15;
+  if (/[^A-Za-z0-9]/.test(pwd)) score += 0.2;
+  if (pwd.length >= 12) score += 0.1;
+  strengthValue.value = Math.min(score, 1);
+  if (score >= 0.8) {
+    strengthLabel.value = 'Strong';
+    strengthColor.value = 'green';
+  } else if (score >= 0.5) {
+    strengthLabel.value = 'Medium';
+    strengthColor.value = 'orange';
+  } else {
+    strengthLabel.value = 'Weak';
+    strengthColor.value = 'red';
+  }
+}
 </script>

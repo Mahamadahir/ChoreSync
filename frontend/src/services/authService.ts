@@ -30,7 +30,7 @@ export const authService = {
   getProfile() {
     return api.get('/api/profile/');
   },
-  updateProfile(payload: { display_name?: string; email?: string; timezone?: string }) {
+  updateProfile(payload: { username?: string; email?: string; timezone?: string }) {
     return api.post('/api/profile/', payload);
   },
   changePassword(payload: { current_password: string; new_password: string; confirm_password: string }) {
