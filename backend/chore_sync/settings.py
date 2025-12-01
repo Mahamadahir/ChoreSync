@@ -160,6 +160,9 @@ CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost:
 
 # Google OAuth
 GOOGLE_OAUTH_CLIENT_ID = env('GOOGLE_OAUTH_CLIENT_ID', default='')
+# Microsoft OAuth
+MICROSOFT_CLIENT_ID = env('MICROSOFT_CLIENT_ID', default='')
+MICROSOFT_TENANT_ID = env('MICROSOFT_TENANT_ID', default='common')
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/

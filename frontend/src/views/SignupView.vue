@@ -92,6 +92,15 @@
         @click="router.push({ name: 'login-google' })"
         label="Sign up with Google"
       />
+      <q-btn
+        outline
+        color="secondary"
+        icon="login"
+        class="full-width q-mt-sm"
+        :disable="isSubmitting"
+        @click="router.push({ name: 'login-microsoft' })"
+        label="Sign up with Microsoft"
+      />
     </q-card>
   </div>
 </template>

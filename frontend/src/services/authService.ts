@@ -48,4 +48,7 @@ export const authService = {
   loginWithGoogle(id_token: string) {
     return api.post('/api/auth/google/', { id_token });
   },
+  loginWithMicrosoft(id_token: string) {
+    return api.post('/api/auth/microsoft/', { id_token });
+  },
 };

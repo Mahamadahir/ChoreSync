@@ -20,6 +20,7 @@ from chore_sync.api.serializers import (
     ResetPasswordSerializer,
     ChangePasswordSerializer,
     GoogleLoginSerializer,
+    MicrosoftLoginSerializer,
 )
 from chore_sync.services.auth_service import AccountService
 from django.contrib.auth import get_user_model
@@ -37,6 +38,7 @@ from chore_sync.domain_errors import (
     InactiveAccount,
 )
 from django.contrib.auth import login, logout
+from django.conf import settings
 
 User = get_user_model()
 
@@ -388,6 +390,35 @@ class GoogleLoginAPIView(APIView):
         return Response(
             {
                 "detail": "Login via Google successful.",
+                "username": user_dto.username,
+                "email": user_dto.email,
+                "email_verified": getattr(user_dto, "email_verified", False),
+                "is_active": user_dto.is_active,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class MicrosoftLoginAPIView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        if not settings.MICROSOFT_CLIENT_ID:
+            return Response({"detail": "Microsoft Sign-In is not configured."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        serializer = MicrosoftLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        svc = AccountService()
+        try:
+            user, user_dto = svc.sign_in_with_microsoft(id_token=serializer.validated_data["id_token"])
+        except (InvalidCredentials, InvalidEmail, RegistrationError, InactiveAccount) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        login(request, user)
+        return Response(
+            {
+                "detail": "Login via Microsoft successful.",
                 "username": user_dto.username,
                 "email": user_dto.email,
                 "email_verified": getattr(user_dto, "email_verified", False),

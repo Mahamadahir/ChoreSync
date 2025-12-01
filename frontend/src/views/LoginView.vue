@@ -55,6 +55,15 @@
         @click="router.push({ name: 'login-google' })"
         label="Continue with Google"
       />
+      <q-btn
+        outline
+        color="secondary"
+        icon="login"
+        class="full-width q-mt-sm"
+        :disable="isSubmitting"
+        @click="router.push({ name: 'login-microsoft' })"
+        label="Continue with Microsoft"
+      />
     </q-card>
   </div>
 </template>

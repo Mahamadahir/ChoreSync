@@ -62,3 +62,7 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 class GoogleLoginSerializer(serializers.Serializer):
     id_token = serializers.CharField(min_length=10, write_only=True)
+
+
+class MicrosoftLoginSerializer(serializers.Serializer):
+    id_token = serializers.CharField(min_length=10, write_only=True)

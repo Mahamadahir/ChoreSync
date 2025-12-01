@@ -29,6 +29,7 @@ from chore_sync.api.views import (
     ResetPasswordAPIView,
     ChangePasswordAPIView,
     GoogleLoginAPIView,
+    MicrosoftLoginAPIView,
 )
 
 urlpatterns = [
@@ -43,6 +44,7 @@ urlpatterns = [
     path('api/auth/reset-password/', ResetPasswordAPIView.as_view(), name='reset-password'),
     path('api/auth/change-password/', ChangePasswordAPIView.as_view(), name='change-password'),
     path('api/auth/google/', GoogleLoginAPIView.as_view(), name='google-login'),
+    path('api/auth/microsoft/', MicrosoftLoginAPIView.as_view(), name='microsoft-login'),
     path('api/profile/', ProfileAPIView.as_view(), name='profile'),
     # TODO: add group/task endpoints via DRF views or viewsets
 ]

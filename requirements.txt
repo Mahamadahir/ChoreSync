@@ -12,3 +12,4 @@ django-cors-headers>=4.4.0
 celery>=5.4.0
 google-auth>=2.34.0
 requests>=2.31.0
+pyjwt[crypto]>=2.8.0
