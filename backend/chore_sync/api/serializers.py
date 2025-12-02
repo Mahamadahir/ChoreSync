@@ -66,3 +66,27 @@ class GoogleLoginSerializer(serializers.Serializer):
 
 class MicrosoftLoginSerializer(serializers.Serializer):
     id_token = serializers.CharField(min_length=10, write_only=True)
+
+
+class EventSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    description = serializers.CharField(allow_blank=True)
+    start = serializers.DateTimeField()
+    end = serializers.DateTimeField()
+    is_all_day = serializers.BooleanField()
+    blocks_availability = serializers.BooleanField()
+    source = serializers.CharField()
+    calendar_id = serializers.IntegerField()
+    calendar_name = serializers.CharField()
+    calendar_color = serializers.CharField(allow_null=True, required=False)
+
+
+class EventCreateSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=255)
+    description = serializers.CharField(required=False, allow_blank=True)
+    start = serializers.DateTimeField()
+    end = serializers.DateTimeField()
+    is_all_day = serializers.BooleanField(default=False)
+    blocks_availability = serializers.BooleanField(default=True)
+    calendar_id = serializers.IntegerField(required=False)

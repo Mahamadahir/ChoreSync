@@ -24,6 +24,11 @@
     "vue": "^3.5.25",
     "vue-router": "^4.6.3",
     "quasar": "^2.15.4",
-    "@quasar/extras": "^1.16.12"
+    "@quasar/extras": "^1.16.12",
+    "@fullcalendar/core": "^5.11.5",
+    "@fullcalendar/daygrid": "^5.11.5",
+    "@fullcalendar/timegrid": "^5.11.5",
+    "@fullcalendar/interaction": "^5.11.5",
+    "@fullcalendar/vue3": "^5.11.5"
   }
 }

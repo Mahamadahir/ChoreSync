@@ -21,6 +21,8 @@ from chore_sync.api.serializers import (
     ChangePasswordSerializer,
     GoogleLoginSerializer,
     MicrosoftLoginSerializer,
+    EventSerializer,
+    EventCreateSerializer,
 )
 from chore_sync.services.auth_service import AccountService
 from django.contrib.auth import get_user_model
@@ -39,6 +41,7 @@ from chore_sync.domain_errors import (
 )
 from django.contrib.auth import login, logout
 from django.conf import settings
+from django.utils.dateparse import parse_datetime
 
 User = get_user_model()
 
@@ -426,3 +429,130 @@ class MicrosoftLoginAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class EventsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication]
+
+    def get(self, request):
+        if not request.user.is_authenticated:
+            return Response({"detail": "Not authenticated"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        start_param = request.query_params.get("start")
+        end_param = request.query_params.get("end")
+        from chore_sync.models import Event  # local import to avoid circular references
+
+        qs = Event.objects.filter(calendar__user=request.user)
+        if start_param:
+            start_dt = parse_datetime(start_param)
+            if start_dt:
+                qs = qs.filter(end__gte=start_dt)
+        if end_param:
+            end_dt = parse_datetime(end_param)
+            if end_dt:
+                qs = qs.filter(start__lte=end_dt)
+
+        data = [
+            {
+                "id": ev.id,
+                "title": ev.title,
+                "description": ev.description,
+                "start": ev.start,
+                "end": ev.end,
+                "is_all_day": ev.is_all_day,
+                "blocks_availability": ev.blocks_availability,
+                "source": ev.source,
+                "calendar_id": ev.calendar_id,
+                "calendar_name": ev.calendar.name,
+                "calendar_color": ev.calendar.color,
+            }
+            for ev in qs.select_related("calendar")
+        ]
+
+        serializer = EventSerializer(data, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        if not request.user.is_authenticated:
+            return Response({"detail": "Not authenticated"}, status=status.HTTP_401_UNAUTHORIZED)
+        serializer = EventCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        from chore_sync.models import Event, Calendar  # local import to avoid circular references
+
+        cal_id = serializer.validated_data.get("calendar_id")
+        calendar = None
+        if cal_id:
+            calendar = Calendar.objects.filter(pk=cal_id, user=request.user).first()
+        if calendar is None:
+            calendar = Calendar.objects.filter(user=request.user, provider="internal").first()
+        if calendar is None:
+            calendar = Calendar.objects.filter(user=request.user).first()
+        if calendar is None:
+            return Response({"detail": "No calendar available for this user."}, status=status.HTTP_400_BAD_REQUEST)
+
+        ev = Event.objects.create(
+            calendar=calendar,
+            title=serializer.validated_data["title"],
+            description=serializer.validated_data.get("description", ""),
+            start=serializer.validated_data["start"],
+            end=serializer.validated_data["end"],
+            is_all_day=serializer.validated_data.get("is_all_day", False),
+            blocks_availability=serializer.validated_data.get("blocks_availability", True),
+            source="manual",
+        )
+        out = {
+            "id": ev.id,
+            "title": ev.title,
+            "description": ev.description,
+            "start": ev.start,
+            "end": ev.end,
+            "is_all_day": ev.is_all_day,
+            "blocks_availability": ev.blocks_availability,
+            "source": ev.source,
+            "calendar_id": ev.calendar_id,
+            "calendar_name": ev.calendar.name,
+            "calendar_color": ev.calendar.color,
+        }
+        return Response(out, status=status.HTTP_201_CREATED)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class EventDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication]
+
+    def patch(self, request, pk: int):
+        if not request.user.is_authenticated:
+            return Response({"detail": "Not authenticated"}, status=status.HTTP_401_UNAUTHORIZED)
+        serializer = EventCreateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        from chore_sync.models import Event  # local import
+        try:
+            ev = Event.objects.select_related("calendar").get(pk=pk, calendar__user=request.user)
+        except Event.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        for field in ["title", "description", "start", "end", "is_all_day", "blocks_availability"]:
+            if field in serializer.validated_data:
+                setattr(ev, field, serializer.validated_data[field])
+        ev.save()
+
+        out = {
+            "id": ev.id,
+            "title": ev.title,
+            "description": ev.description,
+            "start": ev.start,
+            "end": ev.end,
+            "is_all_day": ev.is_all_day,
+            "blocks_availability": ev.blocks_availability,
+            "source": ev.source,
+            "calendar_id": ev.calendar_id,
+            "calendar_name": ev.calendar.name,
+            "calendar_color": ev.calendar.color,
+        }
+        return Response(out, status=status.HTTP_200_OK)
+
+    def post(self, request, pk: int):
+        """Handle drop/resize updates from FullCalendar (uses POST for simplicity)."""
+        return self.patch(request, pk)
