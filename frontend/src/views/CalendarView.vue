@@ -76,6 +76,7 @@ import { eventService, type CalendarEvent } from '../services/eventService';
 import '@fullcalendar/common/main.css';
 import '@fullcalendar/daygrid/main.css';
 import '@fullcalendar/timegrid/main.css';
+import { onMounted, watch } from 'vue';
 
 const calendarRef = ref();
 const loading = ref(false);
@@ -110,19 +111,42 @@ const calendarOptions = ref({
   datesSet: fetchRange,
   eventClick: handleEventClick,
   editable: true,
+  eventStartEditable: true,
   eventDurationEditable: true,
   eventResizableFromStart: true,
+  forceEventDuration: true,
   eventDrop: handleEventMove,
   eventResize: handleEventResize,
+});
+
+watch(combineCalendars, () => {
+  reload();
+});
+
+watch(selectedCalendarIds, () => {
+  if (!combineCalendars.value) {
+    reload();
+  }
+});
+
+onMounted(() => {
+  // initial load when calendar renders
+  const api = calendarRef.value?.getApi?.();
+  if (api) {
+    fetchRange({ startStr: api.view.activeStart.toISOString(), endStr: api.view.activeEnd.toISOString() });
+  }
 });
 
 async function fetchRange(arg: any) {
   loading.value = true;
   error.value = '';
   try {
+    const api = calendarRef.value?.getApi?.();
+    const viewType = api?.view?.type || 'dayGridMonth';
+    const { startIso, endIso } = buildBufferedRange(arg.startStr, arg.endStr, viewType);
     const resp = await eventService.list({
-      start: arg.startStr,
-      end: arg.endStr,
+      start: startIso,
+      end: endIso,
     });
     const calendarsSeen = new Map<number, string>();
     const calColors = new Map<number, string | null>();
@@ -144,7 +168,7 @@ async function fetchRange(arg: any) {
         id: ev.id,
         title: ev.title,
         start: ev.start,
-        end: ev.end,
+        end: ev.end || ev.start, // ensure an end is present so resizing/dragging works
         allDay: ev.is_all_day,
         extendedProps: {
           source: ev.source,
@@ -170,6 +194,30 @@ function reload() {
   if (api) {
     fetchRange({ startStr: api.view.activeStart.toISOString(), endStr: api.view.activeEnd.toISOString() });
   }
+}
+
+function buildBufferedRange(startStr: string, endStr: string, viewType: string) {
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+
+  if (viewType === 'dayGridMonth') {
+    // Load current month plus one month before/after
+    start.setMonth(start.getMonth() - 1);
+    end.setMonth(end.getMonth() + 1);
+  } else if (viewType === 'timeGridWeek') {
+    // Load an extra week on each side for week view
+    start.setDate(start.getDate() - 7);
+    end.setDate(end.getDate() + 7);
+  } else {
+    // Day view: small buffer
+    start.setDate(start.getDate() - 1);
+    end.setDate(end.getDate() + 1);
+  }
+
+  return {
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+  };
 }
 
 async function handleCreate() {
@@ -258,6 +306,7 @@ async function handleEventResize(arg: any) {
     await eventService.update(Number(arg.event.id), {
       start: arg.event.start?.toISOString(),
       end: arg.event.end?.toISOString(),
+      is_all_day: arg.event.allDay,
     });
   } catch (err: any) {
     error.value = err?.response?.data?.detail || 'Unable to resize event.';

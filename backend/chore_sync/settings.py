@@ -129,6 +129,8 @@ FRONTEND_VERIFY_EMAIL_URL = env(
     'FRONTEND_VERIFY_EMAIL_URL',
     default='http://localhost:5173/verify-email' # Default for development
 )
+# Base frontend URL for redirects after OAuth/connect flows
+FRONTEND_APP_URL = env('FRONTEND_APP_URL', default='http://localhost:5173')
 # ---------------------------
 
 # CORS / DRF
@@ -160,6 +162,8 @@ CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost:
 
 # Google OAuth
 GOOGLE_OAUTH_CLIENT_ID = env('GOOGLE_OAUTH_CLIENT_ID', default='')
+GOOGLE_OAUTH_CLIENT_SECRET = env('GOOGLE_OAUTH_CLIENT_SECRET', default='')
+GOOGLE_OAUTH_REDIRECT_URI = env('GOOGLE_OAUTH_REDIRECT_URI', default='http://localhost:8000/api/calendar/google/callback/')
 # Microsoft OAuth
 MICROSOFT_CLIENT_ID = env('MICROSOFT_CLIENT_ID', default='')
 MICROSOFT_TENANT_ID = env('MICROSOFT_TENANT_ID', default='common')

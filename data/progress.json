@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2025-11-26T19:54:20.308Z",
+  "updatedAt": "2025-11-29T20:13:56.964Z",
   "generatedAt": "2025-10-28T15:32:18Z",
   "features": [
     {
@@ -4039,6 +4039,48 @@
         }
       ],
       "category": "additional"
+    },
+    {
+      "id": "feature-task-queue",
+      "title": "Task Queue (Celery) Setup",
+      "start": "2026-02-28",
+      "due": "2026-03-03",
+      "state": "pending",
+      "methods": [
+        {
+          "id": "method-celery-config",
+          "title": "Configure Celery + broker",
+          "start": "2026-02-28",
+          "due": "2026-03-01",
+          "state": "pending",
+          "tests": [
+            {
+              "id": "test-celery-config",
+              "title": "celery app starts and registers tasks",
+              "start": "2026-02-28",
+              "due": "2026-03-01",
+              "state": "pending"
+            }
+          ]
+        },
+        {
+          "id": "method-celery-email-task",
+          "title": "Move email verification to Celery task",
+          "start": "2026-03-01",
+          "due": "2026-03-03",
+          "state": "pending",
+          "tests": [
+            {
+              "id": "test-celery-email-task",
+              "title": "email task enqueues and updates token state",
+              "start": "2026-03-01",
+              "due": "2026-03-03",
+              "state": "pending"
+            }
+          ]
+        }
+      ],
+      "category": "core"
     }
   ],
   "checked": {
@@ -4072,9 +4114,19 @@
     "method-model-external-credential": true,
     "test-model-external-credential": true,
     "method-model-group-calendar": true,
-    "test-model-group-calendar": true
+    "test-model-group-calendar": true,
+    "method-account-register": true,
+    "feature-design-docs": true,
+    "method-design-scheduler": true,
+    "test-design-scheduler": true,
+    "method-design-preferences": true,
+    "test-design-preferences": true,
+    "method-design-lifecycle": true,
+    "test-design-lifecycle": true
   },
   "manualLocks": {
-    "feature-domain-models": true
+    "feature-domain-models": true,
+    "method-account-register": true,
+    "feature-design-docs": true
   }
 }

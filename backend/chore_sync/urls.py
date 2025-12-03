@@ -32,6 +32,9 @@ from chore_sync.api.views import (
     MicrosoftLoginAPIView,
     EventsAPIView,
     EventDetailAPIView,
+    GoogleCalendarAuthURLAPIView,
+    GoogleCalendarCallbackAPIView,
+    GoogleCalendarSyncAPIView,
 )
 
 urlpatterns = [
@@ -50,5 +53,8 @@ urlpatterns = [
     path('api/profile/', ProfileAPIView.as_view(), name='profile'),
     path('api/events/', EventsAPIView.as_view(), name='events'),
     path('api/events/<int:pk>/', EventDetailAPIView.as_view(), name='event-detail'),
+    path('api/calendar/google/auth-url/', GoogleCalendarAuthURLAPIView.as_view(), name='google-cal-auth-url'),
+    path('api/calendar/google/callback/', GoogleCalendarCallbackAPIView.as_view(), name='google-cal-callback'),
+    path('api/calendar/google/sync/', GoogleCalendarSyncAPIView.as_view(), name='google-cal-sync'),
     # TODO: add group/task endpoints via DRF views or viewsets
 ]

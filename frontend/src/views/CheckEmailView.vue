@@ -31,7 +31,9 @@ import { useRoute } from 'vue-router';
 import { authService } from '../services/authService';
 
 const route = useRoute();
-const email = ref<string>((route.query.email as string) || '');
+const initialEmail = (route.query.email as string) || '';
+// Only prefill if it looks like an email; avoid showing usernames here.
+const email = ref<string>(initialEmail.includes('@') ? initialEmail : '');
 const message = ref('');
 const error = ref('');
 const isSending = ref(false);

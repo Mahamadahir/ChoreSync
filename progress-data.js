@@ -3452,6 +3452,48 @@ window.progressData = {
       "category": "core"
     },
     {
+      "id": "feature-task-queue",
+      "title": "Task Queue (Celery) Setup",
+      "start": "2026-02-28",
+      "due": "2026-03-03",
+      "state": "pending",
+      "methods": [
+        {
+          "id": "method-celery-config",
+          "title": "Configure Celery + broker",
+          "start": "2026-02-28",
+          "due": "2026-03-01",
+          "state": "pending",
+          "tests": [
+            {
+              "id": "test-celery-config",
+              "title": "celery app starts and registers tasks",
+              "start": "2026-02-28",
+              "due": "2026-03-01",
+              "state": "pending"
+            }
+          ]
+        },
+        {
+          "id": "method-celery-email-task",
+          "title": "Move email verification to Celery task",
+          "start": "2026-03-01",
+          "due": "2026-03-03",
+          "state": "pending",
+          "tests": [
+            {
+              "id": "test-celery-email-task",
+              "title": "email task enqueues and updates token state",
+              "start": "2026-03-01",
+              "due": "2026-03-03",
+              "state": "pending"
+            }
+          ]
+        }
+      ],
+      "category": "core"
+    },
+    {
       "id": "feature-task-templates",
       "title": "Task Templates",
       "start": "2026-02-28",

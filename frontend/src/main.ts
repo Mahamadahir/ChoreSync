@@ -14,6 +14,7 @@ import { useAuthStore } from './stores/auth';
 import { authService } from './services/authService';
 import GoogleLoginView from './views/GoogleLoginView.vue';
 import MicrosoftLoginView from './views/MicrosoftLoginView.vue';
+import CalendarView from './views/CalendarView.vue';
 import { Quasar } from 'quasar';
 import '@quasar/extras/material-icons/material-icons.css';
 import 'quasar/src/css/index.sass';
@@ -25,6 +26,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/check-email', name: 'check-email', component: CheckEmailView },
   { path: '/verify-email', name: 'verify-email', component: VerifyEmailView },
   { path: '/profile', name: 'profile', component: UpdateProfileView, meta: { requiresAuth: true } },
+  { path: '/calendar', name: 'calendar', component: CalendarView, meta: { requiresAuth: true } },
   { path: '/forgot-password', name: 'forgot-password', component: ForgotPasswordView, meta: { requiresGuest: true } },
   { path: '/reset-password', name: 'reset-password', component: ResetPasswordView, meta: { requiresGuest: true } },
   { path: '/login/google', name: 'login-google', component: GoogleLoginView, meta: { requiresGuest: true } },

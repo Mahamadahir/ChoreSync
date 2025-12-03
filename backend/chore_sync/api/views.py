@@ -9,6 +9,9 @@ from rest_framework.views import APIView
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
+import logging
+from django.shortcuts import redirect
+
 from chore_sync.api.serializers import (
     SignupSerializer,
     LoginSerializer,
@@ -25,6 +28,7 @@ from chore_sync.api.serializers import (
     EventCreateSerializer,
 )
 from chore_sync.services.auth_service import AccountService
+from chore_sync.services.google_calendar_service import GoogleCalendarService
 from django.contrib.auth import get_user_model
 from chore_sync.dtos.user_dtos import UserDTO
 from chore_sync.domain_errors import (
@@ -44,6 +48,7 @@ from django.conf import settings
 from django.utils.dateparse import parse_datetime
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 class CsrfExemptSessionAuthentication(SessionAuthentication):
@@ -553,6 +558,60 @@ class EventDetailAPIView(APIView):
         }
         return Response(out, status=status.HTTP_200_OK)
 
-    def post(self, request, pk: int):
-        """Handle drop/resize updates from FullCalendar (uses POST for simplicity)."""
-        return self.patch(request, pk)
+
+@method_decorator(csrf_exempt, name="dispatch")
+class GoogleCalendarAuthURLAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication]
+
+    def get(self, request):
+        try:
+            svc = GoogleCalendarService(request.user)
+            url = svc.build_auth_url()
+            return Response({"auth_url": url}, status=status.HTTP_200_OK)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class GoogleCalendarCallbackAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication]
+
+    def get(self, request):
+        code = request.query_params.get("code")
+        if not code:
+            return Response({"detail": "Missing code"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            svc = GoogleCalendarService(request.user)
+            svc.exchange_code(code)
+            count = svc.sync_events()
+            frontend_url = getattr(settings, "FRONTEND_APP_URL", "http://localhost:5173")
+            target = f"{frontend_url}?google_sync=success&imported={count}"
+            return redirect(target)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            logger.exception("Google callback failed", exc_info=exc)
+            frontend_url = getattr(settings, "FRONTEND_APP_URL", "http://localhost:5173")
+            target = f"{frontend_url}?google_sync=error"
+            try:
+                return redirect(target)
+            except Exception:
+                return Response({"detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class GoogleCalendarSyncAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication]
+
+    def post(self, request, pk=None, *args, **kwargs):
+        try:
+            svc = GoogleCalendarService(request.user)
+            count = svc.sync_events()
+            return Response({"detail": f"Synced {count} events from Google."}, status=status.HTTP_200_OK)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({"detail": "Failed to sync Google events."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

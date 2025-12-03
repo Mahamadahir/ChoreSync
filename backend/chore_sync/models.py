@@ -418,7 +418,10 @@ class Calendar(models.Model):
     )
 
     # Sync details
-    sync_enabled = models.BooleanField(default=False)
+    sync_enabled = models.BooleanField(
+        default=False,
+
+    )
     back_sync_enabled = models.BooleanField(
         default=False,
         help_text="Push app events to external provider?",

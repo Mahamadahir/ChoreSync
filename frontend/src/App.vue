@@ -4,6 +4,7 @@
       <q-toolbar>
         <q-toolbar-title>ChoreSync</q-toolbar-title>
         <q-btn v-if="authStore.isAuthenticated" flat dense to="/">Home</q-btn>
+        <q-btn v-if="authStore.isAuthenticated" flat dense to="/calendar">Calendar</q-btn>
         <q-btn v-if="!authStore.isAuthenticated" flat dense to="/signup">Sign Up</q-btn>
         <q-btn v-if="!authStore.isAuthenticated" flat dense to="/login">Log In</q-btn>
         <q-btn v-if="authStore.isAuthenticated" flat dense to="/profile">Profile</q-btn>

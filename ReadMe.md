@@ -1,50 +1,91 @@
 # ChoreSync
 
-ChoreSync is a coordination platform for households and teams, pairing a FastAPI backend with a Vite/TypeScript frontend to manage shared chores, schedules, and communication.
+ChoreSync is a Django + DRF backend with a Vue/Quasar frontend for coordinating household/group chores. It supports email/password auth, email verification, password reset, Google/Microsoft sign-in, and an in-app calendar view of events/tasks.
 
 ## Repo Structure
-- `backend/` service APIs and domain scaffolding
-- `frontend/` SPA controllers and client stubs
+- `backend/` Django project (session auth, DRF endpoints, Postgres config, models/services)
+- `frontend/` Vue 3 + Quasar SPA (Vite dev server)
+- `ProgressTracker.html` / `progress-data.js` track planned features/tests
 
-Detailed project and implementation trackers live in `ProgressTracker.html`.
-
-## Getting Started
-
-### Virtual Environment Setup
-To keep backend tooling isolated, create a per-repo virtual environment in the project root (PowerShell examples shown):
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-Once activated, the `python`/`pip` commands below automatically run inside the venv. On macOS/Linux use `source .venv/bin/activate`.
-
-### Backend (FastAPI + Django scaffolding)
-1. Create and activate a Python 3.11+ virtual environment.
-2. Install dependencies (and test tooling) from the backend project:
+## Backend (Django)
+1. Create/activate venv (PowerShell example):
    ```powershell
-   python -m pip install --upgrade pip
-   python -m pip install -e backend[dev]
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
    ```
-3. Run the Django system check and pytest suite to verify the install:
+   (macOS/Linux: `source .venv/bin/activate`)
+2. Install deps:
    ```powershell
-   python backend/manage.py check
-   python -m pytest
+   pip install -r requirements.txt
    ```
-4. Launch the FastAPI app with Uvicorn:
+3. Set env in `backend/secrets.env` (loaded by settings):
+   ```env
+   SECRET_KEY=...
+   DEBUG=True
+   ALLOWED_HOSTS=127.0.0.1,localhost
+   DATABASE_URL=postgres://choresync_user:choreSync@localhost:5432/choresync
+   EMAIL_HOST_USER=you@example.com
+   EMAIL_HOST_PASSWORD=...
+   EMAIL_USE_TLS=True
+   FRONTEND_VERIFY_EMAIL_URL=http://localhost:5173/verify-email
+   GOOGLE_OAUTH_CLIENT_ID=<your-google-client-id>
+   GOOGLE_OAUTH_CLIENT_SECRET=<your-google-client-secret>
+   GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/api/calendar/google/callback/
+   MICROSOFT_CLIENT_ID=<your-azure-app-client-id>
+   MICROSOFT_TENANT_ID=common
+   ```
+4. Apply migrations:
    ```powershell
-   uvicorn chore_sync.app:app --app-dir backend --reload
+   cd backend
+   python manage.py migrate
+   ```
+5. Run server (defaults to 8000):
+   ```powershell
+   python manage.py runserver
    ```
 
-### Frontend (Vite + TypeScript stubs)
-1. Install Node.js 20+ and npm.
-2. Install project dependencies from the `frontend/` directory:
+## Frontend (Vue/Quasar)
+1. Install Node.js 20+.
+2. Install deps:
    ```powershell
-   Push-Location frontend
+   cd frontend
    npm install
-   Pop-Location
    ```
-3. Run the Vitest placeholder suite and start the dev server when you are ready to implement UI logic (commands executed from `frontend/`):
+3. Env in `frontend/.env`:
+   ```env
+   VITE_API_BASE_URL=http://localhost:8000
+   VITE_GOOGLE_CLIENT_ID=<your-google-client-id>
+   VITE_MSAL_CLIENT_ID=<your-azure-app-client-id>
+   VITE_MSAL_AUTHORITY=https://login.microsoftonline.com/common
+   ```
+4. Dev server (defaults to 5173):
    ```powershell
-   npm run test
    npm run dev
    ```
+
+## Calendar View & FullCalendar CSS
+- We use FullCalendar v5 (packages include CSS).
+- Imports in `CalendarView.vue` reference `@fullcalendar/common/daygrid/timegrid` CSS from `node_modules`.
+- If you need to vendor CSS locally (offline/airgapped), run from `frontend/`:
+  ```powershell
+  Copy-Item node_modules/@fullcalendar/common/main.min.css src/assets/fullcalendar.css
+  Copy-Item node_modules/@fullcalendar/daygrid/main.min.css src/assets/fullcalendar-daygrid.css
+  Copy-Item node_modules/@fullcalendar/timegrid/main.min.css src/assets/fullcalendar-timegrid.css
+  ```
+  Then update `CalendarView.vue` imports to point to `../assets/*.css`. Keep these files in sync if you upgrade FullCalendar.
+
+## Features Snapshot
+- Auth: signup/login/logout, email verification, password reset, profile update, timezone stored on user.
+- Social auth: Google & Microsoft login/signup (ID token verification on backend).
+- Calendar: read events and create manual events (UTC stored; rendered in local time), Monday-start week.
+
+## Running Tests (backend)
+```powershell
+cd backend
+python manage.py check
+python -m pytest
+```
+
+## Notes
+- Session auth is used; CORS/CSRF are relaxed for local dev. Tighten for production.
+- External calendar todo sync is intentionally out of scope (events only).
