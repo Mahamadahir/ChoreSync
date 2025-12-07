@@ -543,6 +543,17 @@ class Event(models.Model):
         blank=True,
         help_text="Provider's calendar ID at the time of sync (for safety).",
     )
+    external_etag = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Provider etag for conflict detection.",
+    )
+    external_updated = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last updated timestamp from provider (ISO).",
+    )
 
     status = models.CharField(
         max_length=20,

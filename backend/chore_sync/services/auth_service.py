@@ -166,6 +166,22 @@ class AccountService:
 
     # ----- email verification -----
 
+    def _send_and_log_email(self, *, to_address: str, subject: str, message: str, context: dict) -> None:
+        """Single helper to send an email and record an EmailLog entry."""
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[to_address],
+            fail_silently=False,
+        )
+        EmailLog.objects.create(
+            to_address=to_address,
+            subject=subject,
+            body=message,
+            context=context,
+        )
+
     def start_email_verification(self, user: User, token_obj: EmailVerificationToken | None = None) -> None:
         """
         Generate a token, store it, and send a confirmation link.
@@ -184,17 +200,10 @@ class AccountService:
             "If you did not create this account, you can ignore this email.\n"
         )
 
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=False,
-        )
-        EmailLog.objects.create(
+        self._send_and_log_email(
             to_address=user.email,
             subject=subject,
-            body=message,
+            message=message,
             context={"type": "verify_email", "user_id": user.id},
         )
 
@@ -523,17 +532,10 @@ class AccountService:
             f"Reset link: {reset_url}\n\n"
             "If you did not request this, you can ignore this email."
         )
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=False,
-        )
-        EmailLog.objects.create(
+        self._send_and_log_email(
             to_address=user.email,
             subject=subject,
-            body=message,
+            message=message,
             context={"type": "reset_password", "user_id": user.id},
         )
 

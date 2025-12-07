@@ -234,6 +234,10 @@ async function handleCreate() {
         blocks_availability: form.value.blocks_availability,
       });
     } else {
+      const targetCalendarId =
+        !combineCalendars.value && selectedCalendarIds.value.length
+          ? selectedCalendarIds.value[0]
+          : undefined; // combined view falls back to in-app calendar
       await eventService.create({
         title: form.value.title,
         description: form.value.description,
@@ -241,6 +245,7 @@ async function handleCreate() {
         end: new Date(form.value.end).toISOString(),
         is_all_day: form.value.is_all_day,
         blocks_availability: form.value.blocks_availability,
+        calendar_id: targetCalendarId,
       });
     }
     showCreate.value = false;

@@ -109,6 +109,7 @@
 import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { authService } from '../services/authService';
+import { evaluatePassword } from '../utils/passwordStrength';
 
 const username = ref('');
 const email = ref('');
@@ -160,24 +161,9 @@ onMounted(() => {
 });
 
 function computeStrength(value: string) {
-  const pwd = value || password.value;
-  let score = 0;
-  if (pwd.length >= 8) score += 0.25;
-  if (/[A-Z]/.test(pwd)) score += 0.2;
-  if (/[a-z]/.test(pwd)) score += 0.2;
-  if (/[0-9]/.test(pwd)) score += 0.15;
-  if (/[^A-Za-z0-9]/.test(pwd)) score += 0.2;
-  if (pwd.length >= 12) score += 0.1;
-  strengthValue.value = Math.min(score, 1);
-  if (score >= 0.8) {
-    strengthLabel.value = 'Strong';
-    strengthColor.value = 'green';
-  } else if (score >= 0.5) {
-    strengthLabel.value = 'Medium';
-    strengthColor.value = 'orange';
-  } else {
-    strengthLabel.value = 'Weak';
-    strengthColor.value = 'red';
-  }
+  const { score, label, color } = evaluatePassword(value || password.value);
+  strengthValue.value = score;
+  strengthLabel.value = label;
+  strengthColor.value = color;
 }
 </script>

@@ -1,29 +1,52 @@
 <template>
-  <div class="min-h-screen bg-gray-50 flex items-center justify-center px-4">
-    <div class="w-full max-w-md bg-white shadow-md rounded-xl p-8 space-y-4">
-      <div>
-        <h1 class="text-2xl font-semibold text-gray-900">Reset Password</h1>
-        <p class="text-sm text-gray-500 mt-1">Enter your new password below.</p>
-      </div>
-      <q-form class="space-y-3" @submit="handleReset">
+  <div class="q-pa-lg flex flex-center bg-grey-1" style="min-height: 100vh;">
+    <q-card class="q-pa-lg" style="max-width: 480px; width: 100%;">
+      <div class="text-h5 q-mb-sm">Reset Password</div>
+      <div class="text-body2 text-grey-7 q-mb-md">Enter your new password below.</div>
+      <q-form class="q-gutter-md" @submit="handleReset">
         <q-input
           v-model="newPassword"
+          :type="showPassword ? 'text' : 'password'"
           label="New password"
-          type="password"
           outlined
           dense
           :disable="isSubmitting"
+          @update:model-value="computeStrength"
           required
-        />
+        >
+          <template #append>
+            <q-icon
+              :name="showPassword ? 'visibility_off' : 'visibility'"
+              class="cursor-pointer"
+              @click="showPassword = !showPassword"
+            />
+          </template>
+        </q-input>
         <q-input
           v-model="confirmPassword"
+          :type="showConfirm ? 'text' : 'password'"
           label="Confirm new password"
-          type="password"
           outlined
           dense
           :disable="isSubmitting"
           required
+        >
+          <template #append>
+            <q-icon
+              :name="showConfirm ? 'visibility_off' : 'visibility'"
+              class="cursor-pointer"
+              @click="showConfirm = !showConfirm"
+            />
+          </template>
+        </q-input>
+        <q-linear-progress
+          :value="strengthValue"
+          :color="strengthColor"
+          track-color="grey-4"
+          size="12px"
+          class="q-mt-sm"
         />
+        <div class="text-caption text-grey-7 q-mt-xs">{{ strengthLabel }}</div>
         <q-btn
           class="full-width"
           type="submit"
@@ -34,7 +57,7 @@
       </q-form>
       <q-banner v-if="message" class="q-mt-md" type="positive" dense>{{ message }}</q-banner>
       <q-banner v-if="error" class="q-mt-md" type="warning" dense>{{ error }}</q-banner>
-    </div>
+    </q-card>
   </div>
 </template>
 
@@ -42,6 +65,7 @@
 import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { authService } from '../services/authService';
+import { evaluatePassword } from '../utils/passwordStrength';
 
 const route = useRoute();
 const router = useRouter();
@@ -51,6 +75,11 @@ const isSubmitting = ref(false);
 const message = ref('');
 const error = ref('');
 const token = ref('');
+const showPassword = ref(false);
+const showConfirm = ref(false);
+const strengthValue = ref(0);
+const strengthLabel = ref('Password strength');
+const strengthColor = ref('grey');
 
 onMounted(() => {
   token.value = (route.query.token as string) || '';
@@ -80,5 +109,12 @@ async function handleReset() {
   } finally {
     isSubmitting.value = false;
   }
+}
+
+function computeStrength(value: string) {
+  const { score, label, color } = evaluatePassword(value || newPassword.value);
+  strengthValue.value = score;
+  strengthLabel.value = label;
+  strengthColor.value = color;
 }
 </script>

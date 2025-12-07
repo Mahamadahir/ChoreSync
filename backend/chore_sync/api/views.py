@@ -116,7 +116,6 @@ class LoginAPIView(APIView):
         return Response(
             {
                 # Return only minimal status flags; avoid exposing full user details
-                "is_active": user_dto.is_active,
                 "email_verified": getattr(user_dto, "email_verified", False),
                 "detail": "Login successful.",
             },
@@ -519,6 +518,15 @@ class EventsAPIView(APIView):
             "calendar_name": ev.calendar.name,
             "calendar_color": ev.calendar.color,
         }
+        if calendar.provider == "google":
+            try:
+                GoogleCalendarService(request.user).push_created_event(ev)
+            except Exception as exc:
+                logger.exception("Failed to push new event to Google", exc_info=exc)
+                return Response(
+                    {**out, "detail": "Event saved locally but failed to push to Google."},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
         return Response(out, status=status.HTTP_201_CREATED)
 
 
@@ -556,6 +564,22 @@ class EventDetailAPIView(APIView):
             "calendar_name": ev.calendar.name,
             "calendar_color": ev.calendar.color,
         }
+        if ev.calendar.provider == "google":
+            try:
+                GoogleCalendarService(request.user).push_updated_event(ev)
+            except Exception as exc:
+                from chore_sync.services.google_calendar_service import GoogleEventConflict
+                if isinstance(exc, GoogleEventConflict):
+                    logger.warning("Conflict pushing event %s to Google", ev.id)
+                    return Response(
+                        {**out, "detail": "This event changed in Google. Please refresh and retry."},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                logger.exception("Failed to push updated event to Google", exc_info=exc)
+                return Response(
+                    {**out, "detail": "Event updated locally but failed to push to Google."},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
         return Response(out, status=status.HTTP_200_OK)
 
 

@@ -10,7 +10,7 @@ from google.oauth2.credentials import Credentials
 from google.oauth2 import id_token as google_id_token
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from google.auth.exceptions import RefreshError
+from googleapiclient.errors import HttpError
 
 from chore_sync.models import ExternalCredential, Calendar, Event
 
@@ -23,6 +23,10 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.profile",
     "openid",
 ]
+
+
+class GoogleEventConflict(Exception):
+    """Raised when Google reports a conflicting update (etag mismatch)."""
 
 
 class GoogleCalendarService:
@@ -159,6 +163,13 @@ class GoogleCalendarService:
                 is_all_day = "T" not in start
                 start_dt = datetime.datetime.fromisoformat(start.replace("Z", "+00:00"))
                 end_dt = datetime.datetime.fromisoformat(end.replace("Z", "+00:00"))
+                updated_str = item.get("updated")
+                updated_dt = None
+                if updated_str:
+                    try:
+                        updated_dt = datetime.datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+                    except Exception:
+                        updated_dt = None
                 Event.objects.update_or_create(
                     external_event_id=item.get("id"),
                     calendar=cal,
@@ -171,6 +182,9 @@ class GoogleCalendarService:
                         "blocks_availability": True,
                         "source": "external",
                         "status": item.get("status", "confirmed"),
+                        "external_calendar_id": calendar_id,
+                        "external_etag": item.get("etag"),
+                        "external_updated": updated_dt,
                     },
                 )
                 count += 1
@@ -178,6 +192,160 @@ class GoogleCalendarService:
             if not page_token:
                 break
         return count
+
+    def _build_event_body(self, ev: Event) -> dict:
+        body = {
+            "summary": ev.title,
+            "description": ev.description or "",
+        }
+        if ev.is_all_day:
+            body["start"] = {"date": ev.start.date().isoformat()}
+            body["end"] = {"date": ev.end.date().isoformat()}
+        else:
+            body["start"] = {
+                "dateTime": ev.start.astimezone(datetime.timezone.utc).isoformat(),
+                "timeZone": "UTC",
+            }
+            body["end"] = {
+                "dateTime": ev.end.astimezone(datetime.timezone.utc).isoformat(),
+                "timeZone": "UTC",
+            }
+        return body
+
+    def push_created_event(self, event: Event) -> str:
+        """
+        Push a single locally-created event to Google. Only applies to google calendars.
+        Returns the external_event_id that was stored.
+        """
+        if event.calendar.provider != "google":
+            return ""
+        creds = self._load_credentials()
+        if not creds:
+            raise ValueError("Google credentials not found. Connect first.")
+        service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        cal_id = event.calendar.external_id or "primary"
+        body = self._build_event_body(event)
+        result = service.events().insert(calendarId=cal_id, body=body).execute()
+        external_id = result.get("id")
+        event.external_event_id = external_id
+        event.external_calendar_id = cal_id
+        event.external_etag = result.get("etag")
+        updated_str = result.get("updated")
+        if updated_str:
+            try:
+                event.external_updated = datetime.datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+            except Exception:
+                event.external_updated = None
+        event.save(update_fields=["external_event_id", "external_calendar_id", "external_etag", "external_updated"])
+        return external_id or ""
+
+    def push_updated_event(self, event: Event) -> str:
+        """
+        Push a single locally-updated event to Google. If no external_event_id exists, creates it first.
+        Returns the external_event_id.
+        """
+        if event.calendar.provider != "google":
+            return ""
+        creds = self._load_credentials()
+        if not creds:
+            raise ValueError("Google credentials not found. Connect first.")
+        service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        cal_id = event.calendar.external_id or "primary"
+        body = self._build_event_body(event)
+        if event.external_event_id:
+            # Fetch remote etag to detect conflicts before updating
+            remote = service.events().get(calendarId=cal_id, eventId=event.external_event_id).execute()
+            remote_etag = remote.get("etag")
+            if event.external_etag and remote_etag and remote_etag != event.external_etag:
+                raise GoogleEventConflict("Google event was changed remotely.")
+            try:
+                result = (
+                    service.events()
+                    .update(
+                        calendarId=cal_id,
+                        eventId=event.external_event_id,
+                        body=body,
+                    )
+                    .execute()
+                )
+            except HttpError as exc:
+                if exc.resp is not None and exc.resp.status in (409, 412):
+                    raise GoogleEventConflict("Google event was changed remotely.")
+                raise
+            if not event.external_calendar_id:
+                event.external_calendar_id = cal_id
+            event.external_etag = result.get("etag")
+            updated_str = result.get("updated")
+            if updated_str:
+                try:
+                    event.external_updated = datetime.datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+                except Exception:
+                    event.external_updated = None
+            event.save(update_fields=["external_calendar_id", "external_etag", "external_updated"])
+            return event.external_event_id
+        return self.push_created_event(event)
+
+    def push_events(self) -> dict:
+        """
+        Push local (non-external) events on Google calendars up to Google.
+        Inserts events without external_event_id; updates events with an existing external_event_id.
+        """
+        creds = self._load_credentials()
+        if not creds:
+            raise ValueError("Google credentials not found. Connect first.")
+
+        service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+
+        calendars = Calendar.objects.filter(user=self.user, provider="google")
+        inserted = 0
+        updated = 0
+
+        for cal in calendars:
+            cal_id = cal.external_id or "primary"
+            events_qs = Event.objects.filter(
+                calendar=cal,
+                source__in=["manual", "task"],  # avoid pushing imported external events
+            )
+            for ev in events_qs:
+                body = {
+                    "summary": ev.title,
+                    "description": ev.description or "",
+                }
+                if ev.is_all_day:
+                    body["start"] = {"date": ev.start.date().isoformat()}
+                    body["end"] = {"date": ev.end.date().isoformat()}
+                else:
+                    body["start"] = {
+                        "dateTime": ev.start.astimezone(datetime.timezone.utc).isoformat(),
+                        "timeZone": "UTC",
+                    }
+                    body["end"] = {
+                        "dateTime": ev.end.astimezone(datetime.timezone.utc).isoformat(),
+                        "timeZone": "UTC",
+                    }
+
+                try:
+                    if ev.external_event_id:
+                        service.events().update(
+                            calendarId=cal_id,
+                            eventId=ev.external_event_id,
+                            body=body,
+                        ).execute()
+                        updated += 1
+                    else:
+                        result = service.events().insert(
+                            calendarId=cal_id,
+                            body=body,
+                        ).execute()
+                        ev.external_event_id = result.get("id")
+                        ev.external_calendar_id = cal_id
+                        ev.save(update_fields=["external_event_id", "external_calendar_id"])
+                        inserted += 1
+                except Exception:
+                    # Skip failures but continue with others
+                    continue
+
+        return {"inserted": inserted, "updated": updated}
 
     @staticmethod
     def _creds_to_dict(creds: Credentials) -> dict:
