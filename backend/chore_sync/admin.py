@@ -142,8 +142,20 @@ class EventInline(admin.TabularInline):
 
 @admin.register(models.Calendar)
 class CalendarAdmin(admin.ModelAdmin):
-    list_display = ("user", "provider", "name", "external_id", "sync_enabled", "back_sync_enabled", "include_in_availability")
-    list_filter = ("provider", "sync_enabled", "back_sync_enabled", "include_in_availability")
+    list_display = (
+        "user",
+        "provider",
+        "name",
+        "external_id",
+        "sync_enabled",
+        "back_sync_enabled",
+        "include_in_availability",
+        "writable",
+        "channel_id",
+        "resource_id",
+        "watch_expires_at",
+    )
+    list_filter = ("provider", "sync_enabled", "back_sync_enabled", "include_in_availability", "writable")
     search_fields = ("name", "external_id", "user__email")
     autocomplete_fields = ("user", "credential")
     inlines = [EventInline]
@@ -151,9 +163,20 @@ class CalendarAdmin(admin.ModelAdmin):
 
 @admin.register(models.Event)
 class EventAdmin(admin.ModelAdmin):
-    list_display = ("title", "calendar", "source", "start", "end", "blocks_availability", "status")
+    list_display = (
+        "title",
+        "calendar",
+        "source",
+        "start",
+        "end",
+        "blocks_availability",
+        "status",
+        "external_event_id",
+        "external_calendar_id",
+        "external_updated",
+    )
     list_filter = ("source", "blocks_availability", "status", "calendar__provider")
-    search_fields = ("title", "calendar__name")
+    search_fields = ("title", "calendar__name", "external_event_id")
     autocomplete_fields = ("calendar", "task_occurrence")
 
 

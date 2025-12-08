@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from rest_framework import status
+from rest_framework import status, renderers
 from rest_framework.permissions import AllowAny
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import SessionAuthentication
@@ -62,6 +62,15 @@ class CsrfExemptSessionAuthentication(SessionAuthentication):
 
     def enforce_csrf(self, request):
         return  # skip CSRF checks for these API endpoints
+
+
+class SSERenderer(renderers.BaseRenderer):
+    media_type = "text/event-stream"
+    format = "sse"
+    charset = "utf-8"
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        return data
 
 
 def user_dto_to_dict(dto: UserDTO) -> dict:
@@ -716,6 +725,7 @@ class GoogleCalendarWebhookAPIView(APIView):
 class EventStreamAPIView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [CsrfExemptSessionAuthentication]
+    renderer_classes = [SSERenderer]
 
     def get(self, request):
         user_id = request.user.id

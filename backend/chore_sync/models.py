@@ -433,6 +433,29 @@ class Calendar(models.Model):
         blank=True,
         help_text="Provider-specific sync token for incremental sync",
     )
+    channel_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Google webhook channel identifier (events.watch).",
+    )
+    resource_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Google resource identifier associated with the watch channel.",
+    )
+    watch_expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the current Google watch channel expires.",
+    )
+    webhook_token = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Opaque token sent with watch channel to verify callbacks.",
+    )
 
     last_synced_at = models.DateTimeField(
         null=True,
@@ -462,6 +485,10 @@ class Calendar(models.Model):
         null=True,
         blank=True,
         help_text="Display color for the calendar (if supported by provider)",
+    )
+    writable = models.BooleanField(
+        default=True,
+        help_text="If False, skip pushing updates to this external calendar.",
     )
 
     include_in_availability = models.BooleanField(

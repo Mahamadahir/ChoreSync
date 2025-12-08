@@ -34,6 +34,13 @@
               :loading="syncingGoogle"
               @click="handleGoogleSync"
             />
+            <q-btn
+              class="q-mt-sm"
+              color="primary"
+              flat
+              label="Choose Google Calendars"
+              @click="router.push({ name: 'google-calendar-select' })"
+            />
           </q-card>
         </div>
       </div>
@@ -75,9 +82,11 @@ onMounted(() => {
   const syncStatus = route.query.google_sync as string | undefined;
   if (syncStatus === 'success') {
     const imported = route.query.imported as string | undefined;
-    googleMessage.value = imported
-      ? `Google calendar connected. Imported ${imported} events.`
-      : 'Google calendar connected. Your events will sync shortly.';
+    router.replace({
+      name: 'google-calendar-select',
+      query: { connected: '1', imported },
+    });
+    return;
   } else if (syncStatus === 'error') {
     googleMessage.value = 'Google calendar connection failed. Please try again.';
   }

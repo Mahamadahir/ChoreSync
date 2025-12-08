@@ -35,6 +35,10 @@ from chore_sync.api.views import (
     GoogleCalendarAuthURLAPIView,
     GoogleCalendarCallbackAPIView,
     GoogleCalendarSyncAPIView,
+    GoogleCalendarListAPIView,
+    GoogleCalendarSelectAPIView,
+    GoogleCalendarWebhookAPIView,
+    EventStreamAPIView,
 )
 
 urlpatterns = [
@@ -53,8 +57,12 @@ urlpatterns = [
     path('api/profile/', ProfileAPIView.as_view(), name='profile'),
     path('api/events/', EventsAPIView.as_view(), name='events'),
     path('api/events/<int:pk>/', EventDetailAPIView.as_view(), name='event-detail'),
+    path('api/calendar/google/list/', GoogleCalendarListAPIView.as_view(), name='google-cal-list'),
+    path('api/calendar/google/select/', GoogleCalendarSelectAPIView.as_view(), name='google-cal-select'),
     path('api/calendar/google/auth-url/', GoogleCalendarAuthURLAPIView.as_view(), name='google-cal-auth-url'),
     path('api/calendar/google/callback/', GoogleCalendarCallbackAPIView.as_view(), name='google-cal-callback'),
     path('api/calendar/google/sync/', GoogleCalendarSyncAPIView.as_view(), name='google-cal-sync'),
+    path('api/calendar/google/webhook/', GoogleCalendarWebhookAPIView.as_view(), name='google-cal-webhook'),
+    path('api/events/stream/', EventStreamAPIView.as_view(), name='event-stream'),
     # TODO: add group/task endpoints via DRF views or viewsets
 ]

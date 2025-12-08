@@ -90,3 +90,12 @@ class EventCreateSerializer(serializers.Serializer):
     is_all_day = serializers.BooleanField(default=False)
     blocks_availability = serializers.BooleanField(default=True)
     calendar_id = serializers.IntegerField(required=False)
+
+
+class GoogleCalendarSelectionSerializer(serializers.Serializer):
+    id = serializers.CharField(max_length=255)
+    name = serializers.CharField(max_length=255)
+    color = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=50)
+    include_in_availability = serializers.BooleanField()
+    writable = serializers.BooleanField()
+    timezone = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=50)

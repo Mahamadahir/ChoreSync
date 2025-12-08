@@ -76,7 +76,7 @@ import { eventService, type CalendarEvent } from '../services/eventService';
 import '@fullcalendar/common/main.css';
 import '@fullcalendar/daygrid/main.css';
 import '@fullcalendar/timegrid/main.css';
-import { onMounted, watch } from 'vue';
+import { onMounted, watch, onBeforeUnmount } from 'vue';
 
 const calendarRef = ref();
 const loading = ref(false);
@@ -97,6 +97,7 @@ const form = ref({
   is_all_day: false,
   blocks_availability: true,
 });
+const eventSource = ref<EventSource | null>(null);
 
 const calendarOptions = ref({
   plugins: [dayGridPlugin, timeGridPlugin, interactionPlugin],
@@ -134,6 +135,14 @@ onMounted(() => {
   const api = calendarRef.value?.getApi?.();
   if (api) {
     fetchRange({ startStr: api.view.activeStart.toISOString(), endStr: api.view.activeEnd.toISOString() });
+  }
+  startStream();
+});
+
+onBeforeUnmount(() => {
+  if (eventSource.value) {
+    eventSource.value.close();
+    eventSource.value = null;
   }
 });
 
@@ -316,6 +325,23 @@ async function handleEventResize(arg: any) {
   } catch (err: any) {
     error.value = err?.response?.data?.detail || 'Unable to resize event.';
     arg.revert();
+  }
+}
+
+function startStream() {
+  try {
+    const es = eventService.stream();
+    eventSource.value = es;
+    es.onmessage = () => {
+      reload();
+    };
+    es.addEventListener('ping', () => {});
+    es.onerror = () => {
+      es.close();
+      setTimeout(startStream, 5000);
+    };
+  } catch (err) {
+    // ignore stream errors; user can still refresh manually
   }
 }
 </script>

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import datetime
 import logging
-from typing import Optional
+import secrets
+import uuid
+from typing import Optional, List
 
 from django.conf import settings
 from google.auth.transport.requests import Request
@@ -11,6 +13,7 @@ from google.oauth2 import id_token as google_id_token
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from django.utils import timezone
 
 from chore_sync.models import ExternalCredential, Calendar, Event
 
@@ -19,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "openid",
@@ -124,36 +129,87 @@ class GoogleCalendarService:
             cred.save(update_fields=["secret", "last_refreshed_at"])
         return creds
 
-    def sync_events(self) -> int:
+    def list_calendars(self, min_access_role: str = "reader") -> List[dict]:
+        """
+        List Google calendars for the authenticated user.
+        Returns minimal metadata plus a derived writable flag.
+        """
         creds = self._load_credentials()
         if not creds:
             raise ValueError("Google credentials not found. Connect first.")
         service = build("calendar", "v3", credentials=creds, cache_discovery=False)
-        calendar_id = "primary"
-        # Pull the full history; pagination will walk through everything until nextPageToken is empty.
-        time_min = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc).isoformat()
-
-        cal, _ = Calendar.objects.get_or_create(
-            user=self.user,
-            provider="google",
-            external_id="primary",
-            defaults={"name": "Google Calendar (Primary)", "include_in_availability": True},
-        )
-        count = 0
+        calendars: List[dict] = []
         page_token = None
         while True:
-            events_result = (
-                service.events()
-                .list(
-                    calendarId=calendar_id,
-                    singleEvents=True,
-                    orderBy="startTime",
-                    timeMin=time_min,
-                    maxResults=500,
-                    pageToken=page_token,
-                )
+            result = (
+                service.calendarList()
+                .list(minAccessRole=min_access_role, pageToken=page_token)
                 .execute()
             )
+            for item in result.get("items", []):
+                access_role = item.get("accessRole")
+                calendars.append(
+                    {
+                        "id": item.get("id"),
+                        "summary": item.get("summary"),
+                        "accessRole": access_role,
+                        "primary": item.get("primary", False),
+                        "color": item.get("backgroundColor") or item.get("foregroundColor") or item.get("colorId"),
+                        "writable": access_role in ("owner", "writer"),
+                        "timeZone": item.get("timeZone"),
+                    }
+                )
+            page_token = result.get("nextPageToken")
+            if not page_token:
+                break
+        return calendars
+
+    def sync_events(self, calendar: Optional[Calendar] = None, force_full: bool = False) -> int:
+        creds = self._load_credentials()
+        if not creds:
+            raise ValueError("Google credentials not found. Connect first.")
+        service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        calendars = (
+            [calendar]
+            if calendar
+            else Calendar.objects.filter(user=self.user, provider="google", sync_enabled=True)
+        )
+        total = 0
+        for cal in calendars:
+            total += self._sync_single_calendar(service, cal, force_full=force_full)
+        return total
+
+    def _sync_single_calendar(self, service, cal: Calendar, force_full: bool = False) -> int:
+        calendar_id = cal.external_id or "primary"
+        count = 0
+        page_token = None
+        use_sync_token = bool(cal.sync_token) and not force_full
+        time_min = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc).isoformat()
+
+        while True:
+            try:
+                params = {
+                    "calendarId": calendar_id,
+                    "singleEvents": True,
+                    "orderBy": "startTime",
+                    "maxResults": 500,
+                }
+                if use_sync_token:
+                    params["syncToken"] = cal.sync_token
+                else:
+                    params["timeMin"] = time_min
+                    if page_token:
+                        params["pageToken"] = page_token
+                events_result = service.events().list(**params).execute()
+            except HttpError as exc:
+                if exc.resp is not None and exc.resp.status == 410 and use_sync_token:
+                    # Sync token expired, fall back to full sync
+                    use_sync_token = False
+                    cal.sync_token = None
+                    cal.save(update_fields=["sync_token"])
+                    continue
+                logger.exception("Failed syncing Google calendar %s", calendar_id, exc_info=exc)
+                break
             items = events_result.get("items", [])
             for item in items:
                 start = item.get("start", {}).get("dateTime") or item.get("start", {}).get("date")
@@ -170,27 +226,52 @@ class GoogleCalendarService:
                         updated_dt = datetime.datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
                     except Exception:
                         updated_dt = None
-                Event.objects.update_or_create(
-                    external_event_id=item.get("id"),
-                    calendar=cal,
-                    defaults={
+                existing = Event.objects.filter(external_event_id=item.get("id"), calendar=cal).order_by("id")
+                ev = existing.first()
+                if ev:
+                    existing.exclude(pk=ev.pk).delete()
+                    for field, val in {
                         "title": item.get("summary", "(no title)"),
                         "description": item.get("description", "") or "",
                         "start": start_dt,
                         "end": end_dt,
                         "is_all_day": is_all_day,
-                        "blocks_availability": True,
+                        "blocks_availability": cal.include_in_availability,
                         "source": "external",
                         "status": item.get("status", "confirmed"),
                         "external_calendar_id": calendar_id,
                         "external_etag": item.get("etag"),
                         "external_updated": updated_dt,
-                    },
-                )
+                    }.items():
+                        setattr(ev, field, val)
+                    ev.save()
+                else:
+                    Event.objects.create(
+                        external_event_id=item.get("id"),
+                        calendar=cal,
+                        title=item.get("summary", "(no title)"),
+                        description=item.get("description", "") or "",
+                        start=start_dt,
+                        end=end_dt,
+                        is_all_day=is_all_day,
+                        blocks_availability=cal.include_in_availability,
+                        source="external",
+                        status=item.get("status", "confirmed"),
+                        external_calendar_id=calendar_id,
+                        external_etag=item.get("etag"),
+                        external_updated=updated_dt,
+                    )
                 count += 1
             page_token = events_result.get("nextPageToken")
-            if not page_token:
+            if use_sync_token or not page_token:
+                next_sync = events_result.get("nextSyncToken")
+                if next_sync:
+                    cal.sync_token = next_sync
+                    cal.save(update_fields=["sync_token"])
                 break
+        cal.last_synced_at = timezone.now()
+        cal.save(update_fields=["last_synced_at"])
+        self._ensure_watch(service, cal)
         return count
 
     def _build_event_body(self, ev: Event) -> dict:
@@ -212,21 +293,110 @@ class GoogleCalendarService:
             }
         return body
 
+    def _ensure_watch(self, service, cal: Calendar) -> None:
+        callback = getattr(settings, "GOOGLE_WEBHOOK_CALLBACK_URL", "")
+        if not callback:
+            return  # no callback configured; skip watch
+        renew_margin = datetime.timedelta(minutes=30)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        if cal.watch_expires_at and cal.watch_expires_at - now > renew_margin:
+            return
+        # stop any existing channel before starting a new one
+        self._stop_watch(service, cal)
+        channel_id = str(uuid.uuid4())
+        token = secrets.token_urlsafe(16)
+        try:
+            result = (
+                service.events()
+                .watch(
+                    calendarId=cal.external_id or "primary",
+                    body={
+                        "id": channel_id,
+                        "type": "web_hook",
+                        "address": callback,
+                        "token": token,
+                    },
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            logger.exception("Failed to start watch channel for calendar %s", cal.id, exc_info=exc)
+            return
+        except Exception as exc:
+            logger.exception("Unexpected error starting watch channel for calendar %s", cal.id, exc_info=exc)
+            return
+        resource_id = result.get("resourceId")
+        expiration_ms = result.get("expiration")
+        expires_at = None
+        if expiration_ms:
+            try:
+                expires_at = datetime.datetime.fromtimestamp(int(expiration_ms) / 1000.0, tz=datetime.timezone.utc)
+            except Exception:
+                expires_at = None
+        cal.channel_id = channel_id
+        cal.resource_id = resource_id
+        cal.webhook_token = token
+        cal.watch_expires_at = expires_at
+        cal.save(update_fields=["channel_id", "resource_id", "webhook_token", "watch_expires_at"])
+
+    def _stop_watch(self, service, cal: Calendar) -> None:
+        if not cal.channel_id or not cal.resource_id:
+            return
+        try:
+            service.channels().stop(body={"id": cal.channel_id, "resourceId": cal.resource_id}).execute()
+        except Exception:
+            logger.debug("Failed to stop watch channel for calendar %s", cal.id, exc_info=True)
+        cal.channel_id = None
+        cal.resource_id = None
+        cal.watch_expires_at = None
+        cal.webhook_token = None
+        cal.save(update_fields=["channel_id", "resource_id", "watch_expires_at", "webhook_token"])
+
+    def ensure_watch_channel(self, cal: Calendar) -> None:
+        creds = self._load_credentials()
+        if not creds:
+            raise ValueError("Google credentials not found. Connect first.")
+        service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        self._ensure_watch(service, cal)
+
+    def stop_watch_channel(self, cal: Calendar) -> None:
+        creds = self._load_credentials()
+        if not creds:
+            raise ValueError("Google credentials not found. Connect first.")
+        service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        self._stop_watch(service, cal)
+
+    def _should_push(self, event: Event) -> bool:
+        return (
+            event.calendar.provider == "google"
+            and getattr(event.calendar, "writable", True)
+        )
+
     def push_created_event(self, event: Event) -> str:
         """
         Push a single locally-created event to Google. Only applies to google calendars.
         Returns the external_event_id that was stored.
         """
-        if event.calendar.provider != "google":
+        if not self._should_push(event):
             return ""
         creds = self._load_credentials()
         if not creds:
-            raise ValueError("Google credentials not found. Connect first.")
+            logger.warning("Google credentials not found for user %s; skipping push.", self.user)
+            return ""
         service = build("calendar", "v3", credentials=creds, cache_discovery=False)
         cal_id = event.calendar.external_id or "primary"
         body = self._build_event_body(event)
-        result = service.events().insert(calendarId=cal_id, body=body).execute()
-        external_id = result.get("id")
+        try:
+            result = service.events().insert(calendarId=cal_id, body=body).execute()
+        except HttpError as exc:
+            if exc.resp is not None and exc.resp.status in (409, 412):
+                raise GoogleEventConflict("Google event was changed remotely.")
+            logger.exception("Failed to push created event %s to Google", event.id, exc_info=exc)
+            return ""
+        except Exception as exc:
+            logger.exception("Failed to push created event %s to Google", event.id, exc_info=exc)
+            return ""
+        external_id = result.get("id") if isinstance(result, dict) else None
         event.external_event_id = external_id
         event.external_calendar_id = cal_id
         event.external_etag = result.get("etag")
@@ -244,20 +414,27 @@ class GoogleCalendarService:
         Push a single locally-updated event to Google. If no external_event_id exists, creates it first.
         Returns the external_event_id.
         """
-        if event.calendar.provider != "google":
+        if not self._should_push(event):
             return ""
         creds = self._load_credentials()
         if not creds:
-            raise ValueError("Google credentials not found. Connect first.")
+            logger.warning("Google credentials not found for user %s; skipping push.", self.user)
+            return ""
         service = build("calendar", "v3", credentials=creds, cache_discovery=False)
         cal_id = event.calendar.external_id or "primary"
         body = self._build_event_body(event)
         if event.external_event_id:
-            # Fetch remote etag to detect conflicts before updating
-            remote = service.events().get(calendarId=cal_id, eventId=event.external_event_id).execute()
-            remote_etag = remote.get("etag")
-            if event.external_etag and remote_etag and remote_etag != event.external_etag:
-                raise GoogleEventConflict("Google event was changed remotely.")
+            try:
+                remote = service.events().get(calendarId=cal_id, eventId=event.external_event_id).execute()
+                remote_etag = remote.get("etag")
+                if event.external_etag and remote_etag and remote_etag != event.external_etag:
+                    raise GoogleEventConflict("Google event was changed remotely.")
+            except GoogleEventConflict:
+                raise
+            except HttpError as exc:
+                logger.warning("Failed to fetch remote Google event %s for conflict check", event.id, exc_info=exc)
+            except Exception as exc:
+                logger.exception("Unexpected error checking Google event %s", event.id, exc_info=exc)
             try:
                 result = (
                     service.events()
@@ -271,7 +448,11 @@ class GoogleCalendarService:
             except HttpError as exc:
                 if exc.resp is not None and exc.resp.status in (409, 412):
                     raise GoogleEventConflict("Google event was changed remotely.")
-                raise
+                logger.exception("Failed to push updated event %s to Google", event.id, exc_info=exc)
+                return ""
+            except Exception as exc:
+                logger.exception("Failed to push updated event %s to Google", event.id, exc_info=exc)
+                return ""
             if not event.external_calendar_id:
                 event.external_calendar_id = cal_id
             event.external_etag = result.get("etag")
@@ -296,7 +477,7 @@ class GoogleCalendarService:
 
         service = build("calendar", "v3", credentials=creds, cache_discovery=False)
 
-        calendars = Calendar.objects.filter(user=self.user, provider="google")
+        calendars = Calendar.objects.filter(user=self.user, provider="google", writable=True)
         inserted = 0
         updated = 0
 
@@ -307,23 +488,9 @@ class GoogleCalendarService:
                 source__in=["manual", "task"],  # avoid pushing imported external events
             )
             for ev in events_qs:
-                body = {
-                    "summary": ev.title,
-                    "description": ev.description or "",
-                }
-                if ev.is_all_day:
-                    body["start"] = {"date": ev.start.date().isoformat()}
-                    body["end"] = {"date": ev.end.date().isoformat()}
-                else:
-                    body["start"] = {
-                        "dateTime": ev.start.astimezone(datetime.timezone.utc).isoformat(),
-                        "timeZone": "UTC",
-                    }
-                    body["end"] = {
-                        "dateTime": ev.end.astimezone(datetime.timezone.utc).isoformat(),
-                        "timeZone": "UTC",
-                    }
-
+                if not self._should_push(ev):
+                    continue
+                body = self._build_event_body(ev)
                 try:
                     if ev.external_event_id:
                         service.events().update(
@@ -341,9 +508,13 @@ class GoogleCalendarService:
                         ev.external_calendar_id = cal_id
                         ev.save(update_fields=["external_event_id", "external_calendar_id"])
                         inserted += 1
-                except Exception:
-                    # Skip failures but continue with others
-                    continue
+                except HttpError as exc:
+                    if exc.resp is not None and exc.resp.status in (409, 412):
+                        logger.warning("Conflict pushing event %s to Google", ev.id)
+                    else:
+                        logger.exception("Failed to push event %s to Google", ev.id, exc_info=exc)
+                except Exception as exc:
+                    logger.exception("Failed to push event %s to Google", ev.id, exc_info=exc)
 
         return {"inserted": inserted, "updated": updated}
 

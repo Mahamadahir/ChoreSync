@@ -39,4 +39,9 @@ export const eventService = {
   }) {
     return api.patch<CalendarEvent>(`/api/events/${id}/`, payload);
   },
+  stream(): EventSource {
+    const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+    const url = `${baseURL}/api/events/stream/`;
+    return new EventSource(url, { withCredentials: true });
+  },
 };
