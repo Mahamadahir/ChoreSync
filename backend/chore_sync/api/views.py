@@ -26,9 +26,10 @@ from chore_sync.api.serializers import (
     MicrosoftLoginSerializer,
     EventSerializer,
     EventCreateSerializer,
+    GoogleCalendarSelectionSerializer,
 )
 from chore_sync.services.auth_service import AccountService
-from chore_sync.services.google_calendar_service import GoogleCalendarService
+from chore_sync.services.google_calendar_service import GoogleCalendarService, GoogleEventConflict
 from django.contrib.auth import get_user_model
 from chore_sync.dtos.user_dtos import UserDTO
 from chore_sync.domain_errors import (
@@ -46,6 +47,11 @@ from chore_sync.domain_errors import (
 from django.contrib.auth import login, logout
 from django.conf import settings
 from django.utils.dateparse import parse_datetime
+from googleapiclient.errors import HttpError
+from django.http import StreamingHttpResponse
+import json
+import queue
+from chore_sync import sse
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -518,15 +524,16 @@ class EventsAPIView(APIView):
             "calendar_name": ev.calendar.name,
             "calendar_color": ev.calendar.color,
         }
-        if calendar.provider == "google":
+        if calendar.provider == "google" and getattr(calendar, "writable", True):
             try:
                 GoogleCalendarService(request.user).push_created_event(ev)
+            except GoogleEventConflict:
+                return Response(
+                    {**out, "detail": "This event changed in Google. Please refresh and retry."},
+                    status=status.HTTP_409_CONFLICT,
+                )
             except Exception as exc:
                 logger.exception("Failed to push new event to Google", exc_info=exc)
-                return Response(
-                    {**out, "detail": "Event saved locally but failed to push to Google."},
-                    status=status.HTTP_502_BAD_GATEWAY,
-                )
         return Response(out, status=status.HTTP_201_CREATED)
 
 
@@ -564,23 +571,176 @@ class EventDetailAPIView(APIView):
             "calendar_name": ev.calendar.name,
             "calendar_color": ev.calendar.color,
         }
-        if ev.calendar.provider == "google":
+        if ev.calendar.provider == "google" and getattr(ev.calendar, "writable", True):
             try:
                 GoogleCalendarService(request.user).push_updated_event(ev)
-            except Exception as exc:
-                from chore_sync.services.google_calendar_service import GoogleEventConflict
-                if isinstance(exc, GoogleEventConflict):
-                    logger.warning("Conflict pushing event %s to Google", ev.id)
-                    return Response(
-                        {**out, "detail": "This event changed in Google. Please refresh and retry."},
-                        status=status.HTTP_409_CONFLICT,
-                    )
-                logger.exception("Failed to push updated event to Google", exc_info=exc)
+            except GoogleEventConflict:
+                logger.warning("Conflict pushing event %s to Google", ev.id)
                 return Response(
-                    {**out, "detail": "Event updated locally but failed to push to Google."},
-                    status=status.HTTP_502_BAD_GATEWAY,
+                    {**out, "detail": "This event changed in Google. Please refresh and retry."},
+                    status=status.HTTP_409_CONFLICT,
                 )
+            except Exception as exc:
+                logger.exception("Failed to push updated event to Google", exc_info=exc)
         return Response(out, status=status.HTTP_200_OK)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class GoogleCalendarListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication]
+
+    def get(self, request):
+        try:
+            svc = GoogleCalendarService(request.user)
+            calendars = svc.list_calendars(min_access_role="reader")
+            return Response(calendars, status=status.HTTP_200_OK)
+        except HttpError as exc:
+            if exc.resp is not None and exc.resp.status == 403:
+                return Response({"detail": "Google permissions are insufficient. Please reconnect and grant calendar access."}, status=status.HTTP_403_FORBIDDEN)
+            logger.exception("Failed to list Google calendars", exc_info=exc)
+            return Response({"detail": "Failed to list Google calendars."}, status=status.HTTP_502_BAD_GATEWAY)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            logger.exception("Failed to list Google calendars", exc_info=exc)
+            return Response({"detail": "Failed to list Google calendars."}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class GoogleCalendarSelectAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication]
+
+    def post(self, request):
+        serializer = GoogleCalendarSelectionSerializer(data=request.data, many=True)
+        serializer.is_valid(raise_exception=True)
+        from chore_sync.models import Calendar, ExternalCredential
+
+        selections = serializer.validated_data
+        svc = GoogleCalendarService(request.user)
+        credential = (
+            ExternalCredential.objects.filter(user=request.user, provider="google")
+            .order_by("-last_refreshed_at")
+            .first()
+        )
+        selected_ids = []
+        for item in selections:
+            defaults = {
+                "name": item["name"],
+                "sync_enabled": True,
+                "include_in_availability": item["include_in_availability"],
+                "writable": item["writable"],
+            }
+            if "color" in item:
+                defaults["color"] = item["color"]
+            if item.get("timezone"):
+                defaults["timezone"] = item["timezone"]
+            if credential:
+                defaults["credential"] = credential
+            cal, _ = Calendar.objects.update_or_create(
+                user=request.user,
+                provider="google",
+                external_id=item["id"],
+                defaults=defaults,
+            )
+            selected_ids.append(cal.external_id)
+            try:
+                svc.ensure_watch_channel(cal)
+            except Exception as exc:
+                logger.warning("Failed to start watch for calendar %s", cal.external_id, exc_info=exc)
+        qs = Calendar.objects.filter(user=request.user, provider="google")
+        creds = None
+        if selected_ids:
+            for cal in qs.exclude(external_id__in=selected_ids):
+                cal.sync_enabled = False
+                cal.include_in_availability = False
+                cal.save(update_fields=["sync_enabled", "include_in_availability"])
+                try:
+                    svc.stop_watch_channel(cal)
+                except Exception:
+                    logger.debug("Failed to stop watch for calendar %s", cal.external_id, exc_info=True)
+        else:
+            for cal in qs:
+                cal.sync_enabled = False
+                cal.include_in_availability = False
+                cal.save(update_fields=["sync_enabled", "include_in_availability"])
+                try:
+                    svc.stop_watch_channel(cal)
+                except Exception:
+                    logger.debug("Failed to stop watch for calendar %s", cal.external_id, exc_info=True)
+        return Response({"detail": "Google calendars updated.", "selected": selected_ids}, status=status.HTTP_200_OK)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class GoogleCalendarWebhookAPIView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        from chore_sync.models import Calendar
+
+        channel_id = request.META.get("HTTP_X_GOOG_CHANNEL_ID")
+        resource_id = request.META.get("HTTP_X_GOOG_RESOURCE_ID")
+        token = request.META.get("HTTP_X_GOOG_CHANNEL_TOKEN")
+        if not channel_id or not resource_id or not token:
+            return Response(status=status.HTTP_400_BAD_REQUEST)
+        cal = (
+            Calendar.objects.select_related("user")
+            .filter(provider="google", channel_id=channel_id, resource_id=resource_id, webhook_token=token)
+            .first()
+        )
+        if not cal:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        try:
+            svc = GoogleCalendarService(cal.user)
+            svc.sync_events(calendar=cal)
+            sse.publish(
+                cal.user_id,
+                {
+                    "type": "calendar_sync",
+                    "calendar_id": cal.id,
+                },
+            )
+        except Exception as exc:
+            logger.exception("Failed processing Google webhook for calendar %s", cal.id, exc_info=exc)
+            return Response(status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(status=status.HTTP_200_OK)
+
+    def get(self, request):
+        # Google can ping with GET/HEAD during verification; respond OK.
+        return Response(status=status.HTTP_200_OK)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class EventStreamAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication]
+
+    def get(self, request):
+        user_id = request.user.id
+        q = sse.subscribe(user_id)
+
+        def event_stream():
+            try:
+                # initial ping
+                yield "event: ping\ndata: connected\n\n"
+                while True:
+                    try:
+                        msg = q.get(timeout=25)
+                        if msg is None:
+                            continue
+                        yield f"data: {msg}\n\n"
+                    except queue.Empty:
+                        yield "event: ping\ndata: keepalive\n\n"
+                        continue
+            finally:
+                sse.unsubscribe(user_id, q)
+
+        response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
+        response["Cache-Control"] = "no-cache"
+        response["X-Accel-Buffering"] = "no"
+        return response
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -609,9 +769,8 @@ class GoogleCalendarCallbackAPIView(APIView):
         try:
             svc = GoogleCalendarService(request.user)
             svc.exchange_code(code)
-            count = svc.sync_events()
             frontend_url = getattr(settings, "FRONTEND_APP_URL", "http://localhost:5173")
-            target = f"{frontend_url}?google_sync=success&imported={count}"
+            target = f"{frontend_url}?google_sync=success"
             return redirect(target)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
