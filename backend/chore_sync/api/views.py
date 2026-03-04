@@ -140,7 +140,7 @@ class LoginAPIView(APIView):
 
 @method_decorator(csrf_exempt, name="dispatch")
 class LogoutAPIView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     authentication_classes = []
 
     def post(self, request):
@@ -317,32 +317,6 @@ class ForgotPasswordAPIView(APIView):
 class ResetPasswordAPIView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
-
-    def post(self, request):
-        serializer = ResetPasswordSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        token = serializer.validated_data["token"]
-        new_password = serializer.validated_data["new_password"]
-        svc = AccountService()
-        try:
-            user_dto = svc.reset_password(token, new_password)
-        except VerificationTokenInvalid as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        except VerificationTokenUsed as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
-        except VerificationTokenExpired as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_410_GONE)
-        except WeakPassword as exc:
-            return Response({"detail": exc.messages if hasattr(exc, 'messages') else str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-        return Response(
-            {
-                "detail": "Password reset successful.",
-                "email_verified": getattr(user_dto, "email_verified", False),
-                "is_active": user_dto.is_active,
-            },
-            status=status.HTTP_200_OK,
-        )
 
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)

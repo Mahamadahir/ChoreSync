@@ -17,7 +17,6 @@
 import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { authService } from '../services/authService';
-import { useAuthStore } from '../stores/auth';
 
 const googleBtn = ref<HTMLElement | null>(null);
 const error = ref('');

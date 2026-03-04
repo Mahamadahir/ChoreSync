@@ -52,7 +52,6 @@
 </template>
 
 <script setup lang="ts">
-import { useAuthStore } from '../stores/auth';
 import { calendarService } from '../services/calendarService';
 import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';

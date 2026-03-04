@@ -71,7 +71,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { authService } from '../services/authService';
-import { useAuthStore } from '../stores/auth';
 import { useRouter } from 'vue-router';
 
 const identifier = ref('');
