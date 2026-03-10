@@ -8,7 +8,9 @@ from django.conf import settings
 from django.utils import timezone
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator
 from django.db import models
+from django.db.models import Q
 
 # TODO(Model Test Ideas):
 # - Validation paths: required fields, uniqueness, and custom clean/validator logic.
@@ -64,7 +66,7 @@ class EmailVerificationToken(models.Model):
         db_index=True,
     )
     created_at = models.DateTimeField(auto_now_add=True)
-    expires_at = models.DateTimeField()
+    expires_at = models.DateTimeField(null=True, blank=True)
     used_at = models.DateTimeField(null=True, blank=True)
 
     def is_expired(self) -> bool:
@@ -158,6 +160,19 @@ class Group(models.Model):
         help_text='Timestamp of last reassignment',
     )
 
+    fairness_algorithm = models.CharField(
+        choices=[
+            ('time_based', 'Time-based (rotate based on who has been waiting longest)'),
+            ('count_based', 'Count-based (rotate based on who has done the least tasks)'),
+            ('difficulty_based', 'Difficulty-based (assign based on task preferences and difficulty)'),
+            ('weighted', 'Weighted (combine multiple factors like time, count, and preferences)'),
+        ],
+        default = 'count_based',
+        max_length=50,
+    )
+    photo_proof_required = models.BooleanField(default=False)
+    task_proposal_voting_required = models.BooleanField(default=False)
+
     def __str__(self):
         return self.group_code
 
@@ -210,9 +225,33 @@ class TaskTemplate(models.Model):
         max_length=50,
         choices=[
             ('none', 'No repeat'),
+            ('weekly', 'Weekly on the same day'),
+            ('monthly', 'Monthly on the same date'),
             ('every_n_days', 'After x days'),
+            ('custom', 'Custom'),
         ],
         default='none',
+    )
+    days_of_week = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="List of weekday abbreviations (['mon','wed','fri']) for custom recurrence.",
+    )
+    difficulty = models.PositiveIntegerField(
+        default=1,
+        help_text="Relative difficulty level of the task (for weighted assignment).",
+    )
+    estimated_mins = models.PositiveIntegerField(default=30)
+    category = models.CharField(
+        choices=[
+            ('cleaning', 'Cleaning'),
+            ('cooking', 'Cooking'),
+            ('laundry', 'Laundry'),
+            ('maintenance', 'Maintenance'),
+            ('other', 'Other'),
+        ],
+        default='other',
+        max_length=20,
     )
     recur_value = models.PositiveIntegerField(
         null=True,
@@ -225,7 +264,6 @@ class TaskTemplate(models.Model):
     # Task details
     name = models.CharField(max_length=100)
     details = models.TextField(blank=True)
-    estimated_hours = models.FloatField(default=1.0)
 
     # Ownership
     creator = models.ForeignKey(
@@ -251,8 +289,11 @@ class TaskTemplate(models.Model):
     def clean(self):
         if self.recurring_choice == 'none' and self.recur_value:
             raise ValidationError("Recur value should only be set if recurrence is enabled.")
-        if self.recurring_choice != 'none' and not self.recur_value:
-            raise ValidationError("Please provide a recur_value for repeating tasks.")
+        if self.recurring_choice == 'every_n_days' and not self.recur_value:
+            raise ValidationError("Please provide a recur_value for every_n_days recurrence.")
+        if self.recurring_choice == 'custom' and not self.days_of_week:
+            raise ValidationError("Please provide days_of_week for custom recurrence.")
+
 
     def get_next_due_date(self, from_date=None):
         """Compute the next due date for this task template."""
@@ -283,12 +324,66 @@ class TaskOccurrence(models.Model):
         help_text="Current assignee for the task",
     )
     deadline = models.DateTimeField()
-    completed = models.BooleanField(default=False)
+    status_choices = [
+        ('pending', 'Pending'),
+        ('in_progress', 'In Progress'),
+        ('snoozed', 'Snoozed'),
+        ('completed', 'Completed'),
+        ('overdue', 'Overdue'),
+        ('reassigned', 'Reassigned'),
+    ]
+    status = models.CharField(
+        choices=status_choices,
+        max_length=20,
+        default = 'pending'
+    )
     completed_at = models.DateTimeField(null=True, blank=True)
+
+    snoozed_until = models.DateTimeField(null=True, blank=True)
+    snooze_count = models.PositiveIntegerField(
+        default=0,
+        validators=[MaxValueValidator(2)]
+    )
+    original_assignee = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        related_name='originally_assigned_tasks',
+        on_delete=models.SET_NULL,
+        blank=True,
+    )
+    reassignment_reason = models.CharField(
+        choices=[
+            ('swap', 'Swap'),
+            ('emergency', 'Emergency'),
+            ('system', 'System Rebalance')
+        ],
+        null=True,
+        blank=True,
+        max_length=20,
+    )
+
+    points_earned = models.PositiveIntegerField(
+        null=True,
+        blank=True
+    )
+
+    photo_proof = models.ImageField(
+        upload_to='task_proofs/',
+        null=True,
+        blank=True,
+        help_text="Optional photo proof of task completion.",
+    )
 
     class Meta:
         unique_together = ('template', 'deadline')
         ordering = ['deadline']
+        constraints = [
+            models.CheckConstraint(
+                check=Q(snooze_count__lte=2),
+                name='snooze_count_max_2',
+            )
+        ]
+
 
     def __str__(self):
         return f"{self.template.name} on {self.deadline:%Y-%m-%d}"
@@ -661,7 +756,6 @@ class MessageReceipt(models.Model):
 class TaskSwap(models.Model):
     """
     Captures a swap request for a task.
-
     Open-ended: to_user is null when proposed. Any eligible group member can accept it,
     at which point to_user is set and the task's assigned_to is updated in service logic.
     """
@@ -718,6 +812,28 @@ class TaskSwap(models.Model):
         null=True,
         blank=True,
         help_text="When the swap was accepted/rejected/cancelled (if applicable).",
+    )
+
+    def default_swap_expiry():
+        return timezone.now() + timedelta(hours=48)
+
+    expires_at = models.DateTimeField(default=default_swap_expiry)
+    swap_type = models.CharField(
+        choices=[
+            ('direct_swap', 'Direct swap'),
+            ('open_request', 'Open request'),
+            ('emergency', 'Emergency reassignment'),
+            ('system_rebalance', 'System rebalance'),
+        ],
+        default='direct_swap',
+        max_length=20,
+    )
+    counterpart_task = models.ForeignKey(
+        TaskOccurrence,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='counterpart_swaps',
     )
 
     class Meta:
@@ -902,12 +1018,21 @@ class TaskPreference(models.Model):
 class Notification(models.Model):
     """Generic in-app notification dispatched to a user."""
 
+    title = models.CharField(max_length=255, default = '')
+    action_url = models.URLField(max_length=500, blank=True, null=True, help_text="Optional deep-link URL for this notification.")
+    sent_at = models.DateTimeField(default=timezone.now)
+
+
     TYPE_CHOICES = [
         ('task_assigned', 'Task assigned'),
         ('task_swap', 'Task swap'),
         ('group_invite', 'Group invite'),
         ('task_proposal', 'Task proposal'),
         ('message', 'Message'),
+        ('deadline_reminder', 'Deadline reminder'),
+        ('emergency_reassignment', 'Emergency reassignment'),
+        ('badge_earned', 'Badge earned'),
+        ('marketplace_claim', 'Marketplace claim'),
     ]
 
     recipient = models.ForeignKey(
@@ -1005,3 +1130,68 @@ class GroupCalendar(models.Model):
 
     def __str__(self):
         return f"Group calendar settings for {self.group.name}"
+
+class UserStats(models.Model):
+    """Aggregated statistics for a user, updated periodically."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='stats',
+    )
+    household = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        related_name='member_stats',
+    )
+    current_streak_days = models.PositiveIntegerField(default=0)
+    longest_streak_days = models.PositiveIntegerField(default=0)
+
+    total_tasks_completed = models.PositiveIntegerField(default=0)
+    total_points = models.PositiveIntegerField(default=0)
+
+    tasks_completed_this_week = models.PositiveIntegerField(default=0)
+    tasks_completed_this_month = models.PositiveIntegerField(default=0)
+
+    on_time_completion_rate = models.FloatField(default=0.0)
+    last_updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('user', 'household')
+
+class Badge(models.Model):
+    """Represents an earned badge for a user."""
+
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True)
+    icon_url = models.URLField(blank=True)
+    criteria = models.JSONField(help_text="e.g. {'streak_days': 30}")
+    points_value = models.PositiveIntegerField(default=0)
+
+    def __str__(self):
+        return self.name
+
+
+class UserBadge(models.Model):
+    """Association of a badge earned by a user."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='badges',
+    )
+    badge = models.ForeignKey(
+        Badge,
+        on_delete=models.CASCADE,
+        related_name='earned_by',
+    )
+    household = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        related_name='badges',
+    )
+    awarded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'badge', 'household')
+        
