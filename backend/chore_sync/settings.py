@@ -199,3 +199,5 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTH_USER_MODEL = 'chore_sync.User'
+
+FIELD_ENCRYPTION_KEY = env('FIELD_ENCRYPTION_KEY')

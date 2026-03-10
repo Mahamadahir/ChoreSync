@@ -1,7 +1,7 @@
 """Domain entity definitions for ChoreSync."""
 import uuid
 import secrets
-
+import json
 from datetime import timedelta
 
 from django.conf import settings
@@ -11,6 +11,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator
 from django.db import models
 from django.db.models import Q
+from cryptography.fernet import Fernet
 
 # TODO(Model Test Ideas):
 # - Validation paths: required fields, uniqueness, and custom clean/validator logic.
@@ -18,6 +19,27 @@ from django.db.models import Q
 # - Domain helpers: computed properties or custom methods that encode business rules (e.g., is_overdue, display_name).
 # - State transitions: enums/choice fields, status changes, and soft-delete or archival flows.
 # - Audit hooks: automatic timestamps, __str__ representations, and signal-driven side effects (notifications, sync events).
+
+
+class EncryptedJSONField(models.TextField):
+    """Stores a JSON-serialisable value encrypted at rest using Fernet symmetric encryption."""
+
+    def from_db_value(self, value, expression, connection):
+        if value is None:
+            return value
+        fernet = Fernet(settings.FIELD_ENCRYPTION_KEY)
+        return json.loads(fernet.decrypt(value.encode()))
+
+    def get_prep_value(self, value):
+        if value is None:
+            return value
+        fernet = Fernet(settings.FIELD_ENCRYPTION_KEY)
+        return fernet.encrypt(json.dumps(value).encode()).decode()
+
+    def to_python(self, value):
+        if isinstance(value, (dict, list)) or value is None:
+            return value
+        return value  # already decrypted by from_db_value
 
 
 class User(AbstractUser):
@@ -408,13 +430,11 @@ class ExternalCredential(models.Model):
 
     provider = models.CharField(
         max_length=20,
-        choices=PROVIDER_CHOICES,
+        choices=PROVIDER_CHOICES
     )
 
-    # Use a JSONField to store tokens. In production, this should be ENCRYPTED.
-    # TODO: Encrypt this field before production
-    secret = models.JSONField(
-        help_text="JSON blob of OAuth2 tokens, including access and refresh tokens",
+    secret = EncryptedJSONField(
+        help_text="Fernet-encrypted JSON blob of OAuth2 tokens"
     )
 
     # Optional email or identifier for linked account (useful for multi-account support)
