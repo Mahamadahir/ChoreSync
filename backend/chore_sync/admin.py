@@ -78,8 +78,8 @@ class TaskTemplateAdmin(admin.ModelAdmin):
 
 @admin.register(models.TaskOccurrence)
 class TaskOccurrenceAdmin(admin.ModelAdmin):
-    list_display = ("template", "assigned_to", "deadline", "completed")
-    list_filter = ("completed", "deadline", "template__group")
+    list_display = ("template", "assigned_to", "deadline", "status")
+    list_filter = ("status", "deadline", "template__group")
     search_fields = ("template__name", "assigned_to__email")
     autocomplete_fields = ("template", "assigned_to")
 
