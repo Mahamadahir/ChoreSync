@@ -99,3 +99,31 @@ class GoogleCalendarSelectionSerializer(serializers.Serializer):
     include_in_availability = serializers.BooleanField()
     writable = serializers.BooleanField()
     timezone = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=50)
+
+
+class CreateGroupSerializer(serializers.Serializer):
+    name = serializers.CharField(min_length=1, max_length=100)
+    reassignment_rule = serializers.ChoiceField(
+        choices=['on_create', 'after_n_tasks', 'after_n_weeks'],
+        required=False,
+        allow_null=True,
+    )
+    fairness_algorithm = serializers.ChoiceField(
+        choices=['time_based', 'count_based', 'difficulty_based', 'weighted'],
+        required=False,
+        allow_null=True,
+    )
+
+
+class InviteMemberSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    role = serializers.ChoiceField(choices=['member', 'moderator'])
+
+
+class GroupSettingsSerializer(serializers.Serializer):
+    fairness_algorithm = serializers.ChoiceField(
+        choices=['time_based', 'count_based', 'difficulty_based', 'weighted'],
+        required=False,
+    )
+    photo_proof_required = serializers.BooleanField(required=False)
+    task_proposal_voting_required = serializers.BooleanField(required=False)

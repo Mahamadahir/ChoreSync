@@ -17,6 +17,14 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
+from chore_sync.api.group_router import (
+    GroupListCreateAPIView,
+    GroupDetailAPIView,
+    GroupInviteAPIView,
+    GroupMembersAPIView,
+    GroupAssignmentMatrixAPIView,
+    GroupSettingsAPIView,
+)
 from chore_sync.api.views import (
     SignupAPIView,
     LoginAPIView,
@@ -64,5 +72,10 @@ urlpatterns = [
     path('api/calendar/google/sync/', GoogleCalendarSyncAPIView.as_view(), name='google-cal-sync'),
     path('api/calendar/google/webhook/', GoogleCalendarWebhookAPIView.as_view(), name='google-cal-webhook'),
     path('api/events/stream/', EventStreamAPIView.as_view(), name='event-stream'),
-    # TODO: add group/task endpoints via DRF views or viewsets
+    path('api/groups/', GroupListCreateAPIView.as_view(), name='group-list-create'),
+    path('api/groups/<uuid:pk>/', GroupDetailAPIView.as_view(), name='group-detail'),
+    path('api/groups/<uuid:pk>/invite/', GroupInviteAPIView.as_view(), name='group-invite'),
+    path('api/groups/<uuid:pk>/members/', GroupMembersAPIView.as_view(), name='group-members'),
+    path('api/groups/<uuid:pk>/assignment-matrix/', GroupAssignmentMatrixAPIView.as_view(), name='group-assignment-matrix'),
+    path('api/groups/<uuid:pk>/settings/', GroupSettingsAPIView.as_view(), name='group-settings'),
 ]

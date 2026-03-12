@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from django.db import transaction
 from django.conf import settings
 import secrets
-from chore_sync.models import Group, User, GroupMembership,Notification, GroupCalendar
+from chore_sync.models import Group, User, GroupMembership, Notification, GroupCalendar, UserStats, TaskOccurrence
 from chore_sync.services.auth_service import AccountService
 
 
@@ -87,26 +87,58 @@ class GroupOrchestrator:
             context={"type": "group_invite", "group_id": str(group.id)},
         )
 
-    def compute_assignment_matrix(self, *, group_id: str) -> None:
+    def compute_assignment_matrix(self, *, group_id: str) -> dict:
         """Build a fairness matrix used for automated task assignments.
 
         Inputs:
             group_id: Group whose workload distribution is being analyzed.
         Output:
-            Matrix object keyed by member/task type with weights or raises if data insufficient.
-        TODO: Aggregate historical completions, normalize workload metrics, incorporate preferences,
-        TODO: output scores consumable by TaskScheduler for upcoming rotations.
+            Dict keyed by user_id (str) → float score. Lower score = higher assignment priority.
         """
-        raise NotImplementedError("TODO: implement load balancing matrix computation")
+        group = Group.objects.filter(id=group_id).first()
+        if group is None:
+            raise ValueError("Group not found.")
 
-    def generate_invite_code(self, *, length: int = 6) -> None:
+        members = group.members.select_related('user').all()
+        matrix = {}
+
+        for membership in members:
+            user = membership.user
+            stats = UserStats.objects.filter(user=user, household=group).first()
+
+            if group.fairness_algorithm == 'count_based':
+                score = stats.total_tasks_completed if stats else 0
+
+            elif group.fairness_algorithm == 'time_based':
+                last = TaskOccurrence.objects.filter(
+                    assigned_to=user, template__group=group
+                ).order_by('-created_at').first()
+                score = last.created_at.timestamp() if last else 0
+
+            elif group.fairness_algorithm == 'difficulty_based':
+                score = stats.total_points if stats else 0
+
+            elif group.fairness_algorithm == 'weighted':
+                tasks = stats.total_tasks_completed if stats else 0
+                points = stats.total_points if stats else 0
+                score = (tasks * 0.6) + (points * 0.4)
+
+            else:
+                score = stats.total_tasks_completed if stats else 0
+
+            matrix[str(user.id)] = score
+
+        return matrix
+
+    def generate_invite_code(self,group : Group ,*, length: int = 6) -> None:
         """Produce a human-friendly invite code for group onboarding.
 
         Inputs:
             length: Desired code length (default 6).
         Output:
-            Randomized, collision-resistant invite code string reserved for later redemption.
+            None. Should update the Group with a new code and persist.
         TODO: Generate secure codes, ensure uniqueness scoped per group, persist reservations with
         TODO: expiry metadata, and expose them via membership onboarding flows.
         """
-        raise NotImplementedError("TODO: implement invite code generation")
+        group.group_code = secrets.token_urlsafe(length).upper()
+        group.save(update_fields=['group_code'])
