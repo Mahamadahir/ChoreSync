@@ -12,6 +12,24 @@ from chore_sync.services.auth_service import AccountService
 class GroupOrchestrator:
     """Handles group lifecycle, membership, and assignment configuration."""
 
+    @staticmethod
+    def _normalise(matrix: dict[str, float]) -> dict[str, float]:
+        if not matrix:
+            raise ValueError("Cannot normalise an empty matrix - group has no members")
+
+        values = list(matrix.values())
+        min_val = min(values)
+        max_val = max(values)
+
+        if max_val == min_val:
+            return {uid: 0.0 for uid in matrix}
+
+        return {
+            uid: (score - min_val) / (max_val - min_val)
+            for uid, score in matrix.items()
+        }
+
+
     def create_group(self, *, owner: User, name: str, reassignment_rule: str | None = None, fairness_algorithm: str | None = None) -> Group:
         """Provision a new group and default configuration.
 
@@ -43,49 +61,71 @@ class GroupOrchestrator:
             GroupCalendar.objects.create(group=group)
         return group
 
-    def invite_member(self, *, requestor: User, invitee: User, group_id: str, email: str, role: str) -> None:
-        """Send an invitation email and pre-stage membership for first login.
+    def invite_member(self, *, requestor: User, group_id: str, email: str, role: str) -> None:
+        """Send an invitation email and create membership if the invitee already has an account.
 
         Inputs:
-            requestor: User sending the invitation.
-            invitee: User being invited.
-            group_id: Target group.
-            email: Invitee email address.
+            requestor: User sending the invitation (must be a group moderator).
+            group_id: Target group UUID (str).
+            email: Email address of the person being invited.
+            role: Role to assign — 'member' or 'moderator'.
         Output:
-            None. Should return invite metadata or raise if the invite cannot be issued.
-        TODO: Generate expiring tokens, upsert pending Membership rows, queue transactional email/SMS,
-        TODO: and log invite analytics for later redemption tracking.
-        """
+            None. Raises ValueError for any validation failure.
 
+        Behaviour:
+            - Existing user: creates GroupMembership immediately + in-app Notification + email.
+            - Unknown email: sends email with group_code for self-join after signup.
+        """
         group = Group.objects.filter(id=group_id).first()
         if group is None:
             raise ValueError("Group not found.")
-        group_membership = group.members.filter(user=requestor).first()
-        if group.members.filter(user=invitee).exists():
-            raise ValueError("User is already a member of the group.")
-        if group_membership is None:
+
+        requestor_membership = group.members.filter(user=requestor).first()
+        if requestor_membership is None:
             raise ValueError("Requestor must be a member of the group to invite others.")
-        if group_membership.role != 'moderator':
+        if requestor_membership.role != 'moderator':
             raise ValueError("Requestor must be a moderator to invite others.")
-        if role not in ['member', 'moderator']:
-            raise ValueError("Invalid role specified for invitee.")
 
-        with transaction.atomic():
-            GroupMembership.objects.create(user=invitee, group=group, role=role)
-            Notification.objects.create(title="Group Invitation", type='group_invite', recipient=invitee, group=group, content=f"You have been invited to join the group '{group.name}' as a {role}.")
+        invitee = User.objects.filter(email=email).first()
 
-        svc = AccountService()
-        svc._send_and_log_email(
-            to_address=invitee.email,
-            subject=f"You're invited to join {group.name} on ChoreSync!",
-            message=(
-                f"Hi {invitee.first_name},\n\n"
-                f"{requestor.first_name} has invited you to join the group '{group.name}' on ChoreSync as a {role}.\n"
-                f"Use this code to join: {group.group_code}\n\n"
-                f"Or sign up at {settings.FRONTEND_APP_URL}/join/{group.group_code}"
-            ),
-            context={"type": "group_invite", "group_id": str(group.id)},
-        )
+        if invitee is not None:
+            if group.members.filter(user=invitee).exists():
+                raise ValueError("User is already a member of the group.")
+            with transaction.atomic():
+                GroupMembership.objects.create(user=invitee, group=group, role=role)
+                Notification.objects.create(
+                    title="Group Invitation",
+                    type='group_invite',
+                    recipient=invitee,
+                    group=group,
+                    content=f"You have been invited to join the group '{group.name}' as a {role}.",
+                )
+            AccountService()._send_and_log_email(
+                to_address=invitee.email,
+                subject=f"You're invited to join {group.name} on ChoreSync!",
+                message=(
+                    f"Hi {invitee.first_name or invitee.username},\n\n"
+                    f"{requestor.first_name or requestor.username} has invited you to join "
+                    f"'{group.name}' on ChoreSync as a {role}.\n"
+                    f"Use this code to join: {group.group_code}\n\n"
+                    f"Or visit: {settings.FRONTEND_APP_URL}/join/{group.group_code}"
+                ),
+                context={"type": "group_invite", "group_id": str(group.id)},
+            )
+        else:
+            # No account yet — send signup link with group code embedded
+            AccountService()._send_and_log_email(
+                to_address=email,
+                subject=f"You're invited to join {group.name} on ChoreSync!",
+                message=(
+                    f"Hi,\n\n"
+                    f"{requestor.first_name or requestor.username} has invited you to join "
+                    f"'{group.name}' on ChoreSync.\n"
+                    f"Sign up and use code {group.group_code} to join:\n"
+                    f"{settings.FRONTEND_APP_URL}/join/{group.group_code}"
+                ),
+                context={"type": "group_invite", "group_id": str(group.id)},
+            )
 
     def compute_assignment_matrix(self, *, group_id: str) -> dict:
         """Build a fairness matrix used for automated task assignments.
@@ -100,7 +140,10 @@ class GroupOrchestrator:
             raise ValueError("Group not found.")
 
         members = group.members.select_related('user').all()
-        matrix = {}
+        if not members.exists():
+            raise ValueError(f"Group '{group.name}' has no members to assign tasks to")
+
+        raw_matrix = {}
 
         for membership in members:
             user = membership.user
@@ -110,10 +153,12 @@ class GroupOrchestrator:
                 score = stats.total_tasks_completed if stats else 0
 
             elif group.fairness_algorithm == 'time_based':
+                from django.utils import timezone
                 last = TaskOccurrence.objects.filter(
                     assigned_to=user, template__group=group
-                ).order_by('-created_at').first()
-                score = last.created_at.timestamp() if last else 0
+                ).order_by('-deadline').first()
+                # Days since last assignment — more days = higher priority (lower score after inversion)
+                score = -(timezone.now() - last.deadline).days if last else 0
 
             elif group.fairness_algorithm == 'difficulty_based':
                 score = stats.total_points if stats else 0
@@ -126,9 +171,9 @@ class GroupOrchestrator:
             else:
                 score = stats.total_tasks_completed if stats else 0
 
-            matrix[str(user.id)] = score
-
-        return matrix
+            raw_matrix[str(user.id)] = score
+        normalised_matrix = GroupOrchestrator._normalise(raw_matrix)
+        return normalised_matrix
 
     def generate_invite_code(self,group : Group ,*, length: int = 6) -> None:
         """Produce a human-friendly invite code for group onboarding.

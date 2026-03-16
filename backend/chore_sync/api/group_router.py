@@ -1,7 +1,6 @@
 """DRF views for group management endpoints."""
 from __future__ import annotations
 
-from django.conf import settings
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -14,8 +13,7 @@ from chore_sync.api.serializers import (
     InviteMemberSerializer,
 )
 from chore_sync.api.views import CsrfExemptSessionAuthentication
-from chore_sync.models import Group, GroupMembership, UserStats
-from chore_sync.services.auth_service import AccountService
+from chore_sync.models import GroupMembership, UserStats
 from chore_sync.services.group_service import GroupOrchestrator
 
 User = get_user_model()
@@ -94,42 +92,15 @@ class GroupInviteAPIView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        email = serializer.validated_data['email']
-        role = serializer.validated_data['role']
-        invitee = User.objects.filter(email=email).first()
-
-        if invitee:
-            try:
-                _svc.invite_member(
-                    requestor=request.user,
-                    invitee=invitee,
-                    group_id=str(pk),
-                    email=email,
-                    role=role,
-                )
-            except ValueError as exc:
-                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            # User doesn't have an account yet — send email with group code only
-            group = Group.objects.filter(id=pk).first()
-            if group is None:
-                return Response({"detail": "Group not found."}, status=status.HTTP_404_NOT_FOUND)
-            requestor_membership = group.members.filter(user=request.user).first()
-            if requestor_membership is None or requestor_membership.role != 'moderator':
-                return Response(
-                    {"detail": "Only moderators can invite members."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            AccountService()._send_and_log_email(
-                to_address=email,
-                subject=f"You're invited to join {group.name} on ChoreSync!",
-                message=(
-                    f"Hi,\n\nYou've been invited to join '{group.name}' on ChoreSync.\n"
-                    f"Sign up and use code {group.group_code} to join:\n"
-                    f"{settings.FRONTEND_APP_URL}/join/{group.group_code}"
-                ),
-                context={"type": "group_invite", "group_id": str(group.id)},
+        try:
+            _svc.invite_member(
+                requestor=request.user,
+                group_id=str(pk),
+                email=serializer.validated_data['email'],
+                role=serializer.validated_data['role'],
             )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({"detail": "Invitation sent."}, status=status.HTTP_200_OK)
 

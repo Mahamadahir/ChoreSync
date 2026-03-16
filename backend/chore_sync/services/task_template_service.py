@@ -2,24 +2,45 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-
+from chore_sync.models import User, Group, TaskTemplate
 
 @dataclass
 class TaskTemplateService:
     """Manages reusable task templates for rapid household setup."""
 
-    def create_template(self, *, creator_id: str, payload: dict) -> None:
-        """Create a new task template with default assignees and schedules.
+    def create_template(self, *, creator_id: str, group_id : str, payload: dict) -> TaskTemplate:
+        """Create and persist a new task template for a group.
 
         Inputs:
-            creator_id: User building the template.
-            payload: Template definition (title, steps, recurrence, default assignees).
+            creator_id: ID of the user creating the template (must be a group member).
+            group_id: ID of the group the template belongs to.
+            payload: Template fields (name, next_due, recurrence, difficulty, etc.).
+                     created_at/updated_at are stripped if present; all other fields
+                     are passed directly to the model — nullable/default fields are optional.
         Output:
-            Template DTO/id; raises when validation fails.
-        TODO: Validate schema + permissions, persist template + step ordering, seed default automation
-        TODO: metadata, and emit analytics/notifications.
+            Saved TaskTemplate instance; raises ValueError if user/group not found or
+            creator is not a group member; raises ValidationError if model validation fails.
         """
-        raise NotImplementedError("TODO: implement task template creation")
+        creator = User.objects.filter(id = creator_id).first()
+        group = Group.objects.filter(id = group_id).first()
+        if creator is None:
+            raise ValueError("This user doesn't exist")
+        if group is None:
+            raise ValueError("This group doesn't exist")
+        group_members = group.members.filter(user=creator).first()
+
+        if group_members is None:
+            raise ValueError("This user is not a members of the group ")
+
+        payload.pop('created_at',None)
+        payload.pop('updated_at',None)
+        
+        template = TaskTemplate(**payload, creator_id=creator_id, group_id=group_id)
+        template.full_clean()
+        template.save()
+
+        return template
+
 
     def update_template(self, *, template_id: str, updates: dict) -> None:
         """Apply edits to an existing template.

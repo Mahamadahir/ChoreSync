@@ -94,10 +94,10 @@ class TaskPreferenceAdmin(admin.ModelAdmin):
 
 @admin.register(models.TaskSwap)
 class TaskSwapAdmin(admin.ModelAdmin):
-    list_display = ("task", "from_user", "to_user", "status", "created_at", "decided_at")
-    list_filter = ("status", "task__template__group")
+    list_display = ("task", "from_user", "to_user", "status", "swap_type", "counterpart_task", "created_at", "decided_at")
+    list_filter = ("status", "swap_type", "task__template__group")
     search_fields = ("task__template__name", "from_user__email", "to_user__email")
-    autocomplete_fields = ("task", "from_user", "to_user")
+    autocomplete_fields = ("task", "from_user", "to_user", "counterpart_task")
 
 
 class TaskVoteInline(admin.TabularInline):
@@ -225,4 +225,30 @@ class NotificationAdmin(admin.ModelAdmin):
     list_filter = ("type", "read", "dismissed")
     search_fields = ("recipient__email", "content")
     autocomplete_fields = ("recipient", "group", "task_occurrence", "task_proposal", "message")
+
+
+# -------------------------------------------------------------------
+# Stats, Badges
+# -------------------------------------------------------------------
+
+@admin.register(models.UserStats)
+class UserStatsAdmin(admin.ModelAdmin):
+    list_display = ("user", "household", "current_streak_days", "longest_streak_days", "total_tasks_completed", "total_points", "on_time_completion_rate", "last_updated")
+    list_filter = ("household",)
+    search_fields = ("user__email", "household__name")
+    autocomplete_fields = ("user", "household")
+
+
+@admin.register(models.Badge)
+class BadgeAdmin(admin.ModelAdmin):
+    list_display = ("name", "points_value")
+    search_fields = ("name",)
+
+
+@admin.register(models.UserBadge)
+class UserBadgeAdmin(admin.ModelAdmin):
+    list_display = ("user", "badge", "household", "awarded_at")
+    list_filter = ("badge", "household")
+    search_fields = ("user__email", "badge__name", "household__name")
+    autocomplete_fields = ("user", "badge", "household")
 
