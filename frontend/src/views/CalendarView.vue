@@ -57,6 +57,8 @@
         </q-card-section>
         <q-separator />
         <q-card-actions align="right">
+          <q-btn v-if="editing" flat color="negative" :loading="deleting" @click="handleDelete">Delete</q-btn>
+          <q-space />
           <q-btn flat label="Cancel" v-close-popup />
           <q-btn color="primary" :loading="creating" @click="handleCreate">Save</q-btn>
         </q-card-actions>
@@ -84,6 +86,7 @@ const error = ref('');
 const events = ref<any[]>([]);
 const showCreate = ref(false);
 const creating = ref(false);
+const deleting = ref(false);
 const editing = ref(false);
 const selectedEventId = ref<number | null>(null);
 const calendarOptionsList = ref<{ label: string; value: number }[]>([]);
@@ -272,6 +275,23 @@ async function handleCreate() {
     error.value = err?.response?.data?.detail || 'Unable to save event.';
   } finally {
     creating.value = false;
+  }
+}
+
+async function handleDelete() {
+  if (selectedEventId.value === null) return;
+  deleting.value = true;
+  error.value = '';
+  try {
+    await eventService.delete(selectedEventId.value);
+    showCreate.value = false;
+    editing.value = false;
+    selectedEventId.value = null;
+    reload();
+  } catch (err: any) {
+    error.value = err?.response?.data?.detail || 'Unable to delete event.';
+  } finally {
+    deleting.value = false;
   }
 }
 

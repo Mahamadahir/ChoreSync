@@ -17,6 +17,10 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
+from chore_sync.api.task_template_router import (
+    GroupTaskTemplateListCreateAPIView,
+    TaskTemplateDetailAPIView,
+)
 from chore_sync.api.group_router import (
     GroupListCreateAPIView,
     GroupDetailAPIView,
@@ -78,4 +82,6 @@ urlpatterns = [
     path('api/groups/<uuid:pk>/members/', GroupMembersAPIView.as_view(), name='group-members'),
     path('api/groups/<uuid:pk>/assignment-matrix/', GroupAssignmentMatrixAPIView.as_view(), name='group-assignment-matrix'),
     path('api/groups/<uuid:pk>/settings/', GroupSettingsAPIView.as_view(), name='group-settings'),
+    path('api/groups/<uuid:pk>/task-templates/', GroupTaskTemplateListCreateAPIView.as_view(), name='group-task-templates'),
+    path('api/task-templates/<int:pk>/', TaskTemplateDetailAPIView.as_view(), name='task-template-detail'),
 ]
