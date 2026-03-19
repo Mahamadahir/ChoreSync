@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import datetime
+import hashlib
 import logging
 import secrets
 import uuid
@@ -57,21 +59,36 @@ class GoogleCalendarService:
             scopes=GOOGLE_SCOPES,
         )
 
-    def build_auth_url(self) -> str:
+    @staticmethod
+    def _pkce_pair() -> tuple[str, str]:
+        """Generate a (code_verifier, code_challenge) PKCE pair (S256 method)."""
+        code_verifier = secrets.token_urlsafe(43)
+        digest = hashlib.sha256(code_verifier.encode()).digest()
+        code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+        return code_verifier, code_challenge
+
+    def build_auth_url(self) -> tuple[str, str]:
+        """Returns (auth_url, code_verifier). Caller must persist code_verifier for token exchange."""
         flow = self._flow()
         flow.redirect_uri = self.redirect_uri
+        code_verifier, code_challenge = self._pkce_pair()
         auth_url, _ = flow.authorization_url(
             access_type="offline",
             include_granted_scopes=False,
             prompt="consent",
+            code_challenge=code_challenge,
+            code_challenge_method="S256",
         )
-        return auth_url
+        return auth_url, code_verifier
 
-    def exchange_code(self, code: str) -> ExternalCredential:
+    def exchange_code(self, code: str, code_verifier: str | None = None) -> ExternalCredential:
         flow = self._flow()
         flow.redirect_uri = self.redirect_uri
         try:
-            flow.fetch_token(code=code)
+            fetch_kwargs: dict = {"code": code}
+            if code_verifier:
+                fetch_kwargs["code_verifier"] = code_verifier
+            flow.fetch_token(**fetch_kwargs)
         except Exception as exc:
             logger.exception("Failed to fetch Google token", exc_info=exc)
             raise
@@ -367,10 +384,7 @@ class GoogleCalendarService:
         self._stop_watch(service, cal)
 
     def _should_push(self, event: Event) -> bool:
-        return (
-            event.calendar.provider == "google"
-            and getattr(event.calendar, "writable", True)
-        )
+        return event.calendar.provider == "google"
 
     def push_created_event(self, event: Event) -> str:
         """
@@ -438,7 +452,7 @@ class GoogleCalendarService:
             try:
                 result = (
                     service.events()
-                    .update(
+                    .patch(
                         calendarId=cal_id,
                         eventId=event.external_event_id,
                         body=body,
@@ -448,6 +462,9 @@ class GoogleCalendarService:
             except HttpError as exc:
                 if exc.resp is not None and exc.resp.status in (409, 412):
                     raise GoogleEventConflict("Google event was changed remotely.")
+                if exc.resp is not None and exc.resp.status == 400:
+                    logger.warning("Skipping read-only/restricted Google event %s: %s", event.id, exc)
+                    return ""
                 logger.exception("Failed to push updated event %s to Google", event.id, exc_info=exc)
                 return ""
             except Exception as exc:

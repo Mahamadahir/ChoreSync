@@ -47,6 +47,7 @@ from chore_sync.domain_errors import (
 from django.contrib.auth import login, logout
 from django.conf import settings
 from django.utils.dateparse import parse_datetime
+from googleapiclient.discovery import build as google_build
 from googleapiclient.errors import HttpError
 from django.http import StreamingHttpResponse
 import json
@@ -141,7 +142,7 @@ class LoginAPIView(APIView):
 @method_decorator(csrf_exempt, name="dispatch")
 class LogoutAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    authentication_classes = []
+    authentication_classes = [CsrfExemptSessionAuthentication]
 
     def post(self, request):
         logout(request)
@@ -567,6 +568,25 @@ class EventDetailAPIView(APIView):
                 logger.exception("Failed to push updated event to Google", exc_info=exc)
         return Response(out, status=status.HTTP_200_OK)
 
+    def delete(self, request, pk: int):
+        from chore_sync.models import Event
+        try:
+            ev = Event.objects.select_related("calendar").get(pk=pk, calendar__user=request.user)
+        except Event.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if ev.calendar.provider == "google" and ev.external_event_id:
+            try:
+                svc = GoogleCalendarService(request.user)
+                creds = svc._load_credentials()
+                if creds:
+                    service = google_build("calendar", "v3", credentials=creds, cache_discovery=False)
+                    cal_id = ev.calendar.external_id or "primary"
+                    service.events().delete(calendarId=cal_id, eventId=ev.external_event_id).execute()
+            except Exception as exc:
+                logger.warning("Failed to delete Google event %s: %s", ev.external_event_id, exc)
+        ev.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 @method_decorator(csrf_exempt, name="dispatch")
 class GoogleCalendarListAPIView(APIView):
@@ -735,7 +755,9 @@ class GoogleCalendarAuthURLAPIView(APIView):
     def get(self, request):
         try:
             svc = GoogleCalendarService(request.user)
-            url = svc.build_auth_url()
+            url, code_verifier = svc.build_auth_url()
+            if code_verifier:
+                request.session["google_pkce_verifier"] = code_verifier
             return Response({"auth_url": url}, status=status.HTTP_200_OK)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -752,7 +774,8 @@ class GoogleCalendarCallbackAPIView(APIView):
             return Response({"detail": "Missing code"}, status=status.HTTP_400_BAD_REQUEST)
         try:
             svc = GoogleCalendarService(request.user)
-            svc.exchange_code(code)
+            code_verifier = request.session.pop("google_pkce_verifier", None)
+            svc.exchange_code(code, code_verifier=code_verifier)
             frontend_url = getattr(settings, "FRONTEND_APP_URL", "http://localhost:5173")
             target = f"{frontend_url}?google_sync=success"
             return redirect(target)

@@ -40,8 +40,6 @@ class GroupOrchestrator:
             fairness_algorithm: Algorithm for computing task fairness.
         Output:
             Group DTO (id, slug, invite code) ready for UI consumption.
-        TODO: Persist the Group + owner membership transactionally, seed default task templates,
-        TODO: provision in-app calendars/message threads, and emit onboarding events.
         """
         valid_rules = [c[0] for c in Group._meta.get_field('reassignment_rule').choices]
         valid_algorithms = [c[0] for c in Group._meta.get_field('fairness_algorithm').choices]
@@ -181,9 +179,7 @@ class GroupOrchestrator:
         Inputs:
             length: Desired code length (default 6).
         Output:
-            None. Should update the Group with a new code and persist.
-        TODO: Generate secure codes, ensure uniqueness scoped per group, persist reservations with
-        TODO: expiry metadata, and expose them via membership onboarding flows.
+            None. Updates the Group with a new code and persists.
         """
         group.group_code = secrets.token_urlsafe(length).upper()
         group.save(update_fields=['group_code'])
