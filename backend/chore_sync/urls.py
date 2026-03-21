@@ -33,6 +33,11 @@ from chore_sync.api.task_router import (
     TaskEmergencyReassignAPIView,
     TaskAcceptEmergencyAPIView,
 )
+from chore_sync.api.stats_router import (
+    UserStatsAPIView,
+    UserBadgesAPIView,
+    GroupStatsAPIView,
+)
 from chore_sync.api.proposal_router import (
     GroupProposalListCreateAPIView,
     ProposalVoteAPIView,
@@ -118,6 +123,9 @@ urlpatterns = [
     path('api/task-swaps/<int:pk>/respond/', TaskSwapRespondAPIView.as_view(), name='task-swap-respond'),
     path('api/tasks/<int:pk>/emergency-reassign/', TaskEmergencyReassignAPIView.as_view(), name='task-emergency-reassign'),
     path('api/tasks/<int:pk>/accept-emergency/', TaskAcceptEmergencyAPIView.as_view(), name='task-accept-emergency'),
+    path('api/users/me/stats/', UserStatsAPIView.as_view(), name='user-stats'),
+    path('api/users/me/badges/', UserBadgesAPIView.as_view(), name='user-badges'),
+    path('api/groups/<uuid:pk>/stats/', GroupStatsAPIView.as_view(), name='group-stats'),
     path('api/groups/<uuid:pk>/proposals/', GroupProposalListCreateAPIView.as_view(), name='group-proposals'),
     path('api/proposals/<int:pk>/vote/', ProposalVoteAPIView.as_view(), name='proposal-vote'),
     path('api/notifications/', NotificationListAPIView.as_view(), name='notification-list'),

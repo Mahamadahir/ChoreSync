@@ -1,68 +1,169 @@
-"""Group insights and fairness analytics services."""
+"""Group insights and user stats analytics service."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from django.db.models import Count
+from django.utils import timezone
+
+from chore_sync.models import (
+    GroupMembership, TaskOccurrence, UserBadge, UserStats,
+)
+
 
 @dataclass
 class InsightsService:
-    """Generates fairness, workload, and health dashboards for moderators."""
+    """Generates stats, badge, and fairness dashboards."""
 
-    def refresh_group_insights(self, *, group_id: str) -> None:
-        """Recompute workload, completion, and fairness KPIs for a group.
+    # ------------------------------------------------------------------ #
+    #  User stats
+    # ------------------------------------------------------------------ #
+
+    def get_user_stats(self, *, user_id: str) -> list[dict]:
+        """Return UserStats for the requesting user across all households.
+
+        Output:
+            List of per-household stat dicts ordered by total_points desc.
+        """
+        stats_qs = (
+            UserStats.objects.filter(user_id=user_id)
+            .select_related('household')
+            .order_by('-total_points')
+        )
+        return [_serialize_stats(s) for s in stats_qs]
+
+    # ------------------------------------------------------------------ #
+    #  User badges
+    # ------------------------------------------------------------------ #
+
+    def get_user_badges(self, *, user_id: str) -> list[dict]:
+        """Return all badges earned by the user across all households.
+
+        Output:
+            List of badge dicts ordered by most recently awarded.
+        """
+        badges_qs = (
+            UserBadge.objects.filter(user_id=user_id)
+            .select_related('badge', 'household')
+            .order_by('-awarded_at')
+        )
+        return [_serialize_badge(ub) for ub in badges_qs]
+
+    # ------------------------------------------------------------------ #
+    #  Group / household stats
+    # ------------------------------------------------------------------ #
+
+    def get_group_stats(self, *, group_id: str, actor_id: str) -> dict:
+        """Return household-level aggregates for a group.
 
         Inputs:
             group_id: Target group.
+            actor_id: Must be a member.
         Output:
-            Insight snapshot DTO persisted for dashboards.
-        TODO: Aggregate task history, normalize metrics (workload, completion time, fairness), persist snapshot rows,
-        TODO: and publish to dashboards.
+            Dict with total_tasks, completion_rate, most_completed_task,
+            and fairness_distribution.
         """
-        raise NotImplementedError("TODO: implement group insight refresh")
+        if not GroupMembership.objects.filter(
+            user_id=actor_id, group_id=group_id
+        ).exists():
+            raise PermissionError('You are not a member of this group.')
 
-    def fetch_member_metrics(self, *, group_id: str, member_id: str) -> None:
-        """Return per-member stats for UI dashboards.
+        # Only count occurrences that have reached their deadline — future
+        # pending tasks haven't been attempted yet and would skew the rate.
+        now = timezone.now()
+        resolved = TaskOccurrence.objects.filter(
+            template__group_id=group_id,
+            deadline__lte=now,
+        ).count()
 
-        Inputs:
-            group_id: Group context.
-            member_id: Member whose metrics are required.
-        Output:
-            DTO containing workload share, completion streaks, fairness indicators.
-        TODO: Query analytics store, compute rolling averages/trends, and format payloads for UI consumption.
-        """
-        raise NotImplementedError("TODO: implement member metric retrieval")
+        completed = TaskOccurrence.objects.filter(
+            template__group_id=group_id,
+            status='completed',
+        ).count()
 
-    def export_fairness_report(self, *, group_id: str, format: str = "pdf") -> None:
-        """Export fairness and load balance reports for stakeholders.
+        completion_rate = round(completed / resolved, 4) if resolved > 0 else 0.0
 
-        Inputs:
-            group_id: Target group.
-            format: Desired export format (pdf,csv, etc.).
-        Output:
-            Downloadable artifact reference.
-        TODO: Render report templates, generate charts/tables, store artifact, and notify stakeholders via NotificationService.
-        """
-        raise NotImplementedError("TODO: implement fairness report export")
+        # Most-completed task template
+        most_completed = (
+            TaskOccurrence.objects.filter(
+                template__group_id=group_id,
+                status='completed',
+            )
+            .values('template__id', 'template__name')
+            .annotate(count=Count('id'))
+            .order_by('-count')
+            .first()
+        )
 
-    def evaluate_alerts(self, *, group_id: str) -> None:
-        """Evaluate thresholds to raise nudges when fairness drifts.
+        # Fairness distribution — all members, zero-filling those without stats
+        memberships = (
+            GroupMembership.objects.filter(group_id=group_id)
+            .select_related('user')
+        )
+        stats_by_user = {
+            s.user_id: s
+            for s in UserStats.objects.filter(household_id=group_id)
+        }
+        fairness_distribution = sorted(
+            [
+                {
+                    'user_id': str(m.user_id),
+                    'username': m.user.username,
+                    'total_tasks_completed': stats_by_user[m.user_id].total_tasks_completed
+                        if m.user_id in stats_by_user else 0,
+                    'total_points': stats_by_user[m.user_id].total_points
+                        if m.user_id in stats_by_user else 0,
+                    'on_time_completion_rate': stats_by_user[m.user_id].on_time_completion_rate
+                        if m.user_id in stats_by_user else 0.0,
+                    'current_streak_days': stats_by_user[m.user_id].current_streak_days
+                        if m.user_id in stats_by_user else 0,
+                }
+                for m in memberships
+            ],
+            key=lambda x: x['total_tasks_completed'],
+            reverse=True,
+        )
 
-        Inputs:
-            group_id: Group under evaluation.
-        Output:
-            List of alerts/nudges queued.
-        TODO: Compare current metrics to policy thresholds, queue SmartNudgeService jobs for breaches, and log decisions.
-        """
-        raise NotImplementedError("TODO: implement insight alert evaluation")
+        return {
+            'resolved_tasks': resolved,
+            'completed_tasks': completed,
+            'completion_rate': completion_rate,
+            'most_completed_task': {
+                'template_id': most_completed['template__id'],
+                'name': most_completed['template__name'],
+                'count': most_completed['count'],
+            } if most_completed else None,
+            'fairness_distribution': fairness_distribution,
+        }
 
-    def track_insight_feedback(self, *, group_id: str, feedback_payload: dict) -> None:
-        """Capture moderator feedback to improve scoring models.
 
-        Inputs:
-            group_id: Group whose metrics are being discussed.
-            feedback_payload: Dict containing qualitative notes, severity, tags.
-        Output:
-            Feedback record id/DTO.
-        TODO: Persist qualitative feedback, associate with metrics, feed ML/tuning pipelines, and surface acknowledgements.
-        """
-        raise NotImplementedError("TODO: implement insight feedback tracking")
+# ------------------------------------------------------------------ #
+#  Serialiser helpers
+# ------------------------------------------------------------------ #
+
+def _serialize_stats(s: UserStats) -> dict:
+    return {
+        'household_id': str(s.household_id),
+        'household_name': s.household.name,
+        'total_tasks_completed': s.total_tasks_completed,
+        'total_points': s.total_points,
+        'tasks_completed_this_week': s.tasks_completed_this_week,
+        'tasks_completed_this_month': s.tasks_completed_this_month,
+        'on_time_completion_rate': s.on_time_completion_rate,
+        'current_streak_days': s.current_streak_days,
+        'longest_streak_days': s.longest_streak_days,
+        'last_updated': s.last_updated.isoformat(),
+    }
+
+
+def _serialize_badge(ub: UserBadge) -> dict:
+    return {
+        'badge_id': ub.badge_id,
+        'name': ub.badge.name,
+        'description': ub.badge.description,
+        'icon_url': ub.badge.icon_url,
+        'points_value': ub.badge.points_value,
+        'household_id': str(ub.household_id),
+        'household_name': ub.household.name,
+        'awarded_at': ub.awarded_at.isoformat(),
+    }
