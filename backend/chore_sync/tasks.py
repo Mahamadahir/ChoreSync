@@ -50,7 +50,7 @@ def dispatch_deadline_reminders() -> dict:
     """Send a reminder notification for tasks due within the next 24 hours (once per occurrence)."""
     from django.utils import timezone
     from datetime import timedelta
-    from chore_sync.models import Notification, TaskOccurrence
+    from chore_sync.models import TaskOccurrence
 
     now = timezone.now()
     window_end = now + timedelta(hours=24)
@@ -63,17 +63,20 @@ def dispatch_deadline_reminders() -> dict:
         assigned_to__isnull=False,
     )
 
+    from chore_sync.services.notification_service import NotificationService
+    nsvc = NotificationService()
+
     sent = 0
     for occurrence in pending:
-        Notification.objects.create(
+        nsvc.emit_notification(
+            recipient_id=str(occurrence.assigned_to_id),
+            notification_type='deadline_reminder',
             title=f"Reminder: {occurrence.template.name} due soon",
-            type='deadline_reminder',
-            recipient=occurrence.assigned_to,
-            task_occurrence=occurrence,
             content=(
                 f"'{occurrence.template.name}' is due "
                 f"{occurrence.deadline.strftime('%d %b %Y %H:%M')}."
             ),
+            task_occurrence_id=occurrence.id,
         )
         occurrence.reminder_sent_at = now
         occurrence.save(update_fields=['reminder_sent_at'])
@@ -86,7 +89,7 @@ def dispatch_deadline_reminders() -> dict:
 def mark_overdue_tasks() -> dict:
     """Mark pending tasks past their deadline as overdue and notify assignees."""
     from django.utils import timezone
-    from chore_sync.models import Notification, TaskOccurrence
+    from chore_sync.models import TaskOccurrence
 
     now = timezone.now()
     overdue = TaskOccurrence.objects.select_related('template', 'assigned_to').filter(
@@ -95,19 +98,22 @@ def mark_overdue_tasks() -> dict:
         assigned_to__isnull=False,
     )
 
+    from chore_sync.services.notification_service import NotificationService
+    nsvc = NotificationService()
+
     count = 0
     ids_to_update = []
     for occurrence in overdue:
         ids_to_update.append(occurrence.id)
-        Notification.objects.create(
+        nsvc.emit_notification(
+            recipient_id=str(occurrence.assigned_to_id),
+            notification_type='deadline_reminder',
             title=f"Overdue: {occurrence.template.name}",
-            type='deadline_reminder',
-            recipient=occurrence.assigned_to,
-            task_occurrence=occurrence,
             content=(
                 f"'{occurrence.template.name}' was due "
                 f"{occurrence.deadline.strftime('%d %b %Y %H:%M')} and is now overdue."
             ),
+            task_occurrence_id=occurrence.id,
         )
         count += 1
 

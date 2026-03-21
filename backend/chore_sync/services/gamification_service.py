@@ -8,7 +8,7 @@ from django.db.models import F
 from django.utils import timezone
 
 from chore_sync.models import (
-    Badge, GroupMembership, Notification, TaskOccurrence,
+    Badge, GroupMembership, TaskOccurrence,
     User, UserBadge, UserStats,
 )
 
@@ -171,14 +171,18 @@ class GamificationService:
                         break
 
             if earned:
-                UserBadge.objects.create(user_id=user_id, badge=badge, household=group)
-                Notification.objects.create(
-                    title=f"Badge earned: {badge.name}",
-                    type='badge_earned',
-                    recipient_id=user_id,
-                    content=f"You earned the '{badge.name}' badge! {badge.description}",
+                _, created = UserBadge.objects.get_or_create(
+                    user_id=user_id, badge=badge, household=group
                 )
-                awarded.append(badge.name)
+                if created:
+                    from chore_sync.services.notification_service import NotificationService
+                    NotificationService().emit_notification(
+                        recipient_id=user_id,
+                        notification_type='badge_earned',
+                        title=f"Badge earned: {badge.name}",
+                        content=f"You earned the '{badge.name}' badge! {badge.description}",
+                    )
+                    awarded.append(badge.name)
 
         return awarded
 

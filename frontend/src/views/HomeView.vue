@@ -55,6 +55,7 @@
 import { calendarService } from '../services/calendarService';
 import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useAuthStore } from '../stores/auth';
 
 const authStore = useAuthStore();
 const connectingGoogle = ref(false);

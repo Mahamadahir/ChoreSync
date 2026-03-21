@@ -22,6 +22,7 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { authService } from '../services/authService';
+import { useAuthStore } from '../stores/auth';
 
 const router = useRouter();
 const authStore = useAuthStore();

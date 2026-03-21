@@ -2,134 +2,139 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
+from django.utils import timezone
+
+from chore_sync.models import Notification
 
 
 @dataclass
 class NotificationService:
-    """Drives in-app, push, and email notification flows."""
+    """Drives in-app and real-time notification flows."""
 
-    def emit_notification(self, *, recipient_id: str, notification_type: str, payload: dict) -> None:
-        """Create an in-app notification entry and start delivery.
+    # ------------------------------------------------------------------ #
+    #  Emit + fan-out
+    # ------------------------------------------------------------------ #
+
+    def emit_notification(
+        self,
+        *,
+        recipient_id: str,
+        notification_type: str,
+        title: str,
+        content: str,
+        group_id: str | None = None,
+        task_occurrence_id: int | None = None,
+        task_proposal_id: int | None = None,
+        message_id: int | None = None,
+    ) -> Notification:
+        """Create an in-app Notification record and push it over WebSocket.
 
         Inputs:
             recipient_id: Target user.
-            notification_type: Type key (e.g., task_assigned, digest_ready).
-            payload: Structured details for rendering.
+            notification_type: One of Notification.TYPE_CHOICES keys.
+            title: Short display title.
+            content: Full notification body.
+            group_id / task_occurrence_id / ...: Optional FK references for deep-linking.
         Output:
-            Notification DTO/identifier; raises if inputs invalid.
-        TODO: Persist notification record, enrich payload (deep links, context), enqueue delivery to
-        TODO: websockets/push/email, and log telemetry.
+            Created Notification instance.
         """
-        raise NotImplementedError("TODO: implement notification emission")
-
-    def mark_notification_read(self, *, notification_id: str, read_at: datetime) -> None:
-        """Mark a notification as read for auditing and UX.
-
-        Inputs:
-            notification_id: Target notification.
-            read_at: Timestamp from client or server.
-        Output:
-            None. Should update unread counts and analytics.
-        TODO: Update read timestamps, adjust counters/badges, trigger automation (e.g., stop reminders),
-        TODO: and emit engagement analytics.
-        """
-        raise NotImplementedError("TODO: implement notification read tracking")
+        notification = Notification.objects.create(
+            recipient_id=recipient_id,
+            type=notification_type,
+            title=title,
+            content=content,
+            group_id=group_id,
+            task_occurrence_id=task_occurrence_id,
+            task_proposal_id=task_proposal_id,
+            message_id=message_id,
+        )
+        self.fan_out_realtime(
+            recipient_id=recipient_id,
+            notification_id=str(notification.id),
+        )
+        return notification
 
     def fan_out_realtime(self, *, recipient_id: str, notification_id: str) -> None:
-        """Publish notifications over websockets and other live channels.
+        """Push a notification to the user's WebSocket channel group.
 
-        Inputs:
-            recipient_id: Target user session set.
-            notification_id: Stored notification to distribute.
-        Output:
-            None. Should log channel-level delivery results.
-        TODO: Resolve active channels (websocket sessions/devices), serialize payload, send via pub/sub,
-        TODO: and handle retries/backoff on transient failures.
+        Uses Django Channels layer — works with InMemoryChannelLayer (dev)
+        or RedisChannelLayer (production).
         """
-        raise NotImplementedError("TODO: implement realtime notification fan-out")
+        layer = get_channel_layer()
+        if layer is None:
+            return  # no channel layer configured — skip silently
 
-    def schedule_digest(self, *, recipient_id: str) -> None:
-        """Queue a digest notification summarizing activity for a user.
+        async_to_sync(layer.group_send)(
+            f'user_{recipient_id}',
+            {
+                'type': 'notification_message',
+                'notification_id': notification_id,
+            },
+        )
 
-        Inputs:
-            recipient_id: Target user for digest.
-        Output:
-            None. Should enqueue background job(s) to compile and deliver digest content.
-        TODO: Aggregate unread/pending notifications, format digest sections, respect frequency prefs,
-        TODO: and hand off to messaging infrastructure (email/push).
-        """
-        raise NotImplementedError("TODO: implement digest scheduling")
+    # ------------------------------------------------------------------ #
+    #  Read / dismiss
+    # ------------------------------------------------------------------ #
 
-    def sync_notification_preferences(self, *, recipient_id: str, preferences: dict) -> None:
-        """Update a user's notification channel preferences.
-
-        Inputs:
-            recipient_id: User owning the preferences.
-            preferences: Dict describing channel opt-ins, quiet hours, digest cadence, etc.
-        Output:
-            Updated preference DTO.
-        TODO: Validate schema, persist transactional changes, propagate to delivery workers/caches,
-        TODO: and append compliance audit logs.
-        """
-        raise NotImplementedError("TODO: implement preference synchronization")
-
-    def list_active_notifications(self, *, recipient_id: str) -> None:
-        """Return non-dismissed notifications for the recipient.
-
-        Inputs:
-            recipient_id: User requesting notifications.
-        Output:
-            List of active notification DTOs sorted by recency.
-        TODO: Query unread/undismissed items, hydrate payloads/deeplinks, enforce privacy filters, and
-        TODO: return a structure optimized for UI rendering.
-        """
-        raise NotImplementedError("TODO: implement active notification listing")
-
-    def list_all_notifications(self, *, recipient_id: str) -> None:
-        """Return the full notification history for the recipient.
-
-        Inputs:
-            recipient_id: User requesting history.
-        Output:
-            Paginated list of notifications with read/dismissed metadata.
-        TODO: Provide pagination, include channel delivery metadata, support filtering (type/date),
-        TODO: and expose data suitable for audits/export.
-        """
-        raise NotImplementedError("TODO: implement notification history listing")
-
-    def dismiss_notification(self, *, notification_id: str) -> None:
-        """Mark a notification as dismissed without deleting it.
+    def mark_notification_read(self, *, notification_id: str, actor_id: str) -> Notification:
+        """Mark a notification as read.
 
         Inputs:
             notification_id: Target notification.
+            actor_id: Must be the recipient.
         Output:
-            None. Should be idempotent and update derived counters.
-        TODO: Set dismissed flag/timestamp, ensure multiple calls are safe, update aggregates/badges,
-        TODO: and log the action.
+            Updated Notification.
         """
-        raise NotImplementedError("TODO: implement notification dismissal")
+        notification = Notification.objects.filter(
+            id=notification_id, recipient_id=actor_id
+        ).first()
+        if notification is None:
+            raise ValueError("Notification not found.")
+        if not notification.read:
+            notification.read = True
+            notification.save(update_fields=['read'])
+        return notification
 
-    def delete_notification(self, *, notification_id: str) -> None:
-        """Permanently remove a notification.
+    def dismiss_notification(self, *, notification_id: str, actor_id: str) -> Notification:
+        """Mark a notification as dismissed (hidden from inbox, kept for history).
 
         Inputs:
-            notification_id: Notification to purge (likely admin-only).
+            notification_id: Target notification.
+            actor_id: Must be the recipient.
         Output:
-            None. Should confirm deletion and log for auditing.
-        TODO: Remove the record + associated receipts, update caches/search indexes, and emit audit logs.
+            Updated Notification.
         """
-        raise NotImplementedError("TODO: implement notification deletion")
+        notification = Notification.objects.filter(
+            id=notification_id, recipient_id=actor_id
+        ).first()
+        if notification is None:
+            raise ValueError("Notification not found.")
+        if not notification.dismissed:
+            notification.dismissed = True
+            notification.save(update_fields=['dismissed'])
+        return notification
 
-    def build_notification_url(self, *, notification_id: str, default_path: str = "/") -> None:
-        """Construct a client-facing URL for the notification.
+    # ------------------------------------------------------------------ #
+    #  Listing
+    # ------------------------------------------------------------------ #
 
-        Inputs:
-            notification_id: Notification to resolve.
-            default_path: Default route if no deep link available.
-        Output:
-            URL string for clients to open.
-        TODO: Inspect notification payload, map type to deep-link route + parameters, ensure the URL is
-        TODO: safe/relative, and fall back to default when unsupported.
-        """
-        raise NotImplementedError("TODO: implement notification URL builder")
+    def list_active_notifications(self, *, recipient_id: str) -> list[Notification]:
+        """Return unread, non-dismissed notifications ordered by most recent."""
+        return list(
+            Notification.objects.filter(
+                recipient_id=recipient_id,
+                dismissed=False,
+            ).order_by('-created_at')
+        )
+
+    def list_all_notifications(
+        self, *, recipient_id: str, limit: int = 50, offset: int = 0
+    ) -> list[Notification]:
+        """Return paginated full notification history for a user."""
+        return list(
+            Notification.objects.filter(recipient_id=recipient_id)
+            .order_by('-created_at')[offset: offset + limit]
+        )
