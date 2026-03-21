@@ -561,7 +561,71 @@ Endpoints:
 
 ---
 
-### Step 14: Dark Mode
+### Step 14: Outlook Calendar Sync
+
+**Files:** `backend/chore_sync/sync_providers/outlook_provider.py`, new `backend/chore_sync/api/outlook_calendar_router.py`, `backend/chore_sync/urls.py`, `frontend/src/services/calendarService.ts`, new `frontend/src/views/OutlookCalendarSelectView.vue`
+
+**Context:** Microsoft *login* is fully implemented (MSAL on frontend, JWT validation against Azure AD JWKS on backend, credentials stored encrypted in `ExternalCredential`). What's missing is the calendar sync itself — reading and writing events from Outlook/Microsoft Graph.
+
+**Backend — implement `OutlookCalendarProvider` (`sync_providers/outlook_provider.py`):**
+
+All 4 methods currently raise `NotImplementedError`. Implement using Microsoft Graph API (`https://graph.microsoft.com/v1.0`) with a bearer token retrieved from `ExternalCredential.secret` for the user:
+
+`list_calendars(user_id)`:
+- Load `ExternalCredential(user_id=user_id, provider='microsoft')` and decrypt `secret` to get access token
+- `GET https://graph.microsoft.com/v1.0/me/calendars` with `Authorization: Bearer <token>`
+- Handle pagination via `@odata.nextLink`
+- Return normalised list: `[{'id': ..., 'name': ..., 'is_primary': ...}]`
+
+`pull_events(user_id, delta_link=None)`:
+- If `delta_link` provided: `GET <delta_link>` (incremental sync)
+- Else: `GET /me/events/delta?$select=subject,start,end,isCancelled` (full sync)
+- Follow `@odata.nextLink` until exhausted; capture final `@odata.deltaLink` and persist on `ExternalCredential` or a separate `SyncState` record
+- Normalise events to match internal `Event` schema; detect deletions via `@removed` annotation
+- Return `{'events': [...], 'delta_link': '...'}`
+
+`push_events(user_id, event_payloads)`:
+- For each payload: `POST /me/events` (create) or `PATCH /me/events/{id}` (update) or `DELETE /me/events/{id}`
+- Handle Graph throttling: respect `Retry-After` header on 429 responses
+- Map response `id` back to local event and persist as `external_id` on the `Event` model
+
+`renew_subscription(user_id)`:
+- `POST /subscriptions` to create a Graph webhook if none exists, or `PATCH /subscriptions/{id}` to extend expiry (max 3 days for calendar subscriptions)
+- Persist subscription ID and expiry on `ExternalCredential.secret` or a `SyncState` record
+- Called by a Celery periodic task (add to Step 7's `CELERY_BEAT_SCHEDULE`)
+
+**Backend — API endpoints (new `outlook_calendar_router.py`):**
+- `GET /api/calendar/outlook/auth-url/` → return Microsoft OAuth URL (use MSAL config from settings)
+- `GET /api/calendar/outlook/calendars/` → call `list_calendars(request.user.id)`
+- `POST /api/calendar/outlook/select/` → persist selected calendar IDs on `ExternalCredential.secret`
+- `POST /api/calendar/outlook/sync/` → call `pull_events` + `push_events`; return summary
+
+Register all in `urls.py`.
+
+**Required settings** (`secrets.env` + `settings.py`):
+```
+MSAL_CLIENT_ID=<same as VITE_MSAL_CLIENT_ID>
+MSAL_CLIENT_SECRET=<Azure AD client secret>
+MSAL_AUTHORITY=https://login.microsoftonline.com/common
+```
+
+**Frontend — `calendarService.ts`:** add:
+```ts
+getOutlookAuthUrl()    → GET /api/calendar/outlook/auth-url/
+listOutlookCalendars() → GET /api/calendar/outlook/calendars/
+selectOutlookCalendars(ids: string[]) → POST /api/calendar/outlook/select/
+syncOutlook()          → POST /api/calendar/outlook/sync/
+```
+
+**Frontend — new `OutlookCalendarSelectView.vue`:**
+- Mirror `GoogleCalendarSelectView.vue` but call `calendarService.listOutlookCalendars()` / `calendarService.selectOutlookCalendars()`
+- Add route: `{ path: '/calendar/outlook/select', name: 'outlook-calendar-select', component: OutlookCalendarSelectView }`
+
+**Token refresh:** Microsoft access tokens expire in 1 hour. Before any Graph call, check expiry on the stored credential and call `POST /oauth2/v2.0/token` with the refresh token if needed. Update `ExternalCredential.secret` with the new token pair.
+
+---
+
+### Step 15: Dark Mode
 
 **Files:** `frontend/src/main.ts`, `frontend/src/App.vue`, `frontend/src/quasar-variables.sass`
 
@@ -574,7 +638,7 @@ Endpoints:
 
 ---
 
-### Step 15: Security Hardening
+### Step 16: Security Hardening
 
 **Files:** `backend/chore_sync/settings.py`, `backend/chore_sync/models.py`
 
@@ -606,5 +670,6 @@ Endpoints:
 | P3 | Step 11 (Proposals/Voting) | Phase 3–4 |
 | P3 | Step 12 (Stats Dashboard) | Phase 4 |
 | P4 | Step 13 (Frontend Wiring) | Follows backend completion |
-| P4 | Step 14 (Dark Mode) | Polish — Quasar Dark plugin + localStorage persistence |
-| P4 | Step 15 (Security Hardening) | Pre-production |
+| P4 | Step 14 (Outlook Calendar Sync) | Microsoft login done; Graph API calendar sync remaining |
+| P4 | Step 15 (Dark Mode) | Polish — Quasar Dark plugin + localStorage persistence |
+| P4 | Step 16 (Security Hardening) | Pre-production |
