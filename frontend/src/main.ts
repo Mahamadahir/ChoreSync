@@ -20,9 +20,10 @@ import GoogleCalendarSelectView from './views/GoogleCalendarSelectView.vue';
 import GroupsView from './views/GroupsView.vue';
 import GroupDetailView from './views/GroupDetailView.vue';
 import MyTasksView from './views/MyTasksView.vue';
-import { Quasar } from 'quasar';
+import { Quasar, Dark } from 'quasar';
 import '@quasar/extras/material-icons/material-icons.css';
 import 'quasar/src/css/index.sass';
+import './dark-overrides.css';
 
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/groups' },
@@ -86,8 +87,24 @@ router.beforeEach(async (to) => {
   return true;
 });
 
+/** Exported for test imports — mounts the application. */
+export function bootstrapApplication() {
+  return createApp(App)
+    .use(Quasar, { plugins: { Dark }, config: { dark: (localStorage.getItem('choresync-dark') ?? 'auto') as boolean | 'auto' } })
+    .use(createPinia())
+    .use(router)
+    .mount('#app');
+}
+
+const savedDark = localStorage.getItem('choresync-dark');
+
 createApp(App)
-  .use(Quasar, { plugins: {} })
+  .use(Quasar, {
+    plugins: { Dark },
+    config: {
+      dark: savedDark !== null ? savedDark === 'true' : 'auto',
+    },
+  })
   .use(pinia)
   .use(router)
   .mount('#app');

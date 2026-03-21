@@ -207,11 +207,24 @@
               <q-card-section><div class="text-h6">New task template</div></q-card-section>
               <q-card-section class="q-gutter-sm">
                 <q-input v-model="templateForm.name" label="Name" outlined />
-                <q-input v-model="templateForm.category" label="Category" outlined />
                 <q-select
-                  v-model="templateForm.recurrence_rule"
+                  v-model="templateForm.category"
+                  :options="categoryOptions"
+                  label="Category"
+                  outlined
+                  emit-value map-options
+                />
+                <q-select
+                  v-model="templateForm.recurring_choice"
                   :options="recurrenceOptions"
                   label="Recurrence"
+                  outlined
+                  emit-value map-options
+                />
+                <q-select
+                  v-model="templateForm.importance"
+                  :options="importanceOptions"
+                  label="Importance"
                   outlined
                   emit-value map-options
                 />
@@ -290,7 +303,7 @@ const proposalForm = ref({ task_template_id: null as number | null, reason: '', 
 // Template form
 const showTemplateForm = ref(false);
 const templateForm = ref({
-  name: '', category: '', recurrence_rule: 'weekly',
+  name: '', category: 'cleaning', recurring_choice: 'none', importance: 'core',
   difficulty: 3, base_deadline_time: '20:00', photo_proof_required: false, loading: false,
 });
 
@@ -310,18 +323,30 @@ const leaderboardColumns = [
 ];
 
 const fairnessOptions = [
-  { label: 'Round Robin', value: 'round_robin' },
-  { label: 'Least Recently Done', value: 'least_recently_done' },
-  { label: 'Weighted', value: 'weighted' },
-  { label: 'Time Based', value: 'time_based' },
+  { label: 'Count-based (least tasks done)', value: 'count_based' },
+  { label: 'Time-based (longest waiting)', value: 'time_based' },
+  { label: 'Difficulty-based (preferences & difficulty)', value: 'difficulty_based' },
 ];
 
 const recurrenceOptions = [
-  { label: 'Daily', value: 'daily' },
+  { label: 'No repeat', value: 'none' },
   { label: 'Weekly', value: 'weekly' },
-  { label: 'Bi-weekly', value: 'biweekly' },
   { label: 'Monthly', value: 'monthly' },
-  { label: 'One-off', value: 'one_off' },
+  { label: 'Every N days', value: 'every_n_days' },
+  { label: 'Custom (days of week)', value: 'custom' },
+];
+
+const categoryOptions = [
+  { label: 'Cleaning', value: 'cleaning' },
+  { label: 'Cooking', value: 'cooking' },
+  { label: 'Laundry', value: 'laundry' },
+  { label: 'Maintenance', value: 'maintenance' },
+  { label: 'Other', value: 'other' },
+];
+
+const importanceOptions = [
+  { label: 'Core', value: 'core' },
+  { label: 'Additional', value: 'additional' },
 ];
 
 const templateOptions = computed(() =>
@@ -427,7 +452,7 @@ async function submitTemplate() {
     const { api } = await import('../services/api');
     await api.post(`/api/groups/${groupId}/task-templates/`, templateForm.value);
     showTemplateForm.value = false;
-    templateForm.value = { name: '', category: '', recurrence_rule: 'weekly', difficulty: 3, base_deadline_time: '20:00', photo_proof_required: false, loading: false };
+    templateForm.value = { name: '', category: 'cleaning', recurring_choice: 'none', importance: 'core', difficulty: 3, base_deadline_time: '20:00', photo_proof_required: false, loading: false };
     await loadTemplates();
   } catch (e: any) {
     error.value = e?.response?.data?.detail ?? 'Failed to create template.';

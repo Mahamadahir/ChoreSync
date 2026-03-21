@@ -169,8 +169,10 @@ const statusFilter = ref('');
 const filterOptions = [
   { label: 'All', value: '' },
   { label: 'Pending', value: 'pending' },
+  { label: 'In Progress', value: 'in_progress' },
   { label: 'Snoozed', value: 'snoozed' },
   { label: 'Overdue', value: 'overdue' },
+  { label: 'Reassigned', value: 'reassigned' },
   { label: 'Completed', value: 'completed' },
 ];
 
@@ -233,7 +235,7 @@ async function submitSwap() {
   swapDialog.value.loading = true;
   try {
     await taskApi.createSwap(swapDialog.value.task.id, {
-      target_user_id: swapDialog.value.targetUserId,
+      to_user_id: swapDialog.value.targetUserId || undefined,
       reason: swapDialog.value.reason,
     });
     swapDialog.value.show = false;
@@ -261,7 +263,8 @@ function formatDeadline(iso: string) {
 
 function statusColor(status: string) {
   const map: Record<string, string> = {
-    pending: 'blue-6', snoozed: 'orange', overdue: 'negative', completed: 'positive',
+    pending: 'blue-6', in_progress: 'blue-8', snoozed: 'orange',
+    overdue: 'negative', reassigned: 'purple', completed: 'positive',
   };
   return map[status] ?? 'grey';
 }

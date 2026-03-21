@@ -9,10 +9,13 @@ from django.db import transaction
 from django.utils import timezone
 
 from chore_sync.models import (
-    Event, GroupMembership, Notification, TaskOccurrence,
+    Event, GroupMembership, TaskOccurrence,
     TaskPreference, TaskSwap, TaskTemplate, User, UserStats,
 )
 from chore_sync.services.group_service import GroupOrchestrator
+from chore_sync.services.notification_service import NotificationService
+
+_notif_svc = NotificationService()
 
 
 @dataclass
@@ -162,16 +165,16 @@ class TaskLifecycleService:
             occurrence.status = 'pending'
             occurrence.save(update_fields=['assigned_to', 'status'])
 
-            Notification.objects.create(
-                title=f"New task assigned: {template.name}",
-                type='task_assigned',
-                recipient=winner,
-                task_occurrence=occurrence,
-                content=(
-                    f"You have been assigned '{template.name}' "
-                    f"due {deadline.strftime('%d %b %Y')}."
-                ),
-            )
+        _notif_svc.emit_notification(
+            recipient_id=str(winner.id),
+            title=f"New task assigned: {template.name}",
+            notification_type='task_assigned',
+            content=(
+                f"You have been assigned '{template.name}' "
+                f"due {deadline.strftime('%d %b %Y')}."
+            ),
+            task_occurrence_id=occurrence.id,
+        )
 
     # ------------------------------------------------------------------ #
     #  Completion toggle
@@ -356,35 +359,33 @@ class TaskLifecycleService:
                 swap_type=swap_type,
             )
 
-            if to_user_id:
-                Notification.objects.create(
-                    title=f"Swap request: {occurrence.template.name}",
-                    type='task_swap',
-                    recipient_id=to_user_id,
-                    task_occurrence=occurrence,
+        if to_user_id:
+            _notif_svc.emit_notification(
+                recipient_id=to_user_id,
+                title=f"Swap request: {occurrence.template.name}",
+                notification_type='task_swap',
+                content=(
+                    f"You have been asked to swap '{occurrence.template.name}' "
+                    f"due {occurrence.deadline.strftime('%d %b %Y')}."
+                ),
+                task_occurrence_id=occurrence.id,
+            )
+        else:
+            # Notify all group members except the requester
+            members = GroupMembership.objects.filter(
+                group=occurrence.template.group
+            ).exclude(user_id=from_user_id)
+            for m in members:
+                _notif_svc.emit_notification(
+                    recipient_id=str(m.user_id),
+                    title=f"Open swap: {occurrence.template.name}",
+                    notification_type='task_swap',
                     content=(
-                        f"You have been asked to swap '{occurrence.template.name}' "
-                        f"due {occurrence.deadline.strftime('%d %b %Y')}."
+                        f"A swap has been requested for '{occurrence.template.name}' "
+                        f"due {occurrence.deadline.strftime('%d %b %Y')}. Can you take it?"
                     ),
+                    task_occurrence_id=occurrence.id,
                 )
-            else:
-                # Notify all group members except the requester
-                members = GroupMembership.objects.filter(
-                    group=occurrence.template.group
-                ).exclude(user_id=from_user_id)
-                Notification.objects.bulk_create([
-                    Notification(
-                        title=f"Open swap: {occurrence.template.name}",
-                        type='task_swap',
-                        recipient_id=m.user_id,
-                        task_occurrence=occurrence,
-                        content=(
-                            f"A swap has been requested for '{occurrence.template.name}' "
-                            f"due {occurrence.deadline.strftime('%d %b %Y')}. Can you take it?"
-                        ),
-                    )
-                    for m in members
-                ])
 
         return swap
 
@@ -433,25 +434,26 @@ class TaskLifecycleService:
                 occurrence.assigned_to_id = actor_id
                 occurrence.reassignment_reason = 'swap'
                 occurrence.save(update_fields=['assigned_to_id', 'reassignment_reason'])
-
-                Notification.objects.create(
-                    title=f"Swap accepted: {occurrence.template.name}",
-                    type='task_swap',
-                    recipient=swap.from_user,
-                    task_occurrence=occurrence,
-                    content=f"Your swap request for '{occurrence.template.name}' was accepted.",
-                )
             else:
                 swap.status = 'rejected'
                 swap.save(update_fields=['status', 'decided_at'])
 
-                Notification.objects.create(
-                    title=f"Swap declined: {swap.task.template.name}",
-                    type='task_swap',
-                    recipient=swap.from_user,
-                    task_occurrence=swap.task,
-                    content=f"Your swap request for '{swap.task.template.name}' was declined.",
-                )
+        if accept:
+            _notif_svc.emit_notification(
+                recipient_id=str(swap.from_user_id),
+                title=f"Swap accepted: {swap.task.template.name}",
+                notification_type='task_swap',
+                content=f"Your swap request for '{swap.task.template.name}' was accepted.",
+                task_occurrence_id=swap.task_id,
+            )
+        else:
+            _notif_svc.emit_notification(
+                recipient_id=str(swap.from_user_id),
+                title=f"Swap declined: {swap.task.template.name}",
+                notification_type='task_swap',
+                content=f"Your swap request for '{swap.task.template.name}' was declined.",
+                task_occurrence_id=swap.task_id,
+            )
 
         return swap
 
@@ -501,19 +503,17 @@ class TaskLifecycleService:
                 'original_assignee_id', 'reassignment_reason', 'assigned_to', 'status'
             ])
 
-            Notification.objects.bulk_create([
-                Notification(
-                    title=f"Emergency: {occurrence.template.name} needs cover",
-                    type='emergency_reassignment',
-                    recipient_id=m.user_id,
-                    task_occurrence=occurrence,
-                    content=(
-                        f"'{occurrence.template.name}' due {occurrence.deadline.strftime('%d %b %Y')} "
-                        f"needs someone to take over. Reason: {reason or 'Not specified'}."
-                    ),
-                )
-                for m in members
-            ])
+        for m in members:
+            _notif_svc.emit_notification(
+                recipient_id=str(m.user_id),
+                title=f"Emergency: {occurrence.template.name} needs cover",
+                notification_type='emergency_reassignment',
+                content=(
+                    f"'{occurrence.template.name}' due {occurrence.deadline.strftime('%d %b %Y')} "
+                    f"needs someone to take over. Reason: {reason or 'Not specified'}."
+                ),
+                task_occurrence_id=occurrence.id,
+            )
 
         return occurrence
 
@@ -551,14 +551,14 @@ class TaskLifecycleService:
             occurrence.status = 'pending'
             occurrence.save(update_fields=['assigned_to_id', 'status'])
 
-            # Notify original assignee
-            if occurrence.original_assignee_id:
-                Notification.objects.create(
-                    title=f"Emergency covered: {occurrence.template.name}",
-                    type='emergency_reassignment',
-                    recipient_id=occurrence.original_assignee_id,
-                    task_occurrence=occurrence,
-                    content=f"Someone has taken over '{occurrence.template.name}'.",
-                )
+        # Notify original assignee (outside transaction to allow WebSocket push)
+        if occurrence.original_assignee_id:
+            _notif_svc.emit_notification(
+                recipient_id=str(occurrence.original_assignee_id),
+                title=f"Emergency covered: {occurrence.template.name}",
+                notification_type='emergency_reassignment',
+                content=f"Someone has taken over '{occurrence.template.name}'.",
+                task_occurrence_id=occurrence.id,
+            )
 
         return occurrence

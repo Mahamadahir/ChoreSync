@@ -42,10 +42,10 @@ export const taskApi = {
     api.post(`/api/tasks/${id}/complete/`, payload ?? {}),
   snooze: (id: number, payload: { snooze_until: string }) =>
     api.post(`/api/tasks/${id}/snooze/`, payload),
-  createSwap: (id: number, payload: { target_user_id: string; reason?: string }) =>
+  createSwap: (id: number, payload: { to_user_id?: string; reason?: string }) =>
     api.post(`/api/tasks/${id}/swap/`, payload),
-  respondSwap: (swapId: number, payload: { action: 'accept' | 'reject' }) =>
-    api.post(`/api/task-swaps/${swapId}/respond/`, payload),
+  respondSwap: (swapId: number, accept: boolean) =>
+    api.post(`/api/task-swaps/${swapId}/respond/`, { accept }),
   emergencyReassign: (id: number, payload: { reason?: string }) =>
     api.post(`/api/tasks/${id}/emergency-reassign/`, payload),
   acceptEmergency: (id: number) => api.post(`/api/tasks/${id}/accept-emergency/`),

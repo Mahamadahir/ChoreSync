@@ -1,11 +1,11 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import vue from '@vitejs/plugin-vue';
 import { quasar, transformAssetUrls } from '@quasar/vite-plugin';
 import path from 'path';
 
 const allowedHostsEnv = process.env.VITE_ALLOWED_HOSTS || '';
 const allowedHosts = allowedHostsEnv
-  ? allowedHostsEnv.split(',').map((h) => h.trim()).filter(Boolean)
+  ? allowedHostsEnv.split(',').map((h: string) => h.trim()).filter(Boolean)
   : ['localhost', '127.0.0.1'];
 
 export default defineConfig({

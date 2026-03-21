@@ -15,6 +15,11 @@
         </template>
         <q-space />
 
+        <!-- Dark mode toggle -->
+        <q-btn flat dense round :icon="$q.dark.isActive ? 'light_mode' : 'dark_mode'" @click="toggleDark">
+          <q-tooltip>{{ $q.dark.isActive ? 'Light mode' : 'Dark mode' }}</q-tooltip>
+        </q-btn>
+
         <!-- Notification bell -->
         <template v-if="authStore.isAuthenticated">
           <q-btn flat dense round icon="notifications" @click="notifDrawer = true">
@@ -63,13 +68,20 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { useQuasar } from 'quasar';
 import { authService } from './services/authService';
 import { useAuthStore } from './stores/auth';
 import { notificationApi } from './services/api';
 import { NotificationSocketService } from './services/NotificationSocketService';
 
+const $q = useQuasar();
 const authStore = useAuthStore();
 const notifDrawer = ref(false);
+
+function toggleDark() {
+  $q.dark.toggle();
+  localStorage.setItem('choresync-dark', String($q.dark.isActive));
+}
 const notifications = ref<any[]>([]);
 const socketSvc = new NotificationSocketService();
 

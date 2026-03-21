@@ -56,7 +56,7 @@ export function useMyTasksController() {
 
   async function requestSwap(taskId: number, targetUserId: string, reason?: string) {
     try {
-      await taskApi.createSwap(taskId, { target_user_id: targetUserId, reason });
+      await taskApi.createSwap(taskId, { to_user_id: targetUserId || undefined, reason });
       await load();
     } catch (e: any) {
       error.value = e?.response?.data?.detail ?? 'Failed to request swap.';
@@ -66,7 +66,7 @@ export function useMyTasksController() {
 
   async function respondSwap(swapId: number, action: 'accept' | 'reject') {
     try {
-      await taskApi.respondSwap(swapId, { action });
+      await taskApi.respondSwap(swapId, action === 'accept');
       await load();
     } catch (e: any) {
       error.value = e?.response?.data?.detail ?? 'Failed to respond to swap.';

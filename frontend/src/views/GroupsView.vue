@@ -124,20 +124,20 @@ const formError = ref('');
 
 const form = ref({
   name: '',
-  fairness_algorithm: 'round_robin',
-  reassignment_rule: 'auto',
+  fairness_algorithm: 'count_based',
+  reassignment_rule: 'on_create',
 });
 
 const fairnessOptions = [
-  { label: 'Round Robin', value: 'round_robin' },
-  { label: 'Least Recently Done', value: 'least_recently_done' },
-  { label: 'Weighted', value: 'weighted' },
-  { label: 'Time Based', value: 'time_based' },
+  { label: 'Count-based (least tasks done)', value: 'count_based' },
+  { label: 'Time-based (longest waiting)', value: 'time_based' },
+  { label: 'Difficulty-based (preferences & difficulty)', value: 'difficulty_based' },
 ];
 
 const reassignOptions = [
-  { label: 'Auto', value: 'auto' },
-  { label: 'Manual', value: 'manual' },
+  { label: 'On task creation', value: 'on_create' },
+  { label: 'After N tasks created', value: 'after_n_tasks' },
+  { label: 'After N weeks', value: 'after_n_weeks' },
 ];
 
 async function loadGroups() {
@@ -163,7 +163,7 @@ async function createGroup() {
   try {
     await groupApi.create(form.value);
     showCreate.value = false;
-    form.value = { name: '', fairness_algorithm: 'round_robin', reassignment_rule: 'auto' };
+    form.value = { name: '', fairness_algorithm: 'count_based', reassignment_rule: 'on_create' };
     await loadGroups();
   } catch (e: any) {
     formError.value = e?.response?.data?.detail ?? 'Failed to create group.';

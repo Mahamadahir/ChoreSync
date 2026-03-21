@@ -19,11 +19,14 @@ def _serialize_occurrence(o: TaskOccurrence) -> dict:
         "template_id": o.template_id,
         "template_name": o.template.name,
         "group_id": str(o.template.group_id),
+        "group_name": o.template.group.name,
         "assigned_to_id": str(o.assigned_to_id) if o.assigned_to_id else None,
+        "assigned_to_username": o.assigned_to.username if o.assigned_to_id and hasattr(o, 'assigned_to') and o.assigned_to else None,
         "deadline": o.deadline,
         "status": o.status,
         "completed_at": o.completed_at,
         "points_earned": o.points_earned,
+        "snooze_count": o.snooze_count,
         "photo_proof": o.photo_proof.url if o.photo_proof else None,
     }
 
@@ -35,14 +38,17 @@ class UserTaskListAPIView(APIView):
 
     def get(self, request):
         group_id = request.query_params.get('group_id')
+        status_filter = request.query_params.get('status')
         result = _svc.list_user_tasks(
             user_id=str(request.user.id),
             group_id=group_id,
         )
-        return Response({
-            bucket: [_serialize_occurrence(o) for o in occurrences]
-            for bucket, occurrences in result.items()
-        })
+        all_occurrences = []
+        for occurrences in result.values():
+            all_occurrences.extend(occurrences)
+        if status_filter:
+            all_occurrences = [o for o in all_occurrences if o.status == status_filter]
+        return Response([_serialize_occurrence(o) for o in all_occurrences])
 
 
 class GroupTaskListAPIView(APIView):
