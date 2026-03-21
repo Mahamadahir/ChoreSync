@@ -161,41 +161,8 @@ def recalculate_leaderboard() -> dict:
 
 @shared_task
 def evaluate_badges(user_id: str, group_id: str) -> dict:
-    """Evaluate badge criteria for a user after a task completion. Called on-demand.
+    """Evaluate badge criteria for a user after a task completion. Called on-demand."""
+    from chore_sync.services.gamification_service import GamificationService
 
-    Checks all Badge records against current UserStats and awards any not yet earned.
-    Full criteria evaluation is implemented in Step 9.
-    """
-    from chore_sync.models import Badge, Group, Notification, UserBadge, UserStats
-
-    stats = UserStats.objects.filter(user_id=user_id, household_id=group_id).first()
-    if not stats:
-        return {'badges_awarded': 0}
-
-    group = Group.objects.filter(id=group_id).first()
-    awarded = 0
-
-    for badge in Badge.objects.all():
-        if UserBadge.objects.filter(user_id=user_id, badge=badge, household_id=group_id).exists():
-            continue
-
-        # Criteria keys map to UserStats field names, with one alias:
-        # 'streak_days' → 'current_streak_days' (friendlier badge authoring)
-        CRITERIA_ALIASES = {'streak_days': 'current_streak_days'}
-        criteria = badge.criteria
-        earned = all(
-            getattr(stats, CRITERIA_ALIASES.get(key, key), None) >= value
-            for key, value in criteria.items()
-        )
-
-        if earned:
-            UserBadge.objects.create(user_id=user_id, badge=badge, household=group)
-            Notification.objects.create(
-                title=f"Badge earned: {badge.name}",
-                type='badge_earned',
-                recipient_id=user_id,
-                content=f"You earned the '{badge.name}' badge!",
-            )
-            awarded += 1
-
-    return {'badges_awarded': awarded}
+    awarded = GamificationService().evaluate_badges(user_id=user_id, group_id=group_id)
+    return {'badges_awarded': len(awarded), 'badges': awarded}

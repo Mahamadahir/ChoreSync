@@ -208,18 +208,24 @@ class TaskLifecycleService:
             if group.photo_proof_required and not occurrence.photo_proof:
                 raise ValueError("Photo proof is required to complete this task.")
 
-            points = occurrence.template.difficulty * 10
             now = timezone.now()
+            occurrence.status = 'completed'
+            occurrence.completed_at = now
+
+            # Calculate points via GamificationService (includes bonuses/penalties)
+            from chore_sync.services.gamification_service import GamificationService
+            gsvc = GamificationService()
+            points = gsvc.calculate_points(occurrence)
+            occurrence.points_earned = points
 
             with transaction.atomic():
-                occurrence.status = 'completed'
-                occurrence.completed_at = now
-                occurrence.points_earned = points
                 occurrence.save(update_fields=['status', 'completed_at', 'points_earned'])
+                self._update_stats(user_id=actor_id, group=group, points=points)
+                gsvc.update_streak(user_id=actor_id, group_id=str(group.id))
+                gsvc.update_on_time_rate(user_id=actor_id, group_id=str(group.id))
 
-                self._update_stats(user_id=actor_id, group=group, points=points, completed_at=now)
-                from chore_sync.tasks import evaluate_badges
-                evaluate_badges.delay(user_id=actor_id, group_id=str(group.id))
+            from chore_sync.tasks import evaluate_badges
+            evaluate_badges.delay(user_id=actor_id, group_id=str(group.id))
         else:
             with transaction.atomic():
                 occurrence.status = 'pending'
@@ -230,28 +236,12 @@ class TaskLifecycleService:
         return occurrence
 
     @staticmethod
-    def _update_stats(*, user_id: str, group, points: int, completed_at) -> None:
-        """Increment UserStats and update streak on User."""
+    def _update_stats(*, user_id: str, group, points: int) -> None:
+        """Increment UserStats totals. Streak and rate updates handled by GamificationService."""
         stats, _ = UserStats.objects.get_or_create(user_id=user_id, household=group)
         stats.total_tasks_completed += 1
         stats.total_points += points
-
-        # Streak: uses User.last_streak_date (date-level granularity)
-        user = User.objects.get(id=user_id)
-        today = completed_at.date()
-        if user.last_streak_date == today - timedelta(days=1):
-            user.on_time_streak_days += 1
-        elif user.last_streak_date != today:
-            user.on_time_streak_days = 1
-        user.longest_on_time_streak_days = max(
-            user.longest_on_time_streak_days, user.on_time_streak_days
-        )
-        user.last_streak_date = today
-        user.save(update_fields=['on_time_streak_days', 'longest_on_time_streak_days', 'last_streak_date'])
-
-        stats.current_streak_days = user.on_time_streak_days
-        stats.longest_streak_days = user.longest_on_time_streak_days
-        stats.save()
+        stats.save(update_fields=['total_tasks_completed', 'total_points'])
 
     # ------------------------------------------------------------------ #
     #  Listing helpers

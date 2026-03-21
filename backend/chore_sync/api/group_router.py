@@ -15,6 +15,9 @@ from chore_sync.api.serializers import (
 from chore_sync.api.views import CsrfExemptSessionAuthentication
 from chore_sync.models import GroupMembership, UserStats
 from chore_sync.services.group_service import GroupOrchestrator
+from chore_sync.services.gamification_service import GamificationService
+
+_gsvc = GamificationService()
 
 User = get_user_model()
 _svc = GroupOrchestrator()
@@ -183,3 +186,20 @@ class GroupSettingsAPIView(APIView):
             "photo_proof_required": group.photo_proof_required,
             "task_proposal_voting_required": group.task_proposal_voting_required,
         })
+
+
+
+class GroupLeaderboardAPIView(APIView):
+    """GET /api/groups/{pk}/leaderboard/"""
+    authentication_classes = [CsrfExemptSessionAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            leaderboard = _gsvc.get_leaderboard(
+                group_id=str(pk),
+                actor_id=str(request.user.id),
+            )
+        except PermissionError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        return Response(leaderboard)

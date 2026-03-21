@@ -40,6 +40,7 @@ from chore_sync.api.group_router import (
     GroupMembersAPIView,
     GroupAssignmentMatrixAPIView,
     GroupSettingsAPIView,
+    GroupLeaderboardAPIView,
 )
 from chore_sync.api.views import (
     SignupAPIView,
@@ -94,6 +95,7 @@ urlpatterns = [
     path('api/groups/<uuid:pk>/members/', GroupMembersAPIView.as_view(), name='group-members'),
     path('api/groups/<uuid:pk>/assignment-matrix/', GroupAssignmentMatrixAPIView.as_view(), name='group-assignment-matrix'),
     path('api/groups/<uuid:pk>/settings/', GroupSettingsAPIView.as_view(), name='group-settings'),
+    path('api/groups/<uuid:pk>/leaderboard/', GroupLeaderboardAPIView.as_view(), name='group-leaderboard'),
     path('api/groups/<uuid:pk>/task-templates/', GroupTaskTemplateListCreateAPIView.as_view(), name='group-task-templates'),
     path('api/task-templates/<int:pk>/', TaskTemplateDetailAPIView.as_view(), name='task-template-detail'),
     path('api/task-templates/<int:pk>/generate-occurrences/', GenerateOccurrencesAPIView.as_view(), name='task-template-generate-occurrences'),
