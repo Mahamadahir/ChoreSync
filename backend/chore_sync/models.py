@@ -389,6 +389,12 @@ class TaskOccurrence(models.Model):
         blank=True
     )
 
+    reminder_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the 24-hour deadline reminder was last sent for this occurrence.",
+    )
+
     photo_proof = models.ImageField(
         upload_to='task_proofs/',
         null=True,

@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
+    'django_celery_beat',
     'chore_sync.django_app.ChoreSyncConfig',
     'channels',
 ]
@@ -163,9 +164,34 @@ REST_FRAMEWORK = {
     ],
 }
 
-# Celery (placeholder; configure broker/url in environment)
+# Celery
 CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
+
+from celery.schedules import crontab  # noqa: E402
+
+CELERY_BEAT_SCHEDULE = {
+    'generate-daily-occurrences': {
+        'task': 'chore_sync.tasks.generate_daily_occurrences',
+        'schedule': crontab(hour=0, minute=0),
+    },
+    'dispatch-deadline-reminders': {
+        'task': 'chore_sync.tasks.dispatch_deadline_reminders',
+        'schedule': 900,  # every 15 minutes
+    },
+    'mark-overdue-tasks': {
+        'task': 'chore_sync.tasks.mark_overdue_tasks',
+        'schedule': 900,  # every 15 minutes
+    },
+    'cleanup-expired-swaps': {
+        'task': 'chore_sync.tasks.cleanup_expired_swaps',
+        'schedule': crontab(hour=2, minute=0),
+    },
+    'recalculate-leaderboard': {
+        'task': 'chore_sync.tasks.recalculate_leaderboard',
+        'schedule': 3600,  # every hour
+    },
+}
 
 # Google OAuth
 GOOGLE_OAUTH_CLIENT_ID = env('GOOGLE_OAUTH_CLIENT_ID', default='')

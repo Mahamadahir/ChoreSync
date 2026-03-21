@@ -27,6 +27,11 @@ from chore_sync.api.task_router import (
     GenerateOccurrencesAPIView,
     TaskOccurrenceDetailAPIView,
     TaskCompleteAPIView,
+    TaskSnoozeAPIView,
+    TaskSwapCreateAPIView,
+    TaskSwapRespondAPIView,
+    TaskEmergencyReassignAPIView,
+    TaskAcceptEmergencyAPIView,
 )
 from chore_sync.api.group_router import (
     GroupListCreateAPIView,
@@ -96,4 +101,9 @@ urlpatterns = [
     path('api/groups/<uuid:pk>/tasks/', GroupTaskListAPIView.as_view(), name='group-tasks'),
     path('api/tasks/<int:pk>/', TaskOccurrenceDetailAPIView.as_view(), name='task-detail'),
     path('api/tasks/<int:pk>/complete/', TaskCompleteAPIView.as_view(), name='task-complete'),
+    path('api/tasks/<int:pk>/snooze/', TaskSnoozeAPIView.as_view(), name='task-snooze'),
+    path('api/tasks/<int:pk>/swap/', TaskSwapCreateAPIView.as_view(), name='task-swap-create'),
+    path('api/task-swaps/<int:pk>/respond/', TaskSwapRespondAPIView.as_view(), name='task-swap-respond'),
+    path('api/tasks/<int:pk>/emergency-reassign/', TaskEmergencyReassignAPIView.as_view(), name='task-emergency-reassign'),
+    path('api/tasks/<int:pk>/accept-emergency/', TaskAcceptEmergencyAPIView.as_view(), name='task-accept-emergency'),
 ]

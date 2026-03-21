@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from chore_sync.models import (
     Event, GroupMembership, Notification, TaskOccurrence,
-    TaskPreference, TaskTemplate, User, UserStats,
+    TaskPreference, TaskSwap, TaskTemplate, User, UserStats,
 )
 from chore_sync.services.group_service import GroupOrchestrator
 
@@ -218,7 +218,8 @@ class TaskLifecycleService:
                 occurrence.save(update_fields=['status', 'completed_at', 'points_earned'])
 
                 self._update_stats(user_id=actor_id, group=group, points=points, completed_at=now)
-                # TODO Step 9: call evaluate_badges.delay(user_id=actor_id, group_id=str(group.id))
+                from chore_sync.tasks import evaluate_badges
+                evaluate_badges.delay(user_id=actor_id, group_id=str(group.id))
         else:
             with transaction.atomic():
                 occurrence.status = 'pending'
@@ -285,3 +286,289 @@ class TaskLifecycleService:
             .filter(template__group_id=group_id)
             .order_by('deadline')
         )
+
+    # ------------------------------------------------------------------ #
+    #  Step 8: Snooze
+    # ------------------------------------------------------------------ #
+
+    def snooze_task(self, *, occurrence_id: str, snooze_until, actor_id: str) -> TaskOccurrence:
+        """Snooze a task occurrence (max 2 snoozes, snooze_until <= deadline + 24h).
+
+        Inputs:
+            occurrence_id: Target TaskOccurrence.
+            snooze_until: Datetime to snooze until.
+            actor_id: Must be the assigned user.
+        Output:
+            Updated TaskOccurrence.
+        """
+        occurrence = TaskOccurrence.objects.select_related('template__group').filter(
+            id=occurrence_id
+        ).first()
+        if occurrence is None:
+            raise ValueError("Task occurrence not found.")
+
+        if str(occurrence.assigned_to_id) != actor_id:
+            raise PermissionError("Only the assigned user can snooze this task.")
+
+        if occurrence.snooze_count >= 2:
+            raise ValueError("Maximum snooze limit (2) reached for this task.")
+
+        max_snooze = occurrence.deadline + timedelta(hours=24)
+        if snooze_until > max_snooze:
+            raise ValueError("Cannot snooze beyond 24 hours after the deadline.")
+
+        with transaction.atomic():
+            occurrence.status = 'snoozed'
+            occurrence.snoozed_until = snooze_until
+            occurrence.snooze_count += 1
+            occurrence.reminder_sent_at = None  # allow reminder to re-fire
+            occurrence.save(update_fields=['status', 'snoozed_until', 'snooze_count', 'reminder_sent_at'])
+
+        return occurrence
+
+    # ------------------------------------------------------------------ #
+    #  Step 8: Swap
+    # ------------------------------------------------------------------ #
+
+    def create_swap_request(
+        self, *, task_id: str, from_user_id: str, reason: str = '', to_user_id: str | None = None
+    ) -> TaskSwap:
+        """Create a swap request for an assigned task.
+
+        Inputs:
+            task_id: TaskOccurrence to swap.
+            from_user_id: Must be the current assignee.
+            reason: Optional explanation.
+            to_user_id: Specific target user, or None for open request.
+        Output:
+            Created TaskSwap.
+        """
+        occurrence = TaskOccurrence.objects.select_related('template__group').filter(
+            id=task_id
+        ).first()
+        if occurrence is None:
+            raise ValueError("Task occurrence not found.")
+
+        if str(occurrence.assigned_to_id) != from_user_id:
+            raise PermissionError("Only the assigned user can request a swap.")
+
+        if TaskSwap.objects.filter(task=occurrence, status='pending').exists():
+            raise ValueError("A pending swap request already exists for this task.")
+
+        swap_type = 'direct_swap' if to_user_id else 'open_request'
+
+        with transaction.atomic():
+            swap = TaskSwap.objects.create(
+                task=occurrence,
+                from_user_id=from_user_id,
+                to_user_id=to_user_id,
+                reason=reason,
+                swap_type=swap_type,
+            )
+
+            if to_user_id:
+                Notification.objects.create(
+                    title=f"Swap request: {occurrence.template.name}",
+                    type='task_swap',
+                    recipient_id=to_user_id,
+                    task_occurrence=occurrence,
+                    content=(
+                        f"You have been asked to swap '{occurrence.template.name}' "
+                        f"due {occurrence.deadline.strftime('%d %b %Y')}."
+                    ),
+                )
+            else:
+                # Notify all group members except the requester
+                members = GroupMembership.objects.filter(
+                    group=occurrence.template.group
+                ).exclude(user_id=from_user_id)
+                Notification.objects.bulk_create([
+                    Notification(
+                        title=f"Open swap: {occurrence.template.name}",
+                        type='task_swap',
+                        recipient_id=m.user_id,
+                        task_occurrence=occurrence,
+                        content=(
+                            f"A swap has been requested for '{occurrence.template.name}' "
+                            f"due {occurrence.deadline.strftime('%d %b %Y')}. Can you take it?"
+                        ),
+                    )
+                    for m in members
+                ])
+
+        return swap
+
+    def respond_to_swap_request(self, *, swap_id: str, accept: bool, actor_id: str) -> TaskSwap:
+        """Accept or reject a swap request.
+
+        Inputs:
+            swap_id: Target TaskSwap.
+            accept: True to accept, False to reject.
+            actor_id: User responding (must be to_user for direct, any member for open).
+        Output:
+            Updated TaskSwap.
+        """
+        swap = TaskSwap.objects.select_related('task__template__group', 'from_user').filter(
+            id=swap_id, status='pending'
+        ).first()
+        if swap is None:
+            raise ValueError("Swap request not found or already resolved.")
+
+        if swap.expires_at < timezone.now():
+            raise ValueError("This swap request has expired.")
+
+        # For direct swaps, only the target user can respond
+        if swap.swap_type == 'direct_swap' and str(swap.to_user_id) != actor_id:
+            raise PermissionError("This swap request was not sent to you.")
+
+        # For open requests, any group member (except requester) can accept
+        if swap.swap_type == 'open_request':
+            if str(swap.from_user_id) == actor_id:
+                raise PermissionError("You cannot accept your own swap request.")
+            if not GroupMembership.objects.filter(
+                user_id=actor_id, group=swap.task.template.group
+            ).exists():
+                raise PermissionError("You are not a member of this group.")
+
+        now = timezone.now()
+
+        with transaction.atomic():
+            swap.decided_at = now
+            if accept:
+                swap.status = 'accepted'
+                swap.to_user_id = actor_id
+                swap.save(update_fields=['status', 'decided_at', 'to_user_id'])
+
+                occurrence = swap.task
+                occurrence.assigned_to_id = actor_id
+                occurrence.reassignment_reason = 'swap'
+                occurrence.save(update_fields=['assigned_to_id', 'reassignment_reason'])
+
+                Notification.objects.create(
+                    title=f"Swap accepted: {occurrence.template.name}",
+                    type='task_swap',
+                    recipient=swap.from_user,
+                    task_occurrence=occurrence,
+                    content=f"Your swap request for '{occurrence.template.name}' was accepted.",
+                )
+            else:
+                swap.status = 'rejected'
+                swap.save(update_fields=['status', 'decided_at'])
+
+                Notification.objects.create(
+                    title=f"Swap declined: {swap.task.template.name}",
+                    type='task_swap',
+                    recipient=swap.from_user,
+                    task_occurrence=swap.task,
+                    content=f"Your swap request for '{swap.task.template.name}' was declined.",
+                )
+
+        return swap
+
+    # ------------------------------------------------------------------ #
+    #  Step 8: Emergency reassign
+    # ------------------------------------------------------------------ #
+
+    def emergency_reassign(self, *, occurrence_id: str, actor_id: str, reason: str = '') -> TaskOccurrence:
+        """Open an emergency reassignment — broadcasts to all group members.
+
+        Inputs:
+            occurrence_id: Target TaskOccurrence.
+            actor_id: Must be the current assignee.
+            reason: Explanation for the emergency.
+        Output:
+            Updated TaskOccurrence (assigned_to=None, open for acceptance).
+        """
+        occurrence = TaskOccurrence.objects.select_related('template__group').filter(
+            id=occurrence_id
+        ).first()
+        if occurrence is None:
+            raise ValueError("Task occurrence not found.")
+
+        if str(occurrence.assigned_to_id) != actor_id:
+            raise PermissionError("Only the assigned user can trigger an emergency reassignment.")
+
+        # Monthly limit: max 3 emergency reassignments per user per month
+        now = timezone.now()
+        monthly_count = TaskOccurrence.objects.filter(
+            original_assignee_id=actor_id,
+            reassignment_reason='emergency',
+            deadline__year=now.year,
+            deadline__month=now.month,
+        ).count()
+        if monthly_count >= 3:
+            raise ValueError("Monthly emergency reassignment limit (3) reached.")
+
+        group = occurrence.template.group
+        members = GroupMembership.objects.filter(group=group).exclude(user_id=actor_id)
+
+        with transaction.atomic():
+            occurrence.original_assignee_id = actor_id
+            occurrence.reassignment_reason = 'emergency'
+            occurrence.assigned_to = None
+            occurrence.status = 'pending'
+            occurrence.save(update_fields=[
+                'original_assignee_id', 'reassignment_reason', 'assigned_to', 'status'
+            ])
+
+            Notification.objects.bulk_create([
+                Notification(
+                    title=f"Emergency: {occurrence.template.name} needs cover",
+                    type='emergency_reassignment',
+                    recipient_id=m.user_id,
+                    task_occurrence=occurrence,
+                    content=(
+                        f"'{occurrence.template.name}' due {occurrence.deadline.strftime('%d %b %Y')} "
+                        f"needs someone to take over. Reason: {reason or 'Not specified'}."
+                    ),
+                )
+                for m in members
+            ])
+
+        return occurrence
+
+    def accept_emergency(self, *, occurrence_id: str, actor_id: str) -> TaskOccurrence:
+        """Accept an open emergency reassignment — first member to call this gets the task.
+
+        Inputs:
+            occurrence_id: Target TaskOccurrence (must be in emergency/unassigned state).
+            actor_id: Group member accepting the task.
+        Output:
+            Updated TaskOccurrence.
+        """
+        with transaction.atomic():
+            # Lock the row to prevent race conditions
+            occurrence = TaskOccurrence.objects.select_for_update().select_related(
+                'template__group'
+            ).filter(
+                id=occurrence_id,
+                reassignment_reason='emergency',
+                assigned_to__isnull=True,
+            ).first()
+
+            if occurrence is None:
+                raise ValueError("This task is no longer available for emergency cover.")
+
+            if str(occurrence.original_assignee_id) == actor_id:
+                raise PermissionError("You cannot accept your own emergency reassignment.")
+
+            if not GroupMembership.objects.filter(
+                user_id=actor_id, group=occurrence.template.group
+            ).exists():
+                raise PermissionError("You are not a member of this group.")
+
+            occurrence.assigned_to_id = actor_id
+            occurrence.status = 'pending'
+            occurrence.save(update_fields=['assigned_to_id', 'status'])
+
+            # Notify original assignee
+            if occurrence.original_assignee_id:
+                Notification.objects.create(
+                    title=f"Emergency covered: {occurrence.template.name}",
+                    type='emergency_reassignment',
+                    recipient_id=occurrence.original_assignee_id,
+                    task_occurrence=occurrence,
+                    content=f"Someone has taken over '{occurrence.template.name}'.",
+                )
+
+        return occurrence
