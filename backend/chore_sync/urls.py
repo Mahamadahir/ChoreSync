@@ -21,6 +21,13 @@ from chore_sync.api.task_template_router import (
     GroupTaskTemplateListCreateAPIView,
     TaskTemplateDetailAPIView,
 )
+from chore_sync.api.task_router import (
+    UserTaskListAPIView,
+    GroupTaskListAPIView,
+    GenerateOccurrencesAPIView,
+    TaskOccurrenceDetailAPIView,
+    TaskCompleteAPIView,
+)
 from chore_sync.api.group_router import (
     GroupListCreateAPIView,
     GroupDetailAPIView,
@@ -84,4 +91,9 @@ urlpatterns = [
     path('api/groups/<uuid:pk>/settings/', GroupSettingsAPIView.as_view(), name='group-settings'),
     path('api/groups/<uuid:pk>/task-templates/', GroupTaskTemplateListCreateAPIView.as_view(), name='group-task-templates'),
     path('api/task-templates/<int:pk>/', TaskTemplateDetailAPIView.as_view(), name='task-template-detail'),
+    path('api/task-templates/<int:pk>/generate-occurrences/', GenerateOccurrencesAPIView.as_view(), name='task-template-generate-occurrences'),
+    path('api/users/me/tasks/', UserTaskListAPIView.as_view(), name='user-tasks'),
+    path('api/groups/<uuid:pk>/tasks/', GroupTaskListAPIView.as_view(), name='group-tasks'),
+    path('api/tasks/<int:pk>/', TaskOccurrenceDetailAPIView.as_view(), name='task-detail'),
+    path('api/tasks/<int:pk>/complete/', TaskCompleteAPIView.as_view(), name='task-complete'),
 ]

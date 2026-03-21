@@ -155,8 +155,8 @@ class GroupOrchestrator:
                 last = TaskOccurrence.objects.filter(
                     assigned_to=user, template__group=group
                 ).order_by('-deadline').first()
-                # Days since last assignment — more days = higher priority (lower score after inversion)
-                score = -(timezone.now() - last.deadline).days if last else 0
+                # Days since last assignment — more days = lower score = higher priority
+                score = (timezone.now() - last.deadline).days if last else 0
 
             elif group.fairness_algorithm == 'difficulty_based':
                 score = stats.total_points if stats else 0
