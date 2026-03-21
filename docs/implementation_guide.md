@@ -548,16 +548,67 @@ Endpoints:
 
 ---
 
-### Step 13: Frontend Wiring
+### Step 13a: Frontend Wiring — Controllers & Infrastructure ✅ COMPLETE
 
 **Files:** `frontend/src/controllers/`, `frontend/src/services/api.ts`
 
 **Actions:**
-1. Implement `GroupDetailController.ts` — calls `GET /api/groups/{id}/`, `GET /api/groups/{id}/tasks/`, `GET /api/groups/{id}/members/`
-2. Implement `MyTasksController.ts` — calls `GET /api/users/me/tasks/`; exposes snooze/complete/swap actions
-3. Wire `NotificationSocketService.ts` to the new Django Channels WebSocket endpoint
-4. Update Pinia `auth.ts` store to store `user_id` and `household_ids` (currently only stores `isAuthenticated: bool`)
-5. Add PWA manifest: `frontend/public/manifest.json` with app name, icons, `display: standalone`
+1. ✅ Implement `GroupDetailController.ts` — calls `GET /api/groups/{id}/`, `GET /api/groups/{id}/tasks/`, `GET /api/groups/{id}/members/`
+2. ✅ Implement `MyTasksController.ts` — calls `GET /api/users/me/tasks/`; exposes snooze/complete/swap actions
+3. ✅ Wire `NotificationSocketService.ts` to the new Django Channels WebSocket endpoint
+4. ✅ Update Pinia `auth.ts` store to store `user_id` and `household_ids`
+5. ✅ Add PWA manifest: `frontend/public/manifest.json` with app name, icons, `display: standalone`
+6. ✅ Extend `api.ts` with `groupApi`, `taskApi`, `notificationApi`, `statsApi`
+7. ✅ Bootstrap populates `userId` + `householdIds` from profile + groups on login
+
+---
+
+### Step 13b: Frontend Views — Core UI
+
+**New routes and views required:**
+
+#### New Routes
+- `/groups` → `GroupsView.vue` — list all groups, create group
+- `/groups/:id` → `GroupDetailView.vue` — tabbed group hub
+- `/tasks` → `MyTasksView.vue` — personal task board
+
+#### `GroupsView.vue` (`/groups`)
+- List all groups the user belongs to (call `groupApi.list()`)
+- Show group name, code, role, fairness algorithm
+- "Create group" button → inline form: name, fairness algorithm, reassignment rule
+- Clicking a group navigates to `/groups/:id`
+- Redirect `/` (HomeView) to `/groups` after login
+
+#### `GroupDetailView.vue` (`/groups/:id`)
+Tabbed layout with the following tabs:
+
+| Tab | Content | API calls |
+|---|---|---|
+| Tasks | Task list with complete/snooze/swap actions | `GET /api/groups/{id}/tasks/` |
+| Members | Member list with stats | `GET /api/groups/{id}/members/` |
+| Leaderboard | Ranked points table | `GET /api/groups/{id}/leaderboard/` |
+| Proposals | List proposals, create proposal, vote | `GET/POST /api/groups/{id}/proposals/`, `POST /api/proposals/{id}/vote/` |
+| Chat | Message thread, send message via WebSocket | `NotificationSocketService.sendChatMessage()` |
+| Templates | List/create task templates | `GET/POST /api/groups/{id}/task-templates/` |
+| Settings | Fairness algo, photo proof, voting toggle (moderator only) | `PATCH /api/groups/{id}/settings/` |
+
+#### `MyTasksView.vue` (`/tasks`)
+- List all tasks across all groups (call `taskApi.myTasks()`)
+- Filter by status (pending / snoozed / overdue / completed)
+- Per task: template name, group, deadline, status badge, points
+- Actions: Complete button, Snooze (date picker), Request Swap (user picker)
+- Emergency reassign button (if applicable)
+
+#### Notification bell (App.vue navbar)
+- Bell icon with unread count badge
+- Click opens slide-out drawer
+- Drawer lists active notifications (call `notificationApi.list()`)
+- Per notification: mark read, dismiss
+- `NotificationSocketService` pushes new ones in real time
+
+#### Profile page additions (`UpdateProfileView.vue`)
+- Add stats section: total tasks, points, streak, on-time rate (call `statsApi.myStats()`)
+- Add badges section: grid of earned badges (call `statsApi.myBadges()`)
 
 ---
 

@@ -12,16 +12,24 @@ import ForgotPasswordView from './views/ForgotPasswordView.vue';
 import ResetPasswordView from './views/ResetPasswordView.vue';
 import { useAuthStore } from './stores/auth';
 import { authService } from './services/authService';
+import { groupApi } from './services/api';
 import GoogleLoginView from './views/GoogleLoginView.vue';
 import MicrosoftLoginView from './views/MicrosoftLoginView.vue';
 import CalendarView from './views/CalendarView.vue';
 import GoogleCalendarSelectView from './views/GoogleCalendarSelectView.vue';
+import GroupsView from './views/GroupsView.vue';
+import GroupDetailView from './views/GroupDetailView.vue';
+import MyTasksView from './views/MyTasksView.vue';
 import { Quasar } from 'quasar';
 import '@quasar/extras/material-icons/material-icons.css';
 import 'quasar/src/css/index.sass';
 
 const routes: RouteRecordRaw[] = [
-  { path: '/', name: 'home', component: HomeView, meta: { requiresAuth: true } },
+  { path: '/', redirect: '/groups' },
+  { path: '/home', name: 'home', component: HomeView, meta: { requiresAuth: true } },
+  { path: '/groups', name: 'groups', component: GroupsView, meta: { requiresAuth: true } },
+  { path: '/groups/:id', name: 'group-detail', component: GroupDetailView, meta: { requiresAuth: true } },
+  { path: '/tasks', name: 'tasks', component: MyTasksView, meta: { requiresAuth: true } },
   { path: '/signup', name: 'signup', component: SignupView, meta: { requiresGuest: true } },
   { path: '/login', name: 'login', component: LoginView, meta: { requiresGuest: true } },
   { path: '/check-email', name: 'check-email', component: CheckEmailView, meta: { requiresGuest: true } },
@@ -33,7 +41,6 @@ const routes: RouteRecordRaw[] = [
   { path: '/reset-password', name: 'reset-password', component: ResetPasswordView, meta: { requiresGuest: true } },
   { path: '/login/google', name: 'login-google', component: GoogleLoginView, meta: { requiresGuest: true } },
   { path: '/login/microsoft', name: 'login-microsoft', component: MicrosoftLoginView, meta: { requiresGuest: true } },
-  // add more routes here
 ];
 
 const pinia = createPinia();
@@ -52,7 +59,12 @@ const ensureAuthBootstrap = () => {
   if (!bootstrapPromise) {
     bootstrapPromise = authService
       .getProfile()
-      .then(() => authStore.setAuthenticated(true))
+      .then(async (profileRes) => {
+        const userId: string = profileRes.data.id ?? profileRes.data.user_id;
+        const groupsRes = await groupApi.list().catch(() => ({ data: [] }));
+        const householdIds: string[] = groupsRes.data.map((g: { id: string }) => g.id);
+        authStore.setAuthenticated(true, userId, householdIds);
+      })
       .catch(() => authStore.clear())
       .finally(() => {
         authStore.markBootstrapped();
