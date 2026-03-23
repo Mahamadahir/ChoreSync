@@ -190,12 +190,13 @@ class GroupOrchestrator:
                 score = stats.total_tasks_completed if stats else 0
 
             elif group.fairness_algorithm == 'time_based':
-                from django.utils import timezone
-                last = TaskOccurrence.objects.filter(
-                    assigned_to=user, template__group=group
-                ).order_by('-deadline').first()
-                # Days since last assignment — more days = lower score = higher priority
-                score = (timezone.now() - last.deadline).days if last else 0
+                from django.db.models import Sum as _Sum
+                total = TaskOccurrence.objects.filter(
+                    assigned_to=user,
+                    template__group=group,
+                    status__in=['completed', 'pending', 'snoozed'],
+                ).aggregate(total=_Sum('template__estimated_time_to_complete'))['total']
+                score = total or 0
 
             elif group.fairness_algorithm == 'difficulty_based':
                 score = stats.total_points if stats else 0

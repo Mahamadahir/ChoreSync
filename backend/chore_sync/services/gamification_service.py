@@ -118,7 +118,9 @@ class GamificationService:
             total_points          → UserStats.total_points
             on_time_rate          → UserStats.on_time_completion_rate (0.0–1.0)
             category_count        → {"category": "cooking", "count": 10}
-                                    counts completed occurrences of that category
+            early_completions     → count of occurrences completed before deadline
+            emergency_accepts     → count of emergency tasks accepted from another user
+            swap_completions      → count of completed swapped tasks
 
         Returns list of badge names newly awarded.
         """
@@ -151,7 +153,6 @@ class GamificationService:
 
             for key, value in criteria.items():
                 if key == 'category_count':
-                    # value = {"category": "cooking", "count": 10}
                     category = value.get('category')
                     required = value.get('count', 0)
                     actual = TaskOccurrence.objects.filter(
@@ -160,15 +161,39 @@ class GamificationService:
                         template__category=category,
                         status='completed',
                     ).count()
-                    if actual < required:
-                        earned = False
-                        break
+                elif key == 'early_completions':
+                    from django.db.models import F as _F
+                    actual = TaskOccurrence.objects.filter(
+                        assigned_to_id=user_id,
+                        template__group_id=group_id,
+                        status='completed',
+                        completed_at__lt=_F('deadline'),
+                    ).count()
+                    required = value
+                elif key == 'emergency_accepts':
+                    actual = TaskOccurrence.objects.filter(
+                        assigned_to_id=user_id,
+                        template__group_id=group_id,
+                        status='completed',
+                        reassignment_reason='emergency',
+                    ).exclude(original_assignee_id=user_id).count()
+                    required = value
+                elif key == 'swap_completions':
+                    actual = TaskOccurrence.objects.filter(
+                        assigned_to_id=user_id,
+                        template__group_id=group_id,
+                        status='completed',
+                        reassignment_reason='swap',
+                    ).count()
+                    required = value
                 else:
                     field = FIELD_ALIASES.get(key, key)
                     actual = getattr(stats, field, None)
-                    if actual is None or actual < value:
-                        earned = False
-                        break
+                    required = value
+
+                if actual is None or actual < required:
+                    earned = False
+                    break
 
             if earned:
                 _, created = UserBadge.objects.get_or_create(

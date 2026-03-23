@@ -75,7 +75,7 @@
                   </div>
                 </div>
                 <div class="col-12 col-md-6">
-                  <div class="row items-center q-gutter-sm">
+                  <div class="column q-gutter-xs">
                     <q-toggle
                       v-model="cal.includeAvailability"
                       label="Affects availability"
@@ -88,6 +88,13 @@
                       color="secondary"
                       :disable="!cal.selected || !cal.can_edit"
                       :title="cal.can_edit ? 'Push updates to Outlook' : 'Read-only calendar'"
+                    />
+                    <q-toggle
+                      v-model="cal.is_task_writeback"
+                      label="Use for ChoreSync task events"
+                      color="positive"
+                      :disable="!cal.selected"
+                      @update:model-value="(val) => val && setTaskWriteback(cal.id)"
                     />
                   </div>
                 </div>
@@ -129,6 +136,7 @@ type CalendarItem = {
   selected: boolean;
   includeAvailability: boolean;
   writable: boolean;
+  is_task_writeback: boolean;
 };
 
 const calendars = ref<CalendarItem[]>([]);
@@ -146,6 +154,14 @@ function setAll(value: boolean) {
   calendars.value = calendars.value.map((c) => ({ ...c, selected: value }));
 }
 
+function setTaskWriteback(calId: string) {
+  // Radio-style: only one calendar can be the task writeback target
+  calendars.value = calendars.value.map((c) => ({
+    ...c,
+    is_task_writeback: c.id === calId,
+  }));
+}
+
 async function loadCalendars() {
   loading.value = true;
   errorMessage.value = null;
@@ -160,6 +176,7 @@ async function loadCalendars() {
       selected: item.is_default || item.can_edit,
       includeAvailability: true,
       writable: item.can_edit,
+      is_task_writeback: item.is_default,
     }));
   } catch (err) {
     errorMessage.value = 'Failed to load Outlook calendars. Please reconnect and try again.';
@@ -180,18 +197,15 @@ async function handleSave() {
         name: c.name,
         include_in_availability: c.includeAvailability,
         writable: c.writable && c.can_edit,
+        is_task_writeback: c.is_task_writeback,
         color: c.color || null,
         timezone: null,
       }));
-    await calendarService.selectOutlookCalendars(payload);
-    let syncDetail = '';
-    try {
-      const syncResp = await calendarService.syncOutlook();
-      syncDetail = syncResp.data?.detail || '';
-    } catch {
-      syncDetail = 'Saved selection, but sync failed. Try manual sync.';
-    }
-    successMessage.value = syncDetail || 'Saved selection and synced calendars.';
+    const resp = await calendarService.selectOutlookCalendars(payload);
+    const syncing: string[] = resp.data?.syncing ?? [];
+    successMessage.value = syncing.length
+      ? `Saved. Syncing ${syncing.length} calendar(s) in the background…`
+      : 'Outlook calendars saved.';
   } catch (err: any) {
     errorMessage.value = err?.response?.data?.detail || 'Failed to save selection. Please try again.';
   } finally {

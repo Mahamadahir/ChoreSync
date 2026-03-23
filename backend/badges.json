@@ -138,5 +138,47 @@
     "emoji": "🛒",
     "criteria": {"category_count": {"category": "errands", "count": 10}},
     "points_value": 40
+  },
+  {
+    "name": "Early Bird",
+    "description": "Complete 10 tasks before their deadline.",
+    "emoji": "🐦",
+    "criteria": {"early_completions": 10},
+    "points_value": 60
+  },
+  {
+    "name": "Always Early",
+    "description": "Complete 50 tasks before their deadline.",
+    "emoji": "⏱️",
+    "criteria": {"early_completions": 50},
+    "points_value": 150
+  },
+  {
+    "name": "Team Player",
+    "description": "Accept 5 emergency task reassignments from housemates.",
+    "emoji": "🤝",
+    "criteria": {"emergency_accepts": 5},
+    "points_value": 80
+  },
+  {
+    "name": "Hero of the House",
+    "description": "Accept 20 emergency task reassignments from housemates.",
+    "emoji": "🦸",
+    "criteria": {"emergency_accepts": 20},
+    "points_value": 200
+  },
+  {
+    "name": "Negotiator",
+    "description": "Complete 10 tasks acquired through swaps.",
+    "emoji": "🔄",
+    "criteria": {"swap_completions": 10},
+    "points_value": 50
+  },
+  {
+    "name": "Dealmaker",
+    "description": "Complete 30 tasks acquired through swaps.",
+    "emoji": "🤜",
+    "criteria": {"swap_completions": 30},
+    "points_value": 120
   }
 ]

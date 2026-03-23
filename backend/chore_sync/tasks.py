@@ -48,40 +48,74 @@ def generate_daily_occurrences() -> dict:
 
 @shared_task
 def dispatch_deadline_reminders() -> dict:
-    """Send a reminder notification for tasks due within the next 24 hours (once per occurrence)."""
+    """Send deadline reminder notifications at three windows: 24h, 3h, and at-due-time."""
     from django.utils import timezone
     from datetime import timedelta
     from chore_sync.models import TaskOccurrence
+    from chore_sync.services.notification_service import NotificationService
 
     now = timezone.now()
-    window_end = now + timedelta(hours=24)
+    nsvc = NotificationService()
+    sent = 0
 
-    pending = TaskOccurrence.objects.select_related('template', 'assigned_to').filter(
+    # ── 24-hour window ──────────────────────────────────────────────────
+    for occ in TaskOccurrence.objects.select_related('template', 'assigned_to').filter(
         status__in=['pending', 'snoozed'],
         deadline__gt=now,
-        deadline__lte=window_end,
+        deadline__lte=now + timedelta(hours=24),
         reminder_sent_at__isnull=True,
         assigned_to__isnull=False,
-    )
-
-    from chore_sync.services.notification_service import NotificationService
-    nsvc = NotificationService()
-
-    sent = 0
-    for occurrence in pending:
+    ):
         nsvc.emit_notification(
-            recipient_id=str(occurrence.assigned_to_id),
+            recipient_id=str(occ.assigned_to_id),
             notification_type='deadline_reminder',
-            title=f"Reminder: {occurrence.template.name} due soon",
-            content=(
-                f"'{occurrence.template.name}' is due "
-                f"{occurrence.deadline.strftime('%d %b %Y %H:%M')}."
-            ),
-            task_occurrence_id=occurrence.id,
-            action_url=f"/tasks/{occurrence.id}",
+            title=f"Reminder: {occ.template.name} due in 24 hours",
+            content=f"'{occ.template.name}' is due {occ.deadline.strftime('%d %b %Y %H:%M')}.",
+            task_occurrence_id=occ.id,
+            action_url=f"/tasks/{occ.id}",
         )
-        occurrence.reminder_sent_at = now
-        occurrence.save(update_fields=['reminder_sent_at'])
+        occ.reminder_sent_at = now
+        occ.save(update_fields=['reminder_sent_at'])
+        sent += 1
+
+    # ── 3-hour window ───────────────────────────────────────────────────
+    for occ in TaskOccurrence.objects.select_related('template', 'assigned_to').filter(
+        status__in=['pending', 'snoozed'],
+        deadline__gt=now + timedelta(hours=2, minutes=50),
+        deadline__lte=now + timedelta(hours=3, minutes=10),
+        reminder_3h_sent=False,
+        assigned_to__isnull=False,
+    ):
+        nsvc.emit_notification(
+            recipient_id=str(occ.assigned_to_id),
+            notification_type='deadline_reminder',
+            title=f"Due in 3 hours: {occ.template.name}",
+            content=f"'{occ.template.name}' is due at {occ.deadline.strftime('%H:%M')}. Don't forget!",
+            task_occurrence_id=occ.id,
+            action_url=f"/tasks/{occ.id}",
+        )
+        occ.reminder_3h_sent = True
+        occ.save(update_fields=['reminder_3h_sent'])
+        sent += 1
+
+    # ── At-due-time window ──────────────────────────────────────────────
+    for occ in TaskOccurrence.objects.select_related('template', 'assigned_to').filter(
+        status__in=['pending', 'snoozed'],
+        deadline__gte=now - timedelta(minutes=5),
+        deadline__lte=now + timedelta(minutes=5),
+        reminder_due_sent=False,
+        assigned_to__isnull=False,
+    ):
+        nsvc.emit_notification(
+            recipient_id=str(occ.assigned_to_id),
+            notification_type='deadline_reminder',
+            title=f"Due now: {occ.template.name}",
+            content=f"'{occ.template.name}' is due right now.",
+            task_occurrence_id=occ.id,
+            action_url=f"/tasks/{occ.id}",
+        )
+        occ.reminder_due_sent = True
+        occ.save(update_fields=['reminder_due_sent'])
         sent += 1
 
     return {'reminders_sent': sent}

@@ -398,6 +398,14 @@ class TaskOccurrence(models.Model):
         blank=True,
         help_text="When the 24-hour deadline reminder was last sent for this occurrence.",
     )
+    reminder_3h_sent = models.BooleanField(
+        default=False,
+        help_text="Whether the 3-hour-before reminder has been sent.",
+    )
+    reminder_due_sent = models.BooleanField(
+        default=False,
+        help_text="Whether the at-due-time reminder has been sent.",
+    )
 
     photo_proof = models.ImageField(
         upload_to='task_proofs/',
