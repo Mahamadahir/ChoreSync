@@ -418,6 +418,43 @@ def initial_outlook_sync_task(self, calendar_id: int) -> dict:
 
 
 @shared_task
+def renew_outlook_subscriptions() -> dict:
+    """
+    Create or extend Graph change-notification subscriptions for all Outlook
+    calendars whose subscription expires within the next hour. Runs every 2 hours.
+    """
+    import datetime
+    from django.utils import timezone
+    from chore_sync.models import OutlookCalendarSync
+    from chore_sync.services.outlook_calendar_service import OutlookCalendarService
+
+    threshold = timezone.now() + datetime.timedelta(hours=1)
+
+    # Renew subscriptions that are expiring soon OR have never been created
+    due = OutlookCalendarSync.objects.select_related('calendar__user').filter(
+        Q(subscription_expires_at__lt=threshold) | Q(subscription_expires_at__isnull=True)
+    )
+
+    renewed = 0
+    for sync_state in due:
+        cal = sync_state.calendar
+        if not cal or not cal.user:
+            continue
+        # Only renew if BACKEND_BASE_URL is configured (webhooks need a public URL)
+        from django.conf import settings as _s
+        if not getattr(_s, 'BACKEND_BASE_URL', ''):
+            break
+        try:
+            svc = OutlookCalendarService(user=cal.user)
+            svc.renew_subscription(cal)
+            renewed += 1
+        except Exception:
+            pass
+
+    return {'renewed': renewed}
+
+
+@shared_task
 def refresh_outlook_tokens() -> dict:
     """
     Proactively refresh Microsoft Graph access tokens that are within 10 minutes

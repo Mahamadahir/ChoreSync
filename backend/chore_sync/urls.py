@@ -57,6 +57,7 @@ from chore_sync.api.outlook_calendar_router import (
     OutlookCalendarListAPIView,
     OutlookCalendarSelectAPIView,
     OutlookCalendarSyncAPIView,
+    OutlookCalendarWebhookAPIView,
 )
 from chore_sync.api.group_router import (
     GroupListCreateAPIView,
@@ -119,6 +120,7 @@ urlpatterns = [
     path('api/calendar/outlook/list/', OutlookCalendarListAPIView.as_view(), name='outlook-cal-list'),
     path('api/calendar/outlook/select/', OutlookCalendarSelectAPIView.as_view(), name='outlook-cal-select'),
     path('api/calendar/outlook/sync/', OutlookCalendarSyncAPIView.as_view(), name='outlook-cal-sync'),
+    path('api/calendar/outlook/webhook/', OutlookCalendarWebhookAPIView.as_view(), name='outlook-cal-webhook'),
     path('api/events/stream/', EventStreamAPIView.as_view(), name='event-stream'),
     path('api/groups/', GroupListCreateAPIView.as_view(), name='group-list-create'),
     path('api/groups/<uuid:pk>/', GroupDetailAPIView.as_view(), name='group-detail'),

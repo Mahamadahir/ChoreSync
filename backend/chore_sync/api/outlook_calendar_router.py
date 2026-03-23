@@ -8,7 +8,7 @@ from django.shortcuts import redirect
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -171,3 +171,58 @@ class OutlookCalendarSyncAPIView(APIView):
         except Exception as exc:
             logger.exception("Outlook sync failed", exc_info=exc)
             return Response({"detail": "Outlook sync failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class OutlookCalendarWebhookAPIView(APIView):
+    """POST /api/calendar/outlook/webhook/ — receive Microsoft Graph change notifications.
+
+    Microsoft requires this endpoint to:
+    1. Respond to validation pings (validationToken in query string) with 200 + plain text token.
+    2. Validate clientState on all notification payloads.
+    3. Respond within 3 seconds (actual sync is queued to Celery).
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        # Validation handshake: Microsoft sends ?validationToken=... to confirm the endpoint
+        validation_token = request.query_params.get("validationToken")
+        if validation_token:
+            from django.http import HttpResponse
+            return HttpResponse(validation_token, content_type="text/plain", status=200)
+
+        # Validate clientState to reject spoofed notifications
+        expected_secret = getattr(settings, "OUTLOOK_WEBHOOK_SECRET", "")
+        notifications = request.data.get("value", [])
+
+        if expected_secret:
+            for notif in notifications:
+                if notif.get("clientState") != expected_secret:
+                    logger.warning("Outlook webhook: clientState mismatch — ignoring notification")
+                    return Response(status=status.HTTP_401_UNAUTHORIZED)
+
+        # Queue an incremental sync for each affected calendar
+        from chore_sync.tasks import initial_outlook_sync_task
+
+        for notif in notifications:
+            # resource looks like "/me/calendars/<calendarId>/events"
+            resource = notif.get("resource", "")
+            # Try to find the matching Calendar row by external_id
+            parts = resource.split("/")
+            # Expected: ['', 'me', 'calendars', '<id>', 'events']
+            if len(parts) >= 4 and parts[2] == "calendars":
+                ext_cal_id = parts[3]
+                cal = Calendar.objects.filter(
+                    provider="microsoft",
+                    external_id=ext_cal_id,
+                ).first()
+                if cal:
+                    initial_outlook_sync_task.apply_async(
+                        args=[cal.id],
+                        queue="calendar_sync",
+                    )
+                    logger.debug("Outlook webhook: queued sync for calendar %s", cal.id)
+
+        # Microsoft expects a quick 202 Accepted
+        return Response(status=status.HTTP_202_ACCEPTED)

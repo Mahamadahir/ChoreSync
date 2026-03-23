@@ -294,6 +294,58 @@ class OutlookCalendarService:
         return count
 
     # ------------------------------------------------------------------ #
+    #  Graph webhook subscription
+    # ------------------------------------------------------------------ #
+
+    def renew_subscription(self, calendar: Calendar) -> None:
+        """Create or extend a Graph change-notification subscription (max 3-day expiry).
+
+        If a subscription_id already exists on the sync state, PATCHes it to extend.
+        Otherwise POSTs a new subscription.
+        BACKEND_BASE_URL must be publicly reachable by Microsoft for webhooks to fire.
+        """
+        from datetime import timedelta
+        sync_state, _ = OutlookCalendarSync.objects.get_or_create(calendar=calendar)
+        expiry = timezone.now() + timedelta(days=3)
+        webhook_url = f"{getattr(settings, 'BACKEND_BASE_URL', 'http://localhost:8000')}/api/calendar/outlook/webhook/"
+        secret = getattr(settings, "OUTLOOK_WEBHOOK_SECRET", "")
+
+        if sync_state.subscription_id:
+            # Extend existing subscription
+            resp = requests.patch(
+                f"{GRAPH_BASE}/subscriptions/{sync_state.subscription_id}",
+                json={"expirationDateTime": expiry.isoformat()},
+                headers=self._headers(),
+                timeout=15,
+            )
+            if resp.status_code == 404:
+                # Subscription expired/deleted — create fresh
+                sync_state.subscription_id = None
+                sync_state.save(update_fields=["subscription_id"])
+                self.renew_subscription(calendar)
+                return
+            resp.raise_for_status()
+        else:
+            payload = {
+                "changeType": "created,updated,deleted",
+                "notificationUrl": webhook_url,
+                "resource": f"/me/calendars/{calendar.external_id}/events",
+                "expirationDateTime": expiry.isoformat(),
+                "clientState": secret,
+            }
+            resp = requests.post(
+                f"{GRAPH_BASE}/subscriptions",
+                json=payload,
+                headers=self._headers(),
+                timeout=15,
+            )
+            resp.raise_for_status()
+            sync_state.subscription_id = resp.json()["id"]
+
+        sync_state.subscription_expires_at = expiry
+        sync_state.save(update_fields=["subscription_id", "subscription_expires_at"])
+
+    # ------------------------------------------------------------------ #
     #  Write-back helpers
     # ------------------------------------------------------------------ #
 

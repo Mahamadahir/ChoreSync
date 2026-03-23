@@ -222,6 +222,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'chore_sync.tasks.catchup_outlook_calendar_sync',
         'schedule': 6 * 3600,  # every 6 hours
     },
+    'renew-outlook-subscriptions': {
+        'task': 'chore_sync.tasks.renew_outlook_subscriptions',
+        'schedule': 2 * 3600,  # every 2 hours
+    },
 }
 
 # Route initial calendar syncs to a dedicated low-concurrency queue.
@@ -240,6 +244,10 @@ MICROSOFT_CLIENT_ID = env('MICROSOFT_CLIENT_ID', default='')
 MICROSOFT_TENANT_ID = env('MICROSOFT_TENANT_ID', default='common')
 MICROSOFT_CLIENT_SECRET = env('MICROSOFT_CLIENT_SECRET', default='')
 OUTLOOK_OAUTH_REDIRECT_URI = env('OUTLOOK_OAUTH_REDIRECT_URI', default='http://localhost:8000/api/calendar/outlook/callback/')
+# Public-facing base URL of this backend (must be HTTPS and internet-reachable for Graph webhooks to fire)
+BACKEND_BASE_URL = env('BACKEND_BASE_URL', default='http://localhost:8000')
+# Shared secret sent in every Graph change-notification; validated in the webhook receiver
+OUTLOOK_WEBHOOK_SECRET = env('OUTLOOK_WEBHOOK_SECRET', default='')
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
