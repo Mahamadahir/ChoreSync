@@ -15,6 +15,12 @@ _svc = TaskLifecycleService()
 
 
 def _serialize_occurrence(o: TaskOccurrence) -> dict:
+    # Check if listed on marketplace (only when prefetched or via related manager)
+    on_marketplace = False
+    try:
+        on_marketplace = hasattr(o, 'marketplace_listing') and o.marketplace_listing is not None
+    except Exception:
+        pass
     return {
         "id": o.id,
         "template_id": o.template_id,
@@ -30,6 +36,7 @@ def _serialize_occurrence(o: TaskOccurrence) -> dict:
         "snooze_count": o.snooze_count,
         "photo_proof_required": o.template.photo_proof_required,
         "photo_proof": o.photo_proof.url if o.photo_proof else None,
+        "on_marketplace": on_marketplace,
     }
 
 
@@ -142,10 +149,24 @@ class TaskCompleteAPIView(APIView):
 
 
 def _serialize_swap(s: TaskSwap) -> dict:
+    task_name = None
+    group_name = None
+    if s.task_id and hasattr(s, 'task') and s.task:
+        try:
+            task_name = s.task.template.name
+            group_name = s.task.template.group.name
+        except Exception:
+            pass
+    from_username = None
+    if s.from_user_id and hasattr(s, 'from_user') and s.from_user:
+        from_username = s.from_user.username
     return {
         "id": s.id,
         "task_id": s.task_id,
+        "task_name": task_name,
+        "group_name": group_name,
         "from_user_id": str(s.from_user_id) if s.from_user_id else None,
+        "from_username": from_username,
         "to_user_id": str(s.to_user_id) if s.to_user_id else None,
         "swap_type": s.swap_type,
         "status": s.status,
@@ -258,6 +279,45 @@ class TaskAcceptEmergencyAPIView(APIView):
         except PermissionError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
         return Response(_serialize_occurrence(occurrence))
+
+
+class PendingSwapsAPIView(APIView):
+    """GET /api/users/me/pending-swaps/ — incoming swap requests directed at the current user."""
+    authentication_classes = [CsrfExemptSessionAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.utils import timezone
+        from chore_sync.models import GroupMembership
+        user = request.user
+
+        # Direct swaps sent to this user
+        direct = list(
+            TaskSwap.objects.select_related(
+                'task__template__group', 'from_user'
+            ).filter(
+                to_user=user,
+                status='pending',
+                expires_at__gt=timezone.now(),
+                swap_type='direct_swap',
+            )
+        )
+
+        # Open requests in groups this user belongs to (excluding own requests)
+        my_groups = GroupMembership.objects.filter(user=user).values_list('group_id', flat=True)
+        open_req = list(
+            TaskSwap.objects.select_related(
+                'task__template__group', 'from_user'
+            ).filter(
+                status='pending',
+                expires_at__gt=timezone.now(),
+                swap_type='open_request',
+                task__template__group_id__in=my_groups,
+            ).exclude(from_user=user)
+        )
+
+        swaps = direct + open_req
+        return Response([_serialize_swap(s) for s in swaps])
 
 
 _ALLOWED_MIME_TYPES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic'}

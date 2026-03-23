@@ -23,6 +23,7 @@
         <q-tab name="members" icon="people" label="Members" />
         <q-tab name="leaderboard" icon="leaderboard" label="Leaderboard" />
         <q-tab v-if="group.task_proposal_voting_required" name="proposals" icon="how_to_vote" label="Proposals" />
+        <q-tab name="marketplace" icon="storefront" label="Marketplace" />
         <q-tab name="chat" icon="chat" label="Chat" />
         <q-tab v-if="group.role === 'moderator'" name="settings" icon="settings" label="Settings" />
       </q-tabs>
@@ -81,6 +82,14 @@
                     @click="completeTask(t.id)">
                     <q-tooltip>{{ t.photo_proof_required && !t.photo_proof ? 'Upload photo proof first' : 'Complete' }}</q-tooltip>
                   </q-btn>
+                  <!-- List on Marketplace (only for assigned user, pending/snoozed, not already listed) -->
+                  <q-btn
+                    v-if="(t.status === 'pending' || t.status === 'snoozed') && t.assigned_to_id === myUserId && !t.on_marketplace"
+                    round flat icon="storefront" color="deep-purple" size="sm"
+                    @click="openListMarketplace(t)">
+                    <q-tooltip>List on marketplace</q-tooltip>
+                  </q-btn>
+                  <q-badge v-if="t.on_marketplace" color="deep-purple" label="On marketplace" class="q-mt-xs" />
                 </div>
               </q-item-section>
             </q-item>
@@ -194,6 +203,47 @@
           </q-dialog>
         </q-tab-panel>
 
+        <!-- ── MARKETPLACE ── -->
+        <q-tab-panel name="marketplace">
+          <div class="row items-center justify-between q-mb-md">
+            <div class="text-subtitle1">Task Marketplace</div>
+            <q-btn flat icon="refresh" size="sm" @click="loadMarketplace" />
+          </div>
+
+          <div v-if="marketplaceLoading" class="row justify-center q-pa-xl">
+            <q-spinner size="32px" color="primary" />
+          </div>
+
+          <div v-else-if="marketplaceListings.length === 0" class="text-center text-grey-6 q-pa-xl">
+            <q-icon name="storefront" size="48px" />
+            <div class="q-mt-sm">No tasks listed on the marketplace.</div>
+            <div class="text-caption q-mt-xs">List one of your pending tasks to let others pick it up!</div>
+          </div>
+
+          <q-card v-for="listing in marketplaceListings" :key="listing.id" flat bordered class="q-mb-sm">
+            <q-card-section>
+              <div class="row items-center q-gutter-sm">
+                <div class="text-weight-medium">{{ listing.task_name }}</div>
+                <q-badge v-if="listing.bonus_points > 0" color="amber-7" :label="`+${listing.bonus_points} pts bonus`" />
+              </div>
+              <div class="text-caption text-grey-6">
+                Listed by {{ listing.listed_by_username }} ·
+                Due {{ formatDate(listing.deadline) }} ·
+                Expires {{ formatDate(listing.expires_at) }}
+              </div>
+            </q-card-section>
+            <q-card-actions align="right">
+              <q-btn
+                v-if="listing.listed_by_id !== myUserId"
+                color="deep-purple" label="Claim this task" size="sm"
+                :loading="claimingListing[listing.id]"
+                @click="claimListing(listing.id)"
+              />
+              <q-chip v-else color="grey-4" text-color="grey-8" size="sm" label="Your listing" />
+            </q-card-actions>
+          </q-card>
+        </q-tab-panel>
+
         <!-- ── CHAT ── -->
         <q-tab-panel name="chat" class="q-pa-none">
           <div class="chat-container column">
@@ -242,6 +292,30 @@
         </q-tab-panel>
 
       </q-tab-panels>
+
+      <!-- List on Marketplace dialog -->
+      <q-dialog v-model="listMarketplaceDialog.show">
+        <q-card style="min-width:340px">
+          <q-card-section>
+            <div class="text-h6">List on Marketplace</div>
+            <div class="text-caption text-grey-6">{{ listMarketplaceDialog.task?.template_name }}</div>
+          </q-card-section>
+          <q-card-section class="q-gutter-sm">
+            <q-input
+              v-model.number="listMarketplaceDialog.bonusPoints"
+              type="number"
+              label="Bonus points (optional)"
+              hint="Offer bonus points to incentivise someone to take this task"
+              outlined
+              min="0"
+            />
+          </q-card-section>
+          <q-card-actions align="right">
+            <q-btn flat label="Cancel" v-close-popup />
+            <q-btn color="deep-purple" label="List task" :loading="listMarketplaceDialog.loading" @click="submitListMarketplace" />
+          </q-card-actions>
+        </q-card>
+      </q-dialog>
 
       <!-- New task dialog (triggered from Proposals tab) -->
       <q-dialog v-model="showTemplateForm">
@@ -305,7 +379,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { groupApi, taskApi, api } from '../services/api';
+import { groupApi, taskApi, marketplaceApi, api } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 import { NotificationSocketService } from '../services/NotificationSocketService';
 
@@ -337,6 +411,14 @@ const invite = ref({ email: '', role: 'member', loading: false, message: '', err
 // Leave group
 const leaveLoading = ref(false);
 const leaveError = ref('');
+
+// Marketplace
+const marketplaceListings = ref<any[]>([]);
+const marketplaceLoading = ref(false);
+const claimingListing = ref<Record<number, boolean>>({});
+const listMarketplaceDialog = ref<{ show: boolean; task: any | null; bonusPoints: number; loading: boolean }>({
+  show: false, task: null, bonusPoints: 0, loading: false,
+});
 
 // Photo proof
 const proofInputRef = ref<HTMLInputElement | null>(null);
@@ -451,6 +533,7 @@ async function loadAll() {
     loadLeaderboard();
     loadProposals();
     loadTemplates();
+    loadMarketplace();
   } catch {
     error.value = 'Failed to load group.';
   } finally {
@@ -470,6 +553,50 @@ async function loadTemplates() {
     const res = await api.get(`/api/groups/${groupId}/task-templates/`);
     templates.value = res.data;
   } catch {}
+}
+
+async function loadMarketplace() {
+  marketplaceLoading.value = true;
+  try {
+    marketplaceListings.value = (await marketplaceApi.groupListings(groupId)).data;
+  } catch {}
+  finally {
+    marketplaceLoading.value = false;
+  }
+}
+
+async function claimListing(listingId: number) {
+  claimingListing.value[listingId] = true;
+  try {
+    await marketplaceApi.claim(listingId);
+    await Promise.all([loadMarketplace(), taskApi.groupTasks(groupId).then(r => { tasks.value = r.data; })]);
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail ?? 'Failed to claim task.';
+  } finally {
+    claimingListing.value[listingId] = false;
+  }
+}
+
+function openListMarketplace(task: any) {
+  listMarketplaceDialog.value = { show: true, task, bonusPoints: 0, loading: false };
+}
+
+async function submitListMarketplace() {
+  if (!listMarketplaceDialog.value.task) return;
+  listMarketplaceDialog.value.loading = true;
+  try {
+    await taskApi.listMarketplace(listMarketplaceDialog.value.task.id, {
+      bonus_points: listMarketplaceDialog.value.bonusPoints || 0,
+    });
+    listMarketplaceDialog.value.show = false;
+    // Refresh tasks to update on_marketplace flag and reload marketplace listings
+    tasks.value = (await taskApi.groupTasks(groupId)).data;
+    await loadMarketplace();
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail ?? 'Failed to list task on marketplace.';
+  } finally {
+    listMarketplaceDialog.value.loading = false;
+  }
 }
 
 async function completeTask(id: number) {

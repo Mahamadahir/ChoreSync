@@ -486,6 +486,15 @@ def refresh_outlook_tokens() -> dict:
 
 
 @shared_task
+def cleanup_expired_marketplace_listings() -> dict:
+    """Delete marketplace listings that have expired. Runs every hour."""
+    from django.utils import timezone
+    from chore_sync.models import MarketplaceListing
+    deleted, _ = MarketplaceListing.objects.filter(expires_at__lt=timezone.now()).delete()
+    return {'deleted': deleted}
+
+
+@shared_task
 def catchup_outlook_calendar_sync() -> dict:
     """
     Safety-net incremental sync for Outlook calendars that haven't been synced

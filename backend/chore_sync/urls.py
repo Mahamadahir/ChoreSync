@@ -35,6 +35,12 @@ from chore_sync.api.task_router import (
     TaskEmergencyReassignAPIView,
     TaskAcceptEmergencyAPIView,
     TaskPhotoProofAPIView,
+    PendingSwapsAPIView,
+)
+from chore_sync.api.marketplace_router import (
+    TaskListMarketplaceAPIView,
+    GroupMarketplaceListAPIView,
+    MarketplaceClaimAPIView,
 )
 from chore_sync.api.stats_router import (
     UserStatsAPIView,
@@ -143,6 +149,10 @@ urlpatterns = [
     path('api/tasks/<int:pk>/emergency-reassign/', TaskEmergencyReassignAPIView.as_view(), name='task-emergency-reassign'),
     path('api/tasks/<int:pk>/accept-emergency/', TaskAcceptEmergencyAPIView.as_view(), name='task-accept-emergency'),
     path('api/tasks/<int:pk>/upload-proof/', TaskPhotoProofAPIView.as_view(), name='task-upload-proof'),
+    path('api/users/me/pending-swaps/', PendingSwapsAPIView.as_view(), name='user-pending-swaps'),
+    path('api/tasks/<int:pk>/list-marketplace/', TaskListMarketplaceAPIView.as_view(), name='task-list-marketplace'),
+    path('api/groups/<uuid:pk>/marketplace/', GroupMarketplaceListAPIView.as_view(), name='group-marketplace'),
+    path('api/marketplace/<int:pk>/claim/', MarketplaceClaimAPIView.as_view(), name='marketplace-claim'),
     path('api/users/me/stats/', UserStatsAPIView.as_view(), name='user-stats'),
     path('api/users/me/badges/', UserBadgesAPIView.as_view(), name='user-badges'),
     path('api/groups/<uuid:pk>/stats/', GroupStatsAPIView.as_view(), name='group-stats'),

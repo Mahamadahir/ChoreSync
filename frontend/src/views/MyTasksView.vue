@@ -94,6 +94,19 @@
             >
               <q-tooltip>Emergency reassign</q-tooltip>
             </q-btn>
+
+            <!-- List on Marketplace -->
+            <q-btn
+              v-if="(task.status === 'pending' || task.status === 'snoozed') && !task.on_marketplace"
+              round flat
+              icon="storefront"
+              color="deep-purple"
+              size="sm"
+              @click="openListMarketplace(task)"
+            >
+              <q-tooltip>List on marketplace</q-tooltip>
+            </q-btn>
+            <q-badge v-if="task.on_marketplace" color="deep-purple" label="On marketplace" />
           </div>
         </q-item-section>
       </q-item>
@@ -142,12 +155,72 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <!-- List on Marketplace dialog -->
+    <q-dialog v-model="listMarketplaceDialog.show">
+      <q-card style="min-width: 340px">
+        <q-card-section>
+          <div class="text-h6">List on Marketplace</div>
+          <div class="text-caption text-grey-6">{{ listMarketplaceDialog.task?.template_name }}</div>
+        </q-card-section>
+        <q-card-section class="q-gutter-sm">
+          <q-input
+            v-model.number="listMarketplaceDialog.bonusPoints"
+            type="number"
+            label="Bonus points (optional)"
+            hint="Offer bonus points to incentivise someone to take this task"
+            outlined
+            min="0"
+          />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" v-close-popup />
+          <q-btn color="deep-purple" label="List task" :loading="listMarketplaceDialog.loading" @click="submitListMarketplace" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Incoming Swap Requests section -->
+    <template v-if="incomingSwaps.length > 0">
+      <div class="text-h6 text-weight-bold q-mt-xl q-mb-sm">Incoming Swap Requests</div>
+      <q-list separator bordered class="rounded-borders">
+        <q-item v-for="swap in incomingSwaps" :key="swap.id" class="q-py-md">
+          <q-item-section>
+            <q-item-label class="text-weight-medium">{{ swap.task_name ?? `Task #${swap.task_id}` }}</q-item-label>
+            <q-item-label caption>
+              {{ swap.group_name }} ·
+              From {{ swap.from_username ?? swap.from_user_id }} ·
+              <span :class="swap.swap_type === 'open_request' ? 'text-blue-6' : 'text-purple'">
+                {{ swap.swap_type === 'open_request' ? 'Open request' : 'Direct to you' }}
+              </span>
+            </q-item-label>
+            <div v-if="swap.reason" class="text-caption text-grey-6 q-mt-xs">{{ swap.reason }}</div>
+          </q-item-section>
+          <q-item-section side>
+            <div class="row q-gutter-xs">
+              <q-btn
+                round flat icon="check" color="positive" size="sm"
+                :loading="swapRespondLoading[swap.id] === 'accept'"
+                @click="respondSwap(swap.id, true)">
+                <q-tooltip>Accept swap</q-tooltip>
+              </q-btn>
+              <q-btn
+                round flat icon="close" color="negative" size="sm"
+                :loading="swapRespondLoading[swap.id] === 'reject'"
+                @click="respondSwap(swap.id, false)">
+                <q-tooltip>Decline swap</q-tooltip>
+              </q-btn>
+            </div>
+          </q-item-section>
+        </q-item>
+      </q-list>
+    </template>
   </q-page>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { taskApi } from '../services/api';
+import { taskApi, marketplaceApi } from '../services/api';
 
 type Task = {
   id: number;
@@ -159,6 +232,20 @@ type Task = {
   points_earned: number;
   snooze_count: number;
   swap_id: number | null;
+  on_marketplace?: boolean;
+};
+
+type IncomingSwap = {
+  id: number;
+  task_id: number;
+  task_name: string | null;
+  group_name: string | null;
+  from_user_id: string | null;
+  from_username: string | null;
+  swap_type: string;
+  status: string;
+  reason: string | null;
+  expires_at: string;
 };
 
 const tasks = ref<Task[]>([]);
@@ -182,6 +269,11 @@ const snoozeDialog = ref<{ show: boolean; task: Task | null; until: string; load
 const swapDialog = ref<{ show: boolean; task: Task | null; targetUserId: string; reason: string; loading: boolean }>({
   show: false, task: null, targetUserId: '', reason: '', loading: false,
 });
+const listMarketplaceDialog = ref<{ show: boolean; task: Task | null; bonusPoints: number; loading: boolean }>({
+  show: false, task: null, bonusPoints: 0, loading: false,
+});
+const incomingSwaps = ref<IncomingSwap[]>([]);
+const swapRespondLoading = ref<Record<number, 'accept' | 'reject' | null>>({});
 
 async function loadTasks() {
   loading.value = true;
@@ -194,6 +286,15 @@ async function loadTasks() {
     error.value = 'Failed to load tasks.';
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadIncomingSwaps() {
+  try {
+    const res = await taskApi.pendingSwaps();
+    incomingSwaps.value = res.data;
+  } catch {
+    // Non-critical; ignore errors silently
   }
 }
 
@@ -256,6 +357,38 @@ async function emergencyReassign(id: number) {
   }
 }
 
+async function respondSwap(swapId: number, accept: boolean) {
+  swapRespondLoading.value[swapId] = accept ? 'accept' : 'reject';
+  try {
+    await taskApi.respondSwap(swapId, accept);
+    await Promise.all([loadTasks(), loadIncomingSwaps()]);
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail ?? 'Failed to respond to swap.';
+  } finally {
+    swapRespondLoading.value[swapId] = null;
+  }
+}
+
+function openListMarketplace(task: Task) {
+  listMarketplaceDialog.value = { show: true, task, bonusPoints: 0, loading: false };
+}
+
+async function submitListMarketplace() {
+  if (!listMarketplaceDialog.value.task) return;
+  listMarketplaceDialog.value.loading = true;
+  try {
+    await taskApi.listMarketplace(listMarketplaceDialog.value.task.id, {
+      bonus_points: listMarketplaceDialog.value.bonusPoints || 0,
+    });
+    listMarketplaceDialog.value.show = false;
+    await loadTasks();
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail ?? 'Failed to list task on marketplace.';
+  } finally {
+    listMarketplaceDialog.value.loading = false;
+  }
+}
+
 function formatDeadline(iso: string) {
   const d = new Date(iso);
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -269,5 +402,8 @@ function statusColor(status: string) {
   return map[status] ?? 'grey';
 }
 
-onMounted(loadTasks);
+onMounted(() => {
+  loadTasks();
+  loadIncomingSwaps();
+});
 </script>

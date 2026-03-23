@@ -1251,4 +1251,32 @@ class UserBadge(models.Model):
 
     class Meta:
         unique_together = ('user', 'badge', 'household')
-        
+
+
+class MarketplaceListing(models.Model):
+    """A task occurrence listed on the group marketplace for any member to claim."""
+
+    task_occurrence = models.OneToOneField(
+        TaskOccurrence,
+        on_delete=models.CASCADE,
+        related_name='marketplace_listing',
+    )
+    listed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='marketplace_listings',
+    )
+    group = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        related_name='marketplace_listings',
+    )
+    bonus_points = models.PositiveIntegerField(default=0)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['expires_at']
+
+    def __str__(self):
+        return f"MarketplaceListing({self.task_occurrence}, bonus={self.bonus_points})"

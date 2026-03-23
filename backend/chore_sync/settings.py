@@ -226,6 +226,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'chore_sync.tasks.renew_outlook_subscriptions',
         'schedule': 2 * 3600,  # every 2 hours
     },
+    'cleanup-expired-marketplace-listings': {
+        'task': 'chore_sync.tasks.cleanup_expired_marketplace_listings',
+        'schedule': 3600,  # every hour
+    },
 }
 
 # Route initial calendar syncs to a dedicated low-concurrency queue.

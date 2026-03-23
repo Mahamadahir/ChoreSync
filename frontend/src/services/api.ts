@@ -49,6 +49,17 @@ export const taskApi = {
   emergencyReassign: (id: number, payload: { reason?: string }) =>
     api.post(`/api/tasks/${id}/emergency-reassign/`, payload),
   acceptEmergency: (id: number) => api.post(`/api/tasks/${id}/accept-emergency/`),
+  listMarketplace: (id: number, payload: { bonus_points?: number }) =>
+    api.post(`/api/tasks/${id}/list-marketplace/`, payload),
+  pendingSwaps: () => api.get('/api/users/me/pending-swaps/'),
+};
+
+// ------------------------------------------------------------------ //
+//  Marketplace
+// ------------------------------------------------------------------ //
+export const marketplaceApi = {
+  groupListings: (groupId: string) => api.get(`/api/groups/${groupId}/marketplace/`),
+  claim: (listingId: number) => api.post(`/api/marketplace/${listingId}/claim/`),
 };
 
 // ------------------------------------------------------------------ //
