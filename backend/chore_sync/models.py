@@ -1090,6 +1090,10 @@ class Notification(models.Model):
         ('emergency_reassignment', 'Emergency reassignment'),
         ('badge_earned', 'Badge earned'),
         ('marketplace_claim', 'Marketplace claim'),
+        ('suggestion_pattern', 'Smart suggestion: pattern'),
+        ('suggestion_availability', 'Smart suggestion: availability'),
+        ('suggestion_preference', 'Smart suggestion: preference'),
+        ('suggestion_fairness', 'Smart suggestion: fairness'),
     ]
 
     recipient = models.ForeignKey(

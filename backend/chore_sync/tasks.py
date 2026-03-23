@@ -486,6 +486,23 @@ def refresh_outlook_tokens() -> dict:
 
 
 @shared_task
+def generate_smart_suggestions() -> dict:
+    """Daily at 08:00 — generate personalised smart suggestions for all active groups."""
+    from chore_sync.models import Group
+    from chore_sync.services.smart_suggestion_service import SmartSuggestionService
+
+    svc = SmartSuggestionService()
+    groups = Group.objects.all()
+    total = 0
+    for group in groups:
+        try:
+            total += svc.generate_for_group(group)
+        except Exception:
+            pass
+    return {'groups_processed': groups.count(), 'suggestions_created': total}
+
+
+@shared_task
 def cleanup_expired_marketplace_listings() -> dict:
     """Delete marketplace listings that have expired. Runs every hour."""
     from django.utils import timezone

@@ -230,6 +230,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'chore_sync.tasks.cleanup_expired_marketplace_listings',
         'schedule': 3600,  # every hour
     },
+    'generate-smart-suggestions': {
+        'task': 'chore_sync.tasks.generate_smart_suggestions',
+        'schedule': crontab(hour=8, minute=0),  # daily at 08:00
+    },
 }
 
 # Route initial calendar syncs to a dedicated low-concurrency queue.
