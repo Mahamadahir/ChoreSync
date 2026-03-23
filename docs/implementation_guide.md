@@ -947,15 +947,15 @@ CELERY_BEAT_SCHEDULE = {
 | P4 | Step 14 (Outlook Calendar Sync) ✅ | Core sync done; webhook subscriptions in Step 18 |
 | P4 | Step 15 (Dark Mode) ✅ | Complete |
 | P2 | Step 17 (Calendar Architecture Refactor) ✅ | Complete |
-| P2 | Step 18 (Outlook Graph Webhooks + writeback UI) | Real-time Outlook push; writeback toggle in frontend |
+| P2 | Step 18 (Outlook Graph Webhooks + writeback UI) | Writeback toggle ✅; Graph webhook subscriptions pending |
 | P3 | Step 19 (Photo Proof upload) | ImageField exists; needs upload endpoint + UI enforcement |
 | P3 | Step 20 (Task Marketplace) | Phase 4 feature from project plan |
 | P3 | Step 21 (Smart Suggestions) | Pattern/availability/fairness suggestions via Celery daily job |
-| P2 | Step 22 (Additional deadline reminders + badge criteria) | 3h/at-due reminders; Early Bird, Team Player, Negotiator badges |
+| P2 | Step 22 (Additional deadline reminders + badge criteria) ✅ | 3h + at-due windows done; 26 badges seeded |
 | P3 | Step 23 (Stats visualizations) | Chart.js frontend components for leaderboard & stats |
 | P4 | Step 24 (Notification preferences) | Per-user notification type config + quiet hours |
 | P4 | Step 25 (Security Hardening) | Pre-production; includes SSE 403 fix |
-| P3 | Step 26 (Fairness & calendar availability fixes) | time_based uses estimated_time; assignment checks calendar blocks |
+| P3 | Step 26 (Fairness & calendar availability fixes) | time_based ✅ fixed; calendar availability check pending |
 | P3 | Step 27 (TaskAssignmentHistory model) | Full history log for every assignment/swap/emergency |
 | P5 | Step 28 (PWA) | Mobile install prompt; service worker; offline support |
 
@@ -1164,7 +1164,7 @@ Add to `CELERY_BEAT_SCHEDULE`: `{'task': 'chore_sync.tasks.generate_smart_sugges
 
 ---
 
-### Step 22: Additional Deadline Reminders + New Badge Criteria
+### Step 22: Additional Deadline Reminders + New Badge Criteria ✅ COMPLETE
 
 #### 22a. Additional Reminder Windows
 
@@ -1300,7 +1300,7 @@ class NotificationPreference(models.Model):
 
 ---
 
-### Step 26: Fairness Algorithm Fixes + Calendar Availability in Assignment
+### Step 26: Fairness Algorithm Fixes + Calendar Availability in Assignment (26a ✅ COMPLETE — 26b pending)
 
 #### 26a. Fix `time_based` Fairness Algorithm
 
