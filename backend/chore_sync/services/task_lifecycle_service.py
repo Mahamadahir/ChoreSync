@@ -117,25 +117,9 @@ class TaskLifecycleService:
     #  Assignment — 3-stage pipeline
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def _is_user_available(user_id: str, deadline) -> bool:
-        """Return False if the user has a blocking calendar event within ±1 h of the deadline."""
-        window_start = deadline - timedelta(hours=1)
-        window_end   = deadline + timedelta(hours=1)
-        return not Event.objects.filter(
-            calendar__user_id=user_id,
-            calendar__include_in_availability=True,
-            blocks_availability=True,
-            start__lt=window_end,
-            end__gt=window_start,
-        ).exists()
-
     def assign_occurrence(self, occurrence: TaskOccurrence) -> None:
         """Assign a TaskOccurrence using the 3-stage fairness pipeline.
 
-        Stage 0 — Availability pre-filter: exclude users blocked within ±1 h of
-                   the deadline. Falls back to the full candidate set if everyone
-                   is unavailable (task must still be assigned).
         Stage 1 — Normalised fairness score (0-1) via compute_assignment_matrix.
         Stage 2 — Preference multiplier (prefer ×0.8, neutral ×1.0, avoid ×1.2).
         Stage 3 — Calendar conflict penalty (+0.5, never excluded).
@@ -145,17 +129,10 @@ class TaskLifecycleService:
         group = template.group
         deadline = occurrence.deadline
 
-        # Stage 1: fairness scores for all group members
+        # Stage 1: fairness scores
         scores: dict[str, float] = GroupOrchestrator().compute_assignment_matrix(
             group_id=str(group.id)
         )
-
-        # Stage 0: availability pre-filter — applied AFTER we have the candidate
-        # set so we can fall back gracefully when everyone is blocked.
-        available_ids = {uid for uid in scores if self._is_user_available(uid, deadline)}
-        if available_ids:
-            scores = {uid: s for uid, s in scores.items() if uid in available_ids}
-        # else: all blocked — keep full scores so the task is still assigned
 
         # Stage 2: preference multiplier
         PREF_WEIGHT = {'prefer': 0.8, 'neutral': 1.0, 'avoid': 1.2}
@@ -168,7 +145,7 @@ class TaskLifecycleService:
         for uid in scores:
             scores[uid] *= PREF_WEIGHT[preferences.get(uid, 'neutral')]
 
-        # Stage 3: calendar conflict penalty (exact deadline point)
+        # Stage 3: calendar conflict penalty
         for uid in scores:
             has_conflict = Event.objects.filter(
                 calendar__user_id=uid,
