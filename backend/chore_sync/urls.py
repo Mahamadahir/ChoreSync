@@ -56,6 +56,7 @@ from chore_sync.api.notification_router import (
     NotificationHistoryAPIView,
     NotificationReadAPIView,
     NotificationDismissAPIView,
+    NotificationPreferenceAPIView,
 )
 from chore_sync.api.outlook_calendar_router import (
     OutlookCalendarAuthURLAPIView,
@@ -162,4 +163,5 @@ urlpatterns = [
     path('api/notifications/history/', NotificationHistoryAPIView.as_view(), name='notification-history'),
     path('api/notifications/<int:pk>/read/', NotificationReadAPIView.as_view(), name='notification-read'),
     path('api/notifications/<int:pk>/dismiss/', NotificationDismissAPIView.as_view(), name='notification-dismiss'),
+    path('api/users/me/notification-preferences/', NotificationPreferenceAPIView.as_view(), name='notification-preferences'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

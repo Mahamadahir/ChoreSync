@@ -78,9 +78,76 @@ class NotificationDismissAPIView(APIView):
         return Response(_serialize(notification))
 
 
+class NotificationPreferenceAPIView(APIView):
+    """GET/PATCH /api/users/me/notification-preferences/"""
+    authentication_classes = [CsrfExemptSessionAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    _BOOLEAN_FIELDS = [
+        'deadline_reminders', 'task_assigned', 'task_swap',
+        'emergency_reassign', 'badge_earned', 'marketplace_activity',
+        'smart_suggestions', 'quiet_hours_enabled',
+    ]
+    _TIME_FIELDS = ['quiet_start', 'quiet_end']
+
+    def get(self, request):
+        from chore_sync.models import NotificationPreference
+        prefs, _ = NotificationPreference.objects.get_or_create(user=request.user)
+        return Response(_serialize_prefs(prefs))
+
+    def patch(self, request):
+        from chore_sync.models import NotificationPreference
+        prefs, _ = NotificationPreference.objects.get_or_create(user=request.user)
+        data = request.data
+        update_fields = []
+
+        for field in self._BOOLEAN_FIELDS:
+            if field in data:
+                setattr(prefs, field, bool(data[field]))
+                update_fields.append(field)
+
+        for field in self._TIME_FIELDS:
+            if field in data:
+                raw = data[field]
+                if raw is None or raw == '':
+                    setattr(prefs, field, None)
+                else:
+                    # Accept "HH:MM" or "HH:MM:SS"
+                    from datetime import time as dtime
+                    parts = str(raw).split(':')
+                    try:
+                        h, m = int(parts[0]), int(parts[1])
+                        setattr(prefs, field, dtime(h, m))
+                    except (IndexError, ValueError):
+                        return Response(
+                            {'detail': f'Invalid time format for {field}. Use HH:MM.'},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                update_fields.append(field)
+
+        if update_fields:
+            prefs.save(update_fields=update_fields)
+        return Response(_serialize_prefs(prefs))
+
+
 # ------------------------------------------------------------------ #
 #  Serialiser helper
 # ------------------------------------------------------------------ #
+
+def _serialize_prefs(p) -> dict:
+    return {
+        'deadline_reminders':   p.deadline_reminders,
+        'task_assigned':        p.task_assigned,
+        'task_swap':            p.task_swap,
+        'emergency_reassign':   p.emergency_reassign,
+        'badge_earned':         p.badge_earned,
+        'marketplace_activity': p.marketplace_activity,
+        'smart_suggestions':    p.smart_suggestions,
+        'quiet_hours_enabled':  p.quiet_hours_enabled,
+        'quiet_start':          p.quiet_start.strftime('%H:%M') if p.quiet_start else None,
+        'quiet_end':            p.quiet_end.strftime('%H:%M') if p.quiet_end else None,
+    }
+
 
 def _serialize(n) -> dict:
     return {

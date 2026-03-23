@@ -1284,3 +1284,33 @@ class MarketplaceListing(models.Model):
 
     def __str__(self):
         return f"MarketplaceListing({self.task_occurrence}, bonus={self.bonus_points})"
+
+
+class NotificationPreference(models.Model):
+    """Per-user configuration for which notification types to receive and quiet hours."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='notification_prefs',
+    )
+
+    # Per-type opt-out flags (True = receive, False = suppress)
+    deadline_reminders   = models.BooleanField(default=True)
+    task_assigned        = models.BooleanField(default=True)
+    task_swap            = models.BooleanField(default=True)
+    emergency_reassign   = models.BooleanField(default=True)
+    badge_earned         = models.BooleanField(default=True)
+    marketplace_activity = models.BooleanField(default=True)
+    smart_suggestions    = models.BooleanField(default=True)
+
+    # Quiet hours (evaluated in the user's own timezone stored on User.timezone)
+    quiet_hours_enabled = models.BooleanField(default=False)
+    quiet_start         = models.TimeField(null=True, blank=True)  # e.g. 22:00
+    quiet_end           = models.TimeField(null=True, blank=True)  # e.g. 08:00
+
+    class Meta:
+        verbose_name = 'notification preference'
+
+    def __str__(self):
+        return f"NotificationPreference(user={self.user_id})"

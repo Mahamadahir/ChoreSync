@@ -71,6 +71,8 @@ export const notificationApi = {
     api.get('/api/notifications/history/', { params }),
   markRead: (id: number) => api.post(`/api/notifications/${id}/read/`),
   dismiss: (id: number) => api.post(`/api/notifications/${id}/dismiss/`),
+  getPrefs: () => api.get('/api/users/me/notification-preferences/'),
+  patchPrefs: (payload: object) => api.patch('/api/users/me/notification-preferences/', payload),
 };
 
 // ------------------------------------------------------------------ //

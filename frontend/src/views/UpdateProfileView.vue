@@ -164,6 +164,53 @@
           <q-tooltip>{{ b.badge_description }} · Earned {{ formatDate(b.awarded_at) }}</q-tooltip>
         </q-chip>
       </div>
+
+      <!-- ── Notification Settings ── -->
+      <q-separator class="q-my-lg" />
+      <div class="text-subtitle1 q-mb-xs">Notification Settings</div>
+      <div class="text-body2 text-grey-7 q-mb-md">Choose which notifications you receive.</div>
+
+      <div v-if="prefsLoading" class="row justify-center q-pa-md">
+        <q-spinner color="primary" size="32px" />
+      </div>
+      <template v-else-if="prefs">
+        <div class="column q-gutter-sm q-mb-md">
+          <q-toggle v-model="prefs.deadline_reminders"   label="Deadline reminders"    @update:model-value="savePrefs" />
+          <q-toggle v-model="prefs.task_assigned"        label="Task assigned to me"   @update:model-value="savePrefs" />
+          <q-toggle v-model="prefs.task_swap"            label="Swap requests"         @update:model-value="savePrefs" />
+          <q-toggle v-model="prefs.emergency_reassign"   label="Emergency reassignments" @update:model-value="savePrefs" />
+          <q-toggle v-model="prefs.badge_earned"         label="Badge earned"          @update:model-value="savePrefs" />
+          <q-toggle v-model="prefs.marketplace_activity" label="Marketplace activity"  @update:model-value="savePrefs" />
+          <q-toggle v-model="prefs.smart_suggestions"    label="Smart suggestions"     @update:model-value="savePrefs" />
+        </div>
+
+        <q-separator class="q-mb-md" />
+        <div class="text-subtitle2 q-mb-sm">Quiet Hours</div>
+        <q-toggle v-model="prefs.quiet_hours_enabled" label="Enable quiet hours (suppress notifications during set window)" @update:model-value="savePrefs" class="q-mb-sm" />
+        <div v-if="prefs.quiet_hours_enabled" class="row q-col-gutter-md q-mb-md">
+          <div class="col-6">
+            <q-input
+              v-model="prefs.quiet_start"
+              label="Start (HH:MM)"
+              outlined dense
+              mask="##:##"
+              hint="e.g. 22:00"
+              @blur="savePrefs"
+            />
+          </div>
+          <div class="col-6">
+            <q-input
+              v-model="prefs.quiet_end"
+              label="End (HH:MM)"
+              outlined dense
+              mask="##:##"
+              hint="e.g. 08:00"
+              @blur="savePrefs"
+            />
+          </div>
+        </div>
+        <div v-if="prefsSaveMsg" class="text-caption text-positive q-mb-sm">{{ prefsSaveMsg }}</div>
+      </template>
     </q-card>
   </div>
 </template>
@@ -171,7 +218,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { authService } from '../services/authService';
-import { statsApi } from '../services/api';
+import { statsApi, notificationApi } from '../services/api';
 import { evaluatePassword } from '../utils/passwordStrength';
 import TasksOverTimeChart from '../components/charts/TasksOverTimeChart.vue';
 import CategoryBreakdownChart from '../components/charts/CategoryBreakdownChart.vue';
@@ -369,11 +416,38 @@ async function handlePasswordChange() {
   }
 }
 
+// ── Notification Preferences ──
+const prefs = ref<any>(null);
+const prefsLoading = ref(false);
+const prefsSaveMsg = ref('');
+let prefsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function loadPrefs() {
+  prefsLoading.value = true;
+  try {
+    const res = await notificationApi.getPrefs();
+    prefs.value = res.data;
+  } catch { /* ignore */ } finally {
+    prefsLoading.value = false;
+  }
+}
+
+async function savePrefs() {
+  if (!prefs.value) return;
+  try {
+    await notificationApi.patchPrefs(prefs.value);
+    prefsSaveMsg.value = 'Saved.';
+    if (prefsSaveTimer) clearTimeout(prefsSaveTimer);
+    prefsSaveTimer = setTimeout(() => { prefsSaveMsg.value = ''; }, 2000);
+  } catch { /* ignore */ }
+}
+
 onMounted(() => {
   loadTimezones();
   loadProfile();
   loadStats();
   loadBadges();
+  loadPrefs();
 });
 
 function computeStrength(value: string) {
