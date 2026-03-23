@@ -747,22 +747,33 @@ class GoogleCalendarWebhookAPIView(APIView):
 
 @method_decorator(csrf_exempt, name="dispatch")
 class EventStreamAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    # Use AllowAny so DRF never blocks with 403 — we check auth manually below
+    # using the raw Django request, bypassing DRF's ASGI-unfriendly lazy auth.
+    permission_classes = [AllowAny]
+    authentication_classes = []
     renderer_classes = [SSERenderer]
 
     def get(self, request):
-        user_id = request.user.id
+        # Read auth directly from Django's middleware-populated user, not DRF's
+        # lazy wrapper — avoids sync/async context issues under Daphne/ASGI.
+        django_user = request._request.user
+        if not django_user.is_authenticated:
+            # Yield a single close event so EventSource stops retrying immediately
+            # instead of hammering the server with repeated 403s.
+            def _unauth():
+                yield "event: close\ndata: unauthorized\n\n"
+            resp = StreamingHttpResponse(_unauth(), content_type="text/event-stream")
+            resp["Cache-Control"] = "no-cache"
+            return resp
+
+        user_id = django_user.id
         q = sse.subscribe(user_id)
 
         def event_stream():
             try:
-                # initial ping
                 yield "event: ping\ndata: connected\n\n"
                 while True:
                     try:
-                        # Short timeout so the thread can exit promptly on server
-                        # shutdown (Daphne kills tasks that block too long).
                         msg = q.get(timeout=3)
                         if msg is None:
                             continue

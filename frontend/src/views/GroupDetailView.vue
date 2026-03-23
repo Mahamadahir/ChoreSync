@@ -292,6 +292,24 @@
               {{ settings.message }}
             </div>
           </div>
+
+          <q-separator class="q-my-lg" />
+          <div class="row items-center justify-between q-mb-sm">
+            <div class="text-subtitle1">Task Templates</div>
+            <q-btn color="primary" icon="add" label="New template" size="sm" @click="showTemplateForm = true" />
+          </div>
+          <div v-if="templates.length === 0" class="text-caption text-grey-6">No templates yet.</div>
+          <q-list v-else separator bordered class="rounded-borders" style="max-width:560px">
+            <q-item v-for="tmpl in templates" :key="tmpl.id">
+              <q-item-section>
+                <q-item-label>{{ tmpl.name }}</q-item-label>
+                <q-item-label caption>{{ tmpl.category }} · {{ tmpl.recurring_choice }}</q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <q-btn flat round icon="delete" color="negative" size="sm" @click="deleteTemplate(tmpl.id)" />
+              </q-item-section>
+            </q-item>
+          </q-list>
         </q-tab-panel>
 
       </q-tab-panels>
@@ -557,6 +575,16 @@ async function loadTemplates() {
     const res = await api.get(`/api/groups/${groupId}/task-templates/`);
     templates.value = res.data;
   } catch {}
+}
+
+async function deleteTemplate(templateId: number) {
+  try {
+    const { api } = await import('../services/api');
+    await api.delete(`/api/task-templates/${templateId}/`);
+    await loadTemplates();
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail ?? 'Failed to delete template.';
+  }
 }
 
 async function loadMarketplace() {

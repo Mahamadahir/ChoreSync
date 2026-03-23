@@ -355,16 +355,18 @@ function startStream() {
   try {
     const es = eventService.stream();
     eventSource.value = es;
-    es.onmessage = () => {
-      reload();
-    };
+    es.onmessage = () => { reload(); };
     es.addEventListener('ping', () => {});
+    // Server sends "close" event when the user is not authenticated — stop permanently.
+    es.addEventListener('close', () => {
+      es.close();
+      eventSource.value = null;
+    });
     es.onerror = () => {
       es.close();
       eventSource.value = null;
-      // Only retry if still authenticated — don't hammer the server on auth failures
       if (authStore.isAuthenticated) {
-        setTimeout(startStream, 5000);
+        setTimeout(startStream, 10000);
       }
     };
   } catch (err) {
