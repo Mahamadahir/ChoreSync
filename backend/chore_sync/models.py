@@ -1314,3 +1314,39 @@ class NotificationPreference(models.Model):
 
     def __str__(self):
         return f"NotificationPreference(user={self.user_id})"
+
+
+class TaskAssignmentHistory(models.Model):
+    """Immutable log of every task assignment event."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='assignment_history',
+    )
+    task_template = models.ForeignKey(
+        'TaskTemplate',
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='assignment_history',
+    )
+    task_occurrence = models.ForeignKey(
+        'TaskOccurrence',
+        on_delete=models.CASCADE,
+        related_name='assignment_history',
+    )
+    assigned_at     = models.DateTimeField(auto_now_add=True)
+    completed       = models.BooleanField(default=False)
+    completed_at    = models.DateTimeField(null=True, blank=True)
+    was_swapped     = models.BooleanField(default=False)
+    was_emergency   = models.BooleanField(default=False)
+    was_marketplace = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-assigned_at']
+        indexes = [
+            models.Index(fields=['user', 'task_template', 'assigned_at']),
+        ]
+
+    def __str__(self):
+        return f"TaskAssignmentHistory(user={self.user_id}, occurrence={self.task_occurrence_id})"

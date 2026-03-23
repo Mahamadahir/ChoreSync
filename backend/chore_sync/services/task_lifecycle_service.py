@@ -9,7 +9,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from chore_sync.models import (
-    Event, GroupMembership, TaskOccurrence,
+    Event, GroupMembership, TaskAssignmentHistory, TaskOccurrence,
     TaskPreference, TaskSwap, TaskTemplate, User, UserStats,
 )
 from chore_sync.services.group_service import GroupOrchestrator
@@ -164,6 +164,11 @@ class TaskLifecycleService:
             occurrence.assigned_to = winner
             occurrence.status = 'pending'
             occurrence.save(update_fields=['assigned_to', 'status'])
+            TaskAssignmentHistory.objects.create(
+                user=winner,
+                task_template=template,
+                task_occurrence=occurrence,
+            )
 
         # Writeback: create a calendar event on the winner's task-writeback calendar.
         try:
@@ -237,6 +242,11 @@ class TaskLifecycleService:
                 self._update_stats(user_id=actor_id, group=group, points=points)
                 gsvc.update_streak(user_id=actor_id, group_id=str(group.id))
                 gsvc.update_on_time_rate(user_id=actor_id, group_id=str(group.id))
+                TaskAssignmentHistory.objects.filter(
+                    user_id=actor_id,
+                    task_occurrence=occurrence,
+                    completed=False,
+                ).update(completed=True, completed_at=now)
 
             # Writeback: update the calendar event to reflect completion.
             try:
@@ -455,6 +465,19 @@ class TaskLifecycleService:
                 occurrence.assigned_to_id = actor_id
                 occurrence.reassignment_reason = 'swap'
                 occurrence.save(update_fields=['assigned_to_id', 'reassignment_reason'])
+
+                # Mark original assignee's history row as swapped
+                TaskAssignmentHistory.objects.filter(
+                    user_id=swap.from_user_id,
+                    task_occurrence=occurrence,
+                ).update(was_swapped=True)
+                # New history row for the accepting user
+                TaskAssignmentHistory.objects.create(
+                    user_id=actor_id,
+                    task_template=occurrence.template,
+                    task_occurrence=occurrence,
+                    was_swapped=True,
+                )
             else:
                 swap.status = 'rejected'
                 swap.save(update_fields=['status', 'decided_at'])
@@ -599,6 +622,12 @@ class TaskLifecycleService:
             occurrence.assigned_to_id = actor_id
             occurrence.status = 'pending'
             occurrence.save(update_fields=['assigned_to_id', 'status'])
+            TaskAssignmentHistory.objects.create(
+                user_id=actor_id,
+                task_template=occurrence.template,
+                task_occurrence=occurrence,
+                was_emergency=True,
+            )
 
         # Writeback: create a calendar event for the new assignee.
         try:

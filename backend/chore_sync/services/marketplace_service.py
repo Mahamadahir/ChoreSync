@@ -76,6 +76,15 @@ class MarketplaceService:
             occurrence.reassignment_reason = 'swap'
             occurrence.save(update_fields=['assigned_to', 'reassignment_reason'])
 
+            # History log for marketplace claim
+            from chore_sync.models import TaskAssignmentHistory
+            TaskAssignmentHistory.objects.create(
+                user=user,
+                task_template=occurrence.template,
+                task_occurrence=occurrence,
+                was_marketplace=True,
+            )
+
             # Award bonus points to claimer
             if bonus_pts > 0:
                 stats, _ = UserStats.objects.get_or_create(
