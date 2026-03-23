@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 
 from django.db.models import Count
+from django.db.models.functions import TruncWeek
 from django.utils import timezone
 
 from chore_sync.models import (
@@ -30,7 +32,7 @@ class InsightsService:
             .select_related('household')
             .order_by('-total_points')
         )
-        return [_serialize_stats(s) for s in stats_qs]
+        return [_serialize_stats(s, user_id=user_id) for s in stats_qs]
 
     # ------------------------------------------------------------------ #
     #  User badges
@@ -141,8 +143,8 @@ class InsightsService:
 #  Serialiser helpers
 # ------------------------------------------------------------------ #
 
-def _serialize_stats(s: UserStats) -> dict:
-    return {
+def _serialize_stats(s: UserStats, user_id: str | None = None) -> dict:
+    result = {
         'household_id': str(s.household_id),
         'household_name': s.household.name,
         'total_tasks_completed': s.total_tasks_completed,
@@ -153,7 +155,43 @@ def _serialize_stats(s: UserStats) -> dict:
         'current_streak_days': s.current_streak_days,
         'longest_streak_days': s.longest_streak_days,
         'last_updated': s.last_updated.isoformat(),
+        'weekly_completions': [],
+        'category_breakdown': [],
     }
+    if user_id is not None:
+        eight_weeks_ago = timezone.now() - timedelta(weeks=8)
+        weekly_qs = (
+            TaskOccurrence.objects.filter(
+                assigned_to_id=user_id,
+                template__group_id=s.household_id,
+                status='completed',
+                completed_at__gte=eight_weeks_ago,
+            )
+            .annotate(week=TruncWeek('completed_at'))
+            .values('week')
+            .annotate(count=Count('id'))
+            .order_by('week')
+        )
+        result['weekly_completions'] = [
+            {'week': row['week'].strftime('%Y-W%W'), 'count': row['count']}
+            for row in weekly_qs
+        ]
+
+        category_qs = (
+            TaskOccurrence.objects.filter(
+                assigned_to_id=user_id,
+                template__group_id=s.household_id,
+                status='completed',
+            )
+            .values('template__category')
+            .annotate(count=Count('id'))
+            .order_by('-count')
+        )
+        result['category_breakdown'] = [
+            {'category': row['template__category'] or 'Uncategorized', 'count': row['count']}
+            for row in category_qs
+        ]
+    return result
 
 
 def _serialize_badge(ub: UserBadge) -> dict:

@@ -128,6 +128,24 @@
       </div>
       <div v-else class="text-caption text-grey-6 q-mb-md">No stats yet — complete some tasks to see your progress.</div>
 
+      <!-- ── Charts ── -->
+      <template v-if="statsRaw.length > 0">
+        <q-separator class="q-my-lg" />
+        <div class="text-subtitle1 q-mb-sm">Progress Charts</div>
+        <div class="row q-col-gutter-md q-mb-md">
+          <div class="col-12 col-md-6">
+            <q-card flat bordered class="q-pa-md">
+              <TasksOverTimeChart :data="weeklyCompletions" />
+            </q-card>
+          </div>
+          <div class="col-12 col-md-6">
+            <q-card flat bordered class="q-pa-md">
+              <CategoryBreakdownChart :data="categoryBreakdown" />
+            </q-card>
+          </div>
+        </div>
+      </template>
+
       <!-- ── Badges ── -->
       <q-separator class="q-my-lg" />
       <div class="text-subtitle1 q-mb-sm">Badges</div>
@@ -151,10 +169,12 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { authService } from '../services/authService';
 import { statsApi } from '../services/api';
 import { evaluatePassword } from '../utils/passwordStrength';
+import TasksOverTimeChart from '../components/charts/TasksOverTimeChart.vue';
+import CategoryBreakdownChart from '../components/charts/CategoryBreakdownChart.vue';
 
 const username = ref('');
 const email = ref('');
@@ -175,16 +195,38 @@ const showConfirmPassword = ref(false);
 
 const stats = ref<any>(null);
 const statsLoading = ref(false);
+const statsRaw = ref<any[]>([]);
 const badges = ref<any[]>([]);
 const badgesLoading = ref(false);
+
+const weeklyCompletions = computed<{ week: string; count: number }[]>(() => {
+  // Merge weekly_completions across all households, summing counts per week
+  const map = new Map<string, number>();
+  for (const s of statsRaw.value) {
+    for (const wc of (s.weekly_completions || [])) {
+      map.set(wc.week, (map.get(wc.week) || 0) + wc.count);
+    }
+  }
+  return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([week, count]) => ({ week, count }));
+});
+
+const categoryBreakdown = computed<{ category: string; count: number }[]>(() => {
+  const map = new Map<string, number>();
+  for (const s of statsRaw.value) {
+    for (const cb of (s.category_breakdown || [])) {
+      map.set(cb.category, (map.get(cb.category) || 0) + cb.count);
+    }
+  }
+  return Array.from(map.entries()).sort((a, b) => b[1] - a[1]).map(([category, count]) => ({ category, count }));
+});
 
 async function loadStats() {
   statsLoading.value = true;
   try {
     const res = await statsApi.myStats();
-    // API returns a list of stats per household; pick the aggregate or the first
     const data = res.data;
     if (Array.isArray(data) && data.length > 0) {
+      statsRaw.value = data;
       stats.value = data.reduce((acc: any, s: any) => ({
         total_tasks_completed: (acc.total_tasks_completed || 0) + (s.total_tasks_completed || 0),
         total_points: (acc.total_points || 0) + (s.total_points || 0),

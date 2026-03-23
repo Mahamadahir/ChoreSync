@@ -146,6 +146,9 @@
             bordered
             hide-bottom
           />
+          <q-card flat bordered class="q-pa-md q-mt-md" v-if="leaderboard.length > 0">
+            <FairnessChart :distribution="leaderboard" />
+          </q-card>
         </q-tab-panel>
 
         <!-- ── PROPOSALS ── -->
@@ -382,6 +385,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { groupApi, taskApi, marketplaceApi, api } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 import { NotificationSocketService } from '../services/NotificationSocketService';
+import FairnessChart from '../components/charts/FairnessChart.vue';
 
 const route = useRoute();
 const router = useRouter();
