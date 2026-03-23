@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -88,7 +89,7 @@ class NotificationService:
     # ------------------------------------------------------------------ #
 
     # Maps notification type prefixes/exact names → preference field name
-    _TYPE_TO_PREF: dict[str, str] = {
+    _TYPE_TO_PREF: ClassVar[dict[str, str]] = {
         'deadline_reminder':    'deadline_reminders',
         'task_assigned':        'task_assigned',
         'task_swap':            'task_swap',
