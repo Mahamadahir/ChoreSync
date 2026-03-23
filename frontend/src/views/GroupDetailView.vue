@@ -34,6 +34,15 @@
           <div class="row justify-end q-mb-sm">
             <q-btn v-if="!group.task_proposal_voting_required" color="secondary" icon="add_task" label="New task" size="sm" @click="showTemplateForm = true" />
           </div>
+          <!-- Hidden file input for photo proof uploads -->
+          <input
+            ref="proofInputRef"
+            type="file"
+            accept="image/*"
+            style="display:none"
+            @change="handleProofFile"
+          />
+
           <div v-if="tasks.length === 0" class="text-center text-grey-6 q-pa-xl">
             <q-icon name="task_alt" size="48px" /><div class="q-mt-sm">No tasks yet.</div>
           </div>
@@ -43,13 +52,36 @@
                 <q-item-label class="text-weight-medium">{{ t.template_name }}</q-item-label>
                 <q-item-label caption>Due {{ formatDate(t.deadline) }} · {{ t.assigned_to_username ?? 'Unassigned' }}</q-item-label>
                 <q-badge :color="statusColor(t.status)" :label="t.status" class="q-mt-xs" style="width:fit-content" />
+                <!-- Proof thumbnail for completed tasks -->
+                <div v-if="t.photo_proof" class="q-mt-xs">
+                  <a :href="t.photo_proof" target="_blank" rel="noopener">
+                    <img :src="t.photo_proof" alt="Proof" style="max-height:60px;border-radius:6px;cursor:pointer;" />
+                  </a>
+                </div>
+                <!-- Upload needed indicator -->
+                <div v-else-if="t.photo_proof_required && (t.status === 'pending' || t.status === 'snoozed')" class="q-mt-xs text-caption text-orange">
+                  <q-icon name="camera_alt" size="xs" /> Photo proof required before completing
+                </div>
               </q-item-section>
               <q-item-section side>
-                <q-btn v-if="t.status === 'pending' || t.status === 'snoozed'"
-                  round flat icon="check_circle" color="positive" size="sm"
-                  @click="completeTask(t.id)">
-                  <q-tooltip>Complete</q-tooltip>
-                </q-btn>
+                <div class="column items-center q-gutter-xs">
+                  <!-- Upload proof button (only when proof required and not yet uploaded) -->
+                  <q-btn
+                    v-if="t.photo_proof_required && !t.photo_proof && (t.status === 'pending' || t.status === 'snoozed')"
+                    round flat icon="camera_alt" color="orange" size="sm"
+                    :loading="proofUploading[t.id]"
+                    @click="triggerProofUpload(t.id)">
+                    <q-tooltip>Upload photo proof</q-tooltip>
+                  </q-btn>
+                  <!-- Complete button — disabled when proof required but not yet uploaded -->
+                  <q-btn
+                    v-if="t.status === 'pending' || t.status === 'snoozed'"
+                    round flat icon="check_circle" color="positive" size="sm"
+                    :disable="t.photo_proof_required && !t.photo_proof"
+                    @click="completeTask(t.id)">
+                    <q-tooltip>{{ t.photo_proof_required && !t.photo_proof ? 'Upload photo proof first' : 'Complete' }}</q-tooltip>
+                  </q-btn>
+                </div>
               </q-item-section>
             </q-item>
           </q-list>
@@ -273,7 +305,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { groupApi, taskApi } from '../services/api';
+import { groupApi, taskApi, api } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 import { NotificationSocketService } from '../services/NotificationSocketService';
 
@@ -305,6 +337,41 @@ const invite = ref({ email: '', role: 'member', loading: false, message: '', err
 // Leave group
 const leaveLoading = ref(false);
 const leaveError = ref('');
+
+// Photo proof
+const proofInputRef = ref<HTMLInputElement | null>(null);
+const proofUploading = ref<Record<number, boolean>>({});
+let proofTargetTaskId: number | null = null;
+
+function triggerProofUpload(taskId: number) {
+  proofTargetTaskId = taskId;
+  proofInputRef.value?.click();
+}
+
+async function handleProofFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file || proofTargetTaskId === null) return;
+  const taskId = proofTargetTaskId;
+  proofTargetTaskId = null;
+  input.value = '';
+
+  proofUploading.value[taskId] = true;
+  try {
+    const form = new FormData();
+    form.append('photo', file);
+    const res = await api.post(`/api/tasks/${taskId}/upload-proof/`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    // Update local task with returned photo_url so Complete button enables immediately
+    const idx = tasks.value.findIndex(t => t.id === taskId);
+    if (idx !== -1) tasks.value[idx] = { ...tasks.value[idx], photo_proof: res.data.photo_url };
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail ?? 'Failed to upload photo proof.';
+  } finally {
+    proofUploading.value[taskId] = false;
+  }
+}
 
 // Proposal form
 const showProposalForm = ref(false);

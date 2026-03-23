@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from rest_framework import status
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -27,6 +28,7 @@ def _serialize_occurrence(o: TaskOccurrence) -> dict:
         "completed_at": o.completed_at,
         "points_earned": o.points_earned,
         "snooze_count": o.snooze_count,
+        "photo_proof_required": o.template.photo_proof_required,
         "photo_proof": o.photo_proof.url if o.photo_proof else None,
     }
 
@@ -256,3 +258,54 @@ class TaskAcceptEmergencyAPIView(APIView):
         except PermissionError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
         return Response(_serialize_occurrence(occurrence))
+
+
+_ALLOWED_MIME_TYPES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic'}
+_MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+class TaskPhotoProofAPIView(APIView):
+    """POST /api/tasks/{pk}/upload-proof/"""
+    authentication_classes = [CsrfExemptSessionAuthentication]
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, pk):
+        occurrence = TaskOccurrence.objects.select_related(
+            'template__group', 'assigned_to'
+        ).filter(id=pk).first()
+        if occurrence is None:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        group = occurrence.template.group
+        if not GroupMembership.objects.filter(user=request.user, group=group).exists():
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Only the assignee or a moderator may upload proof
+        is_assigned = str(occurrence.assigned_to_id) == str(request.user.id)
+        is_moderator = GroupMembership.objects.filter(
+            user=request.user, group=group, role='moderator'
+        ).exists()
+        if not is_assigned and not is_moderator:
+            return Response(
+                {"detail": "Only the assigned user or a group moderator can upload proof."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        photo = request.FILES.get('photo')
+        if photo is None:
+            return Response({"detail": "photo file is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if photo.size > _MAX_UPLOAD_BYTES:
+            return Response({"detail": "File too large. Maximum size is 5 MB."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if photo.content_type not in _ALLOWED_MIME_TYPES:
+            return Response(
+                {"detail": f"Unsupported file type '{photo.content_type}'. Upload a JPEG, PNG, GIF, WebP, or HEIC image."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        occurrence.photo_proof = photo
+        occurrence.save(update_fields=['photo_proof'])
+
+        return Response({"photo_url": occurrence.photo_proof.url}, status=status.HTTP_200_OK)

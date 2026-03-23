@@ -14,6 +14,8 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path
 
@@ -32,6 +34,7 @@ from chore_sync.api.task_router import (
     TaskSwapRespondAPIView,
     TaskEmergencyReassignAPIView,
     TaskAcceptEmergencyAPIView,
+    TaskPhotoProofAPIView,
 )
 from chore_sync.api.stats_router import (
     UserStatsAPIView,
@@ -137,6 +140,7 @@ urlpatterns = [
     path('api/task-swaps/<int:pk>/respond/', TaskSwapRespondAPIView.as_view(), name='task-swap-respond'),
     path('api/tasks/<int:pk>/emergency-reassign/', TaskEmergencyReassignAPIView.as_view(), name='task-emergency-reassign'),
     path('api/tasks/<int:pk>/accept-emergency/', TaskAcceptEmergencyAPIView.as_view(), name='task-accept-emergency'),
+    path('api/tasks/<int:pk>/upload-proof/', TaskPhotoProofAPIView.as_view(), name='task-upload-proof'),
     path('api/users/me/stats/', UserStatsAPIView.as_view(), name='user-stats'),
     path('api/users/me/badges/', UserBadgesAPIView.as_view(), name='user-badges'),
     path('api/groups/<uuid:pk>/stats/', GroupStatsAPIView.as_view(), name='group-stats'),
@@ -146,4 +150,4 @@ urlpatterns = [
     path('api/notifications/history/', NotificationHistoryAPIView.as_view(), name='notification-history'),
     path('api/notifications/<int:pk>/read/', NotificationReadAPIView.as_view(), name='notification-read'),
     path('api/notifications/<int:pk>/dismiss/', NotificationDismissAPIView.as_view(), name='notification-dismiss'),
-]
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

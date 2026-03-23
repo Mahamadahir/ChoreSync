@@ -218,7 +218,8 @@ class TaskLifecycleService:
             raise PermissionError("Only the assigned user or a group moderator can update this task.")
 
         if completed:
-            if group.photo_proof_required and not occurrence.photo_proof:
+            needs_proof = group.photo_proof_required or occurrence.template.photo_proof_required
+            if needs_proof and not occurrence.photo_proof:
                 raise ValueError("Photo proof is required to complete this task.")
 
             now = timezone.now()
