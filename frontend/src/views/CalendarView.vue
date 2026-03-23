@@ -79,7 +79,9 @@ import '@fullcalendar/common/main.css';
 import '@fullcalendar/daygrid/main.css';
 import '@fullcalendar/timegrid/main.css';
 import { onMounted, watch, onBeforeUnmount } from 'vue';
+import { useAuthStore } from '../stores/auth';
 
+const authStore = useAuthStore();
 const calendarRef = ref();
 const loading = ref(false);
 const error = ref('');
@@ -349,6 +351,7 @@ async function handleEventResize(arg: any) {
 }
 
 function startStream() {
+  if (!authStore.isAuthenticated) return;
   try {
     const es = eventService.stream();
     eventSource.value = es;
@@ -358,7 +361,11 @@ function startStream() {
     es.addEventListener('ping', () => {});
     es.onerror = () => {
       es.close();
-      setTimeout(startStream, 5000);
+      eventSource.value = null;
+      // Only retry if still authenticated — don't hammer the server on auth failures
+      if (authStore.isAuthenticated) {
+        setTimeout(startStream, 5000);
+      }
     };
   } catch (err) {
     // ignore stream errors; user can still refresh manually

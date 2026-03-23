@@ -111,6 +111,7 @@ class AccountService:
             name=f"{user.get_username()}'s calendar",
             color="grey",
             timezone=getattr(user, "timezone", "UTC"),
+            is_task_writeback=True,
         )
 
     def register_user(self, *, username: str, email: str, password: str, timezone: str | None = None) -> UserDTO:
@@ -189,8 +190,7 @@ class AccountService:
         token_obj = token_obj or EmailVerificationToken.generate_for_user(user)
 
         # Build frontend URL like https://app.example.com/verify-email?token=...
-        base_url = getattr(settings, "FRONTEND_VERIFY_EMAIL_URL", "http://localhost:5173/verify-email")
-        verify_url = f"{base_url}?token={token_obj.token}"
+        verify_url = f"{settings.FRONTEND_VERIFY_EMAIL_URL}?token={token_obj.token}"
 
         subject = "Confirm your email for ChoreSync"
         message = (
@@ -525,7 +525,7 @@ class AccountService:
         if not user.is_active:
             raise InactiveAccount("Account is not active.")
         token_obj = PasswordResetToken.generate_for_user(user, lifetime_hours=1)
-        reset_url = f"{getattr(settings, 'FRONTEND_RESET_PASSWORD_URL', 'http://localhost:5173/reset-password')}?token={token_obj.token}"
+        reset_url = f"{settings.FRONTEND_RESET_PASSWORD_URL}?token={token_obj.token}"
         subject = "Reset your password"
         message = (
             "We received a request to reset your password.\n\n"

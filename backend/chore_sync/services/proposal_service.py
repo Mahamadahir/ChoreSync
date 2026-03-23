@@ -128,7 +128,7 @@ class ProposalService:
             # Lock the row so concurrent calls don't double-resolve
             locked = (
                 TaskProposal.objects.select_related('task_template')
-                .select_for_update()
+                .select_for_update(of=('self',))
                 .filter(id=proposal.id, state='pending')
                 .first()
             )

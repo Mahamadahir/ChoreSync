@@ -2,7 +2,9 @@
   <q-layout view="hHh lpR fFf">
     <q-header elevated class="bg-primary text-white">
       <q-toolbar>
-        <q-toolbar-title>ChoreSync</q-toolbar-title>
+        <q-toolbar-title>
+          <router-link to="/home" class="text-white" style="text-decoration:none">ChoreSync</router-link>
+        </q-toolbar-title>
         <template v-if="authStore.isAuthenticated">
           <q-btn flat dense to="/groups">Groups</q-btn>
           <q-btn flat dense to="/tasks">My Tasks</q-btn>
@@ -42,7 +44,12 @@
         <div class="q-mt-sm">No notifications</div>
       </div>
       <q-list separator>
-        <q-item v-for="n in notifications" :key="n.id" :class="{ 'bg-blue-1': !n.read }">
+        <q-item
+          v-for="n in notifications"
+          :key="n.id"
+          :class="{ 'bg-blue-1': !n.read, 'cursor-pointer': !!n.action_url }"
+          @click="handleNotificationClick(n)"
+        >
           <q-item-section>
             <q-item-label class="text-weight-medium">{{ n.title }}</q-item-label>
             <q-item-label caption>{{ n.content }}</q-item-label>
@@ -69,6 +76,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useQuasar } from 'quasar';
+import { useRouter } from 'vue-router';
 import { authService } from './services/authService';
 import { useAuthStore } from './stores/auth';
 import { notificationApi } from './services/api';
@@ -76,6 +84,7 @@ import { NotificationSocketService } from './services/NotificationSocketService'
 
 const $q = useQuasar();
 const authStore = useAuthStore();
+const router = useRouter();
 const notifDrawer = ref(false);
 
 function toggleDark() {
@@ -108,6 +117,14 @@ async function dismiss(id: number) {
     await notificationApi.dismiss(id);
     notifications.value = notifications.value.filter(n => n.id !== id);
   } catch {}
+}
+
+async function handleNotificationClick(n: any) {
+  if (!n.read) await markRead(n.id);
+  if (n.action_url) {
+    notifDrawer.value = false;
+    router.push(n.action_url);
+  }
 }
 
 async function handleLogout() {

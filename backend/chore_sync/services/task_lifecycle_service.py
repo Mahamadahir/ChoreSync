@@ -165,6 +165,15 @@ class TaskLifecycleService:
             occurrence.status = 'pending'
             occurrence.save(update_fields=['assigned_to', 'status'])
 
+        # Writeback: create a calendar event on the winner's task-writeback calendar.
+        try:
+            from chore_sync.services.sync_providers.registry import get_task_writeback_provider
+            provider = get_task_writeback_provider(winner)
+            if provider:
+                provider.create_task_event(occurrence)
+        except Exception:
+            pass  # writeback failure must never break assignment
+
         _notif_svc.emit_notification(
             recipient_id=str(winner.id),
             title=f"New task assigned: {template.name}",
@@ -174,6 +183,7 @@ class TaskLifecycleService:
                 f"due {deadline.strftime('%d %b %Y')}."
             ),
             task_occurrence_id=occurrence.id,
+            action_url=f"/tasks/{occurrence.id}",
         )
 
     # ------------------------------------------------------------------ #
@@ -226,6 +236,16 @@ class TaskLifecycleService:
                 self._update_stats(user_id=actor_id, group=group, points=points)
                 gsvc.update_streak(user_id=actor_id, group_id=str(group.id))
                 gsvc.update_on_time_rate(user_id=actor_id, group_id=str(group.id))
+
+            # Writeback: update the calendar event to reflect completion.
+            try:
+                from chore_sync.services.sync_providers.registry import get_task_writeback_provider
+                if occurrence.assigned_to:
+                    provider = get_task_writeback_provider(occurrence.assigned_to)
+                    if provider:
+                        provider.update_task_event(occurrence)
+            except Exception:
+                pass
 
             from chore_sync.tasks import evaluate_badges
             evaluate_badges.delay(user_id=actor_id, group_id=str(group.id))
@@ -439,12 +459,29 @@ class TaskLifecycleService:
                 swap.save(update_fields=['status', 'decided_at'])
 
         if accept:
+            # Writeback: move the calendar event from the original assignee to the new one.
+            try:
+                from chore_sync.services.sync_providers.registry import get_task_writeback_provider
+                occurrence = swap.task
+                # Delete from old assignee's calendar.
+                old_provider = get_task_writeback_provider(swap.from_user)
+                if old_provider:
+                    old_provider.delete_task_event(occurrence)
+                # Create on new assignee's calendar.
+                new_user = occurrence.assigned_to
+                new_provider = get_task_writeback_provider(new_user)
+                if new_provider:
+                    new_provider.create_task_event(occurrence)
+            except Exception:
+                pass
+
             _notif_svc.emit_notification(
                 recipient_id=str(swap.from_user_id),
                 title=f"Swap accepted: {swap.task.template.name}",
                 notification_type='task_swap',
                 content=f"Your swap request for '{swap.task.template.name}' was accepted.",
                 task_occurrence_id=swap.task_id,
+                action_url=f"/tasks/{swap.task_id}",
             )
         else:
             _notif_svc.emit_notification(
@@ -453,6 +490,7 @@ class TaskLifecycleService:
                 notification_type='task_swap',
                 content=f"Your swap request for '{swap.task.template.name}' was declined.",
                 task_occurrence_id=swap.task_id,
+                action_url=f"/tasks/{swap.task_id}",
             )
 
         return swap
@@ -494,6 +532,15 @@ class TaskLifecycleService:
         group = occurrence.template.group
         members = GroupMembership.objects.filter(group=group).exclude(user_id=actor_id)
 
+        # Writeback: delete the calendar event from the current assignee before reassigning.
+        try:
+            from chore_sync.services.sync_providers.registry import get_task_writeback_provider
+            provider = get_task_writeback_provider(occurrence.assigned_to)
+            if provider:
+                provider.delete_task_event(occurrence)
+        except Exception:
+            pass
+
         with transaction.atomic():
             occurrence.original_assignee_id = actor_id
             occurrence.reassignment_reason = 'emergency'
@@ -513,6 +560,7 @@ class TaskLifecycleService:
                     f"needs someone to take over. Reason: {reason or 'Not specified'}."
                 ),
                 task_occurrence_id=occurrence.id,
+                action_url=f"/tasks/{occurrence.id}",
             )
 
         return occurrence
@@ -551,6 +599,16 @@ class TaskLifecycleService:
             occurrence.status = 'pending'
             occurrence.save(update_fields=['assigned_to_id', 'status'])
 
+        # Writeback: create a calendar event for the new assignee.
+        try:
+            from chore_sync.services.sync_providers.registry import get_task_writeback_provider
+            new_assignee = occurrence.assigned_to
+            provider = get_task_writeback_provider(new_assignee)
+            if provider:
+                provider.create_task_event(occurrence)
+        except Exception:
+            pass
+
         # Notify original assignee (outside transaction to allow WebSocket push)
         if occurrence.original_assignee_id:
             _notif_svc.emit_notification(
@@ -559,6 +617,7 @@ class TaskLifecycleService:
                 notification_type='emergency_reassignment',
                 content=f"Someone has taken over '{occurrence.template.name}'.",
                 task_occurrence_id=occurrence.id,
+                action_url=f"/tasks/{occurrence.id}",
             )
 
         return occurrence

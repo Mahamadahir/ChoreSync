@@ -125,6 +125,45 @@ class GroupOrchestrator:
                 context={"type": "group_invite", "group_id": str(group.id)},
             )
 
+    def leave_group(self, *, user: User, group_id: str) -> bool:
+        """Remove the requesting user from the group.
+
+        Returns True if the group was deleted (user was the last member),
+        False if the user simply left.
+
+        Raises ValueError if:
+          - The user is not a member.
+          - The user is the only moderator but other members remain
+            (they must promote someone first).
+        """
+        group = Group.objects.filter(id=group_id).first()
+        if group is None:
+            raise ValueError("Group not found.")
+
+        membership = GroupMembership.objects.filter(user=user, group=group).first()
+        if membership is None:
+            raise ValueError("You are not a member of this group.")
+
+        total_members = GroupMembership.objects.filter(group=group).count()
+
+        if total_members == 1:
+            # Last member — delete the whole group (cascades memberships, tasks, etc.)
+            group.delete()
+            return True
+
+        # More than one member remains — check moderator constraint.
+        if membership.role == 'moderator':
+            other_moderators = GroupMembership.objects.filter(
+                group=group, role='moderator'
+            ).exclude(user=user).count()
+            if other_moderators == 0:
+                raise ValueError(
+                    "You are the only moderator. Promote another member before leaving."
+                )
+
+        membership.delete()
+        return False
+
     def compute_assignment_matrix(self, *, group_id: str) -> dict:
         """Build a fairness matrix used for automated task assignments.
 

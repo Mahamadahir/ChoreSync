@@ -508,7 +508,7 @@ class EventsAPIView(APIView):
             "calendar_name": ev.calendar.name,
             "calendar_color": ev.calendar.color,
         }
-        if calendar.provider == "google" and getattr(calendar, "writable", True):
+        if calendar.provider == "google" and getattr(calendar, "push_enabled", True):
             try:
                 GoogleCalendarService(request.user).push_created_event(ev)
             except GoogleEventConflict:
@@ -555,7 +555,7 @@ class EventDetailAPIView(APIView):
             "calendar_name": ev.calendar.name,
             "calendar_color": ev.calendar.color,
         }
-        if ev.calendar.provider == "google" and getattr(ev.calendar, "writable", True):
+        if ev.calendar.provider == "google" and getattr(ev.calendar, "push_enabled", True):
             try:
                 GoogleCalendarService(request.user).push_updated_event(ev)
             except GoogleEventConflict:
@@ -627,13 +627,15 @@ class GoogleCalendarSelectAPIView(APIView):
             .order_by("-last_refreshed_at")
             .first()
         )
+        from chore_sync.models import GoogleCalendarSync
+        from chore_sync.tasks import initial_google_sync_task
         selected_ids = []
+        queued_ids = []
         for item in selections:
             defaults = {
                 "name": item["name"],
-                "sync_enabled": True,
                 "include_in_availability": item["include_in_availability"],
-                "writable": item["writable"],
+                "push_enabled": item["writable"],
             }
             if "color" in item:
                 defaults["color"] = item["color"]
@@ -641,38 +643,52 @@ class GoogleCalendarSelectAPIView(APIView):
                 defaults["timezone"] = item["timezone"]
             if credential:
                 defaults["credential"] = credential
-            cal, _ = Calendar.objects.update_or_create(
+            cal, created = Calendar.objects.update_or_create(
                 user=request.user,
                 provider="google",
                 external_id=item["id"],
                 defaults=defaults,
             )
+            # Ensure GoogleCalendarSync row exists; store oauth_writable
+            sync_state, _ = GoogleCalendarSync.objects.get_or_create(calendar=cal)
+            if sync_state.oauth_writable != item["writable"]:
+                sync_state.oauth_writable = item["writable"]
+                sync_state.save(update_fields=["oauth_writable"])
             selected_ids.append(cal.external_id)
-            try:
-                svc.ensure_watch_channel(cal)
-            except Exception as exc:
-                logger.warning("Failed to start watch for calendar %s", cal.external_id, exc_info=exc)
+            # Queue initial full sync only for newly created calendars with no prior sync.
+            # Watch channel is registered by the task after sync completes (avoids race).
+            if created or not cal.last_synced_at:
+                if not sync_state.active_task_id:
+                    initial_google_sync_task.apply_async(
+                        args=[cal.id],
+                        queue='calendar_sync',
+                    )
+                    queued_ids.append(cal.external_id)
         qs = Calendar.objects.filter(user=request.user, provider="google")
-        creds = None
         if selected_ids:
             for cal in qs.exclude(external_id__in=selected_ids):
-                cal.sync_enabled = False
                 cal.include_in_availability = False
-                cal.save(update_fields=["sync_enabled", "include_in_availability"])
+                cal.save(update_fields=["include_in_availability"])
                 try:
                     svc.stop_watch_channel(cal)
                 except Exception:
                     logger.debug("Failed to stop watch for calendar %s", cal.external_id, exc_info=True)
         else:
             for cal in qs:
-                cal.sync_enabled = False
                 cal.include_in_availability = False
-                cal.save(update_fields=["sync_enabled", "include_in_availability"])
+                cal.save(update_fields=["include_in_availability"])
                 try:
                     svc.stop_watch_channel(cal)
                 except Exception:
                     logger.debug("Failed to stop watch for calendar %s", cal.external_id, exc_info=True)
-        return Response({"detail": "Google calendars updated.", "selected": selected_ids}, status=status.HTTP_200_OK)
+        return Response(
+            {
+                "detail": "Google calendars updated.",
+                "selected": selected_ids,
+                "syncing": queued_ids,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -681,20 +697,34 @@ class GoogleCalendarWebhookAPIView(APIView):
     authentication_classes = []
 
     def post(self, request):
-        from chore_sync.models import Calendar
+        from chore_sync.models import GoogleCalendarSync
+
+        # Google sends a sync ping when the watch channel is first registered — just acknowledge it
+        resource_state = request.META.get("HTTP_X_GOOG_RESOURCE_STATE")
+        if resource_state == "sync":
+            return Response(status=status.HTTP_200_OK)
 
         channel_id = request.META.get("HTTP_X_GOOG_CHANNEL_ID")
         resource_id = request.META.get("HTTP_X_GOOG_RESOURCE_ID")
         token = request.META.get("HTTP_X_GOOG_CHANNEL_TOKEN")
         if not channel_id or not resource_id or not token:
             return Response(status=status.HTTP_400_BAD_REQUEST)
-        cal = (
-            Calendar.objects.select_related("user")
-            .filter(provider="google", channel_id=channel_id, resource_id=resource_id, webhook_token=token)
+
+        # Look up via GoogleCalendarSync and validate webhook token
+        sync_state = (
+            GoogleCalendarSync.objects
+            .select_related("calendar__user")
+            .filter(channel_id=channel_id, resource_id=resource_id, webhook_token=token)
             .first()
         )
-        if not cal:
+        if not sync_state:
             return Response(status=status.HTTP_404_NOT_FOUND)
+
+        cal = sync_state.calendar
+        if sync_state.paused:
+            # Initial sync is running — skip incremental to avoid race condition
+            return Response(status=status.HTTP_200_OK)
+
         try:
             svc = GoogleCalendarService(cal.user)
             svc.sync_events(calendar=cal)
@@ -731,7 +761,9 @@ class EventStreamAPIView(APIView):
                 yield "event: ping\ndata: connected\n\n"
                 while True:
                     try:
-                        msg = q.get(timeout=25)
+                        # Short timeout so the thread can exit promptly on server
+                        # shutdown (Daphne kills tasks that block too long).
+                        msg = q.get(timeout=3)
                         if msg is None:
                             continue
                         yield f"data: {msg}\n\n"

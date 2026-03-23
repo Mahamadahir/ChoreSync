@@ -80,7 +80,7 @@ The plan specifies **Django Channels** for WebSockets. The codebase implements *
 
 ---
 
-### Step 1: Fix Architecture (Blocker — Do First)
+### Step 1: Fix Architecture ✅ COMPLETE
 
 **Files:** `backend/chore_sync/settings.py`, `backend/chore_sync/api/*.py`, `backend/chore_sync/urls.py`, `backend/pyproject.toml`, `frontend/src/**/*.{ts,vue}`
 
@@ -135,7 +135,7 @@ The plan specifies **Django Channels** for WebSockets. The codebase implements *
 
 ---
 
-### Step 2: Fix Data Model Gaps
+### Step 2: Fix Data Model Gaps ✅ COMPLETE
 
 **File:** `backend/chore_sync/models.py`
 
@@ -220,7 +220,7 @@ python manage.py makemigrations && python manage.py migrate
 
 ---
 
-### Step 3: OAuth Token Encryption
+### Step 3: OAuth Token Encryption ✅ COMPLETE
 
 **File:** `backend/chore_sync/models.py` line 321
 
@@ -416,7 +416,7 @@ CELERY_BEAT_SCHEDULE = {
 
 ---
 
-### Step 8: Task Lifecycle Features (Snooze, Swap, Emergency Reassign)
+### Step 8: Task Lifecycle Features (Snooze, Swap, Emergency Reassign) ✅ COMPLETE
 
 **File:** `backend/chore_sync/services/task_lifecycle_service.py`
 
@@ -443,7 +443,7 @@ CELERY_BEAT_SCHEDULE = {
 
 ---
 
-### Step 9: Gamification (Streaks, Points, Badges, Leaderboard)
+### Step 9: Gamification (Streaks, Points, Badges, Leaderboard) ✅ COMPLETE
 
 **Files:** new `backend/chore_sync/services/gamification_service.py`, `backend/chore_sync/models.py`
 
@@ -475,7 +475,7 @@ CELERY_BEAT_SCHEDULE = {
 
 ---
 
-### Step 10: Notification Delivery + WebSocket Integration
+### Step 10: Notification Delivery + WebSocket Integration ✅ COMPLETE
 
 **Files:** `backend/chore_sync/services/notification_service.py`, new `backend/chore_sync/consumers.py`, `backend/chore_sync/asgi.py`
 
@@ -513,7 +513,7 @@ application = ProtocolTypeRouter({
 
 ---
 
-### Step 11: Group Proposal / Voting Endpoints
+### Step 11: Group Proposal / Voting Endpoints ✅ COMPLETE
 
 **File:** `backend/chore_sync/services/proposal_service.py`, new `backend/chore_sync/api/proposal_router.py`
 
@@ -537,7 +537,7 @@ Endpoints:
 
 ---
 
-### Step 12: Stats Dashboard Endpoints
+### Step 12: Stats Dashboard Endpoints ✅ COMPLETE
 
 **Files:** new `backend/chore_sync/api/stats_router.py`, `backend/chore_sync/services/insights_service.py`
 
@@ -563,7 +563,7 @@ Endpoints:
 
 ---
 
-### Step 13b: Frontend Views — Core UI
+### Step 13b: Frontend Views — Core UI ✅ COMPLETE
 
 **New routes and views required:**
 
@@ -612,7 +612,7 @@ Tabbed layout with the following tabs:
 
 ---
 
-### Step 14: Outlook Calendar Sync
+### Step 14: Outlook Calendar Sync ✅ COMPLETE (Graph webhook subscriptions pending — see Step 18)
 
 **Files:** `backend/chore_sync/sync_providers/outlook_provider.py`, new `backend/chore_sync/api/outlook_calendar_router.py`, `backend/chore_sync/urls.py`, `frontend/src/services/calendarService.ts`, new `frontend/src/views/OutlookCalendarSelectView.vue`
 
@@ -676,7 +676,7 @@ syncOutlook()          → POST /api/calendar/outlook/sync/
 
 ---
 
-### Step 15: Dark Mode
+### Step 15: Dark Mode ✅ COMPLETE
 
 **Files:** `frontend/src/main.ts`, `frontend/src/App.vue`, `frontend/src/quasar-variables.sass`
 
@@ -689,18 +689,241 @@ syncOutlook()          → POST /api/calendar/outlook/sync/
 
 ---
 
-### Step 16: Security Hardening
+### Step 16: *(moved — see Step 25: Security Hardening)*
 
-**Files:** `backend/chore_sync/settings.py`, `backend/chore_sync/models.py`
+---
 
-**Actions:**
-1. Add `django-ratelimit` to requirements; apply `@ratelimit(key='ip', rate='10/m')` to auth endpoints
-2. Encrypt `ExternalCredential.secret` (Step 3)
-3. Set `CORS_ALLOW_ALL_ORIGINS = False` in production
-4. Add `SECURE_HSTS_SECONDS`, `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE` to settings for production
-5. Add file upload validation on photo proof: enforce max 5MB, MIME type whitelist (`image/jpeg`, `image/png`, `image/webp`)
-6. Add `expires_at` check to `TaskSwap` in the accept endpoint (reject expired swap attempts)
-7. Enforce emergency reassign monthly limit check server-side
+### Step 17: Calendar Architecture Refactor, Logical Bug Fixes & Improvements ✅ COMPLETE
+
+This step consolidates all calendar-related architectural decisions, bug fixes, and behavioural improvements identified during design review. Must be completed before Step 14 (Outlook Calendar Sync).
+
+---
+
+#### 17a. Calendar Model Refactor (Option A — provider-specific detail models)
+
+**Problem:** `Calendar` model is tightly coupled to Google-specific fields. Adding Outlook support would pollute it further with nullable Outlook-only columns.
+
+**Model changes (1 migration):**
+
+`Calendar` — remove Google-specific fields, clarify sync intent:
+- Drop `back_sync_enabled` — dead field, never set or read anywhere
+- Drop `sync_enabled` — redundant once webhooks are live; replaced by watch channel liveness on `GoogleCalendarSync`. Retain only as `paused` flag on the provider-specific model for admin kill-switch
+- Rename `writable` → `push_enabled` — reflects user intent (push app events out) rather than OAuth access level
+- Add `is_task_writeback = BooleanField(default=False)` — exactly one calendar per user receives task assignment events. Enforced in save logic (setting True clears all others for that user).
+
+New model `GoogleCalendarSync` (OneToOne → `Calendar`, `related_name='google_sync'`):
+```python
+class GoogleCalendarSync(models.Model):
+    calendar       = models.OneToOneField(Calendar, on_delete=models.CASCADE, related_name='google_sync')
+    sync_token     = models.CharField(max_length=512, null=True, blank=True)   # incremental sync token
+    checkpoint_date = models.DateTimeField(null=True, blank=True)              # resume point for interrupted initial sync
+    active_task_id = models.CharField(max_length=255, null=True, blank=True)   # Celery task ID — deduplication
+    channel_id     = models.CharField(max_length=255, null=True, blank=True)   # Google Watch channel ID
+    resource_id    = models.CharField(max_length=255, null=True, blank=True)   # Google Watch resource ID
+    watch_expires_at = models.DateTimeField(null=True, blank=True)             # watch channel expiry
+    webhook_token  = models.CharField(max_length=255, null=True, blank=True)   # verification token sent with webhook
+    paused         = models.BooleanField(default=False)                        # admin kill-switch (replaces sync_enabled)
+    oauth_writable = models.BooleanField(default=False)                        # reflects Google accessRole (owner/writer)
+```
+
+New stub model `OutlookCalendarSync` (OneToOne → `Calendar`, `related_name='outlook_sync'`) — ready for Step 14:
+```python
+class OutlookCalendarSync(models.Model):
+    calendar               = models.OneToOneField(Calendar, on_delete=models.CASCADE, related_name='outlook_sync')
+    delta_link             = models.TextField(null=True, blank=True)
+    subscription_id        = models.CharField(max_length=255, null=True, blank=True)
+    subscription_expires_at = models.DateTimeField(null=True, blank=True)
+```
+
+Migrate all `google_calendar_service.py` references from `calendar.sync_token`, `calendar.channel_id` etc. to `calendar.google_sync.sync_token`, `calendar.google_sync.channel_id` etc.
+
+Update `admin.py` — `GoogleCalendarSync` inline on `CalendarAdmin`, remove dead fields from list_display/list_filter.
+
+---
+
+#### 17b. CalendarProvider Abstraction
+
+**Problem:** task lifecycle code would need to import `GoogleCalendarService` directly, making Outlook support require changes throughout.
+
+**New file `sync_providers/base.py`:**
+```python
+from abc import ABC, abstractmethod
+
+class CalendarProvider(ABC):
+    @abstractmethod
+    def push_event(self, calendar: Calendar, event: Event) -> str: ...      # returns external_event_id
+    @abstractmethod
+    def update_event(self, calendar: Calendar, event: Event) -> str: ...
+    @abstractmethod
+    def delete_event(self, calendar: Calendar, external_event_id: str) -> None: ...
+    @abstractmethod
+    def pull_events(self, calendar: Calendar) -> int: ...                   # returns count of events synced
+```
+
+**Dispatcher `sync_providers/registry.py`:**
+```python
+def get_provider(calendar: Calendar) -> CalendarProvider:
+    if calendar.provider == 'google':
+        return GoogleProvider(calendar.credential)
+    if calendar.provider == 'microsoft':
+        return OutlookProvider(calendar.credential)
+    raise ValueError(f"No provider for: {calendar.provider}")
+```
+
+Migrate `GoogleCalendarService.push_created_event`, `push_updated_event`, push deletion logic into `sync_providers/google_provider.py` implementing `CalendarProvider`. `GoogleCalendarService` retains OAuth, sync, and watch channel management — only event push/delete moves to the provider class.
+
+---
+
+#### 17c. Task Writeback
+
+**Problem:** assigning a task to a user never creates a calendar event. Reassignment never cleans up the old event. The `is_task_writeback` flag (17a) and `CalendarProvider` abstraction (17b) must exist first.
+
+**Behaviour:**
+
+On task assign (`task_lifecycle_service.py` — `assign_occurrence`):
+- Find assignee's `Calendar` where `is_task_writeback=True`
+- If found: create `Event(source='task', task_occurrence=occurrence, calendar=cal, ...)`
+- If calendar has `push_enabled=True`: `get_provider(cal).push_event(cal, event)`
+
+On reassignment (swap accepted, emergency accepted, system rebalance):
+- Find old assignee's `Event` linked to this `TaskOccurrence` via `task_occurrence` FK
+- If it has `external_event_id` and calendar has `push_enabled`: `get_provider(cal).delete_event(cal, event.external_event_id)`
+- Delete the `Event` record
+- Run assign flow above for new assignee
+
+On task complete/cancel:
+- `get_provider(cal).update_event(cal, event)` — updates title/description to reflect new status
+
+**Frontend — `GoogleCalendarSelectView.vue`:**
+- Replace per-calendar "Allow writeback" toggle with a **radio group** — user picks one calendar as task writeback target or selects "None"
+- Label: "Receive task events"
+- Saves `is_task_writeback=True` on selected calendar, `False` on all others for that user
+
+---
+
+#### 17d. Async Initial Google Calendar Sync
+
+**Problem:** `GoogleCalendarSyncAPIView.post` runs `sync_events()` synchronously on the request thread. Large calendars time out. No progress feedback to the user.
+
+**Fix:**
+
+`GoogleCalendarSyncAPIView.post`:
+- Check `GoogleCalendarSync.active_task_id` — if set, revoke old task, clear field
+- Queue `initial_google_sync_task.delay(user_id)`, store returned task ID on `google_sync.active_task_id`
+- Return `202 Accepted { "detail": "Sync started. You'll be notified when complete." }`
+
+`initial_google_sync_task(user_id)` — on-demand Celery task on `calendar_sync` queue:
+1. Load `GoogleCalendarSync.checkpoint_date` — if set, resume from there; else start from 2 years ago
+2. Process events in **monthly chunks** using `timeMin`/`timeMax` params
+3. After each chunk: save `checkpoint_date = chunk_end` to DB (crash-safe resume point)
+4. Refresh OAuth token **before each chunk** (tokens expire after 1 hour — long syncs outlast them)
+5. On `429`/`403 rateLimitExceeded`: save checkpoint, `raise self.retry(countdown=120 * 2**retries, max_retries=8)` — exponential backoff up to ~8 hours, covering daily quota reset
+6. On completion: save final `sync_token`, clear `checkpoint_date`, clear `active_task_id`
+7. **Register watch channel here** (not in `GoogleCalendarSelectAPIView`) — only after `sync_token` is saved
+8. `emit_notification(user_id, notification_type='calendar_sync_complete', title='Google Calendar synced', content='Your calendars are ready.', action_url='/calendar')`
+
+Remove `ensure_watch_channel()` call from `GoogleCalendarSelectAPIView` — watch registration now belongs to step 7 above.
+
+**Worker startup:**
+```bash
+# Dedicated calendar sync worker — max 3 concurrent syncs
+celery -A chore_sync worker -Q calendar_sync --concurrency=3 -l info
+
+# Default worker for all other tasks
+celery -A chore_sync worker -Q default --concurrency=4 -l info
+```
+
+---
+
+#### 17e. Google Calendar Beat Jobs
+
+**Two new periodic tasks** added to `CELERY_BEAT_SCHEDULE`, both on `calendar_sync` queue:
+
+`renew_google_watch_channels()` — daily at 3am:
+- Query `GoogleCalendarSync.objects.filter(watch_expires_at__lt=now + timedelta(days=2), paused=False)`
+- For each: call `ensure_watch_channel(cal)` to renew
+- Lightweight — one API call per calendar per week under normal conditions
+
+`catchup_google_calendar_sync()` — every 6 hours:
+- Query `GoogleCalendarSync.objects.filter(watch_expires_at__lt=now, paused=False)`
+- For each: run full `sync_events(cal)`, then re-register watch channel
+- Under healthy webhook conditions this queryset is always empty — zero cost
+
+```python
+CELERY_BEAT_SCHEDULE = {
+    # ... existing jobs ...
+    'renew-google-watch-channels': {
+        'task': 'chore_sync.tasks.renew_google_watch_channels',
+        'schedule': crontab(hour=3, minute=0),
+    },
+    'catchup-google-calendar-sync': {
+        'task': 'chore_sync.tasks.catchup_google_calendar_sync',
+        'schedule': crontab(minute=0, hour='*/6'),
+    },
+}
+```
+
+---
+
+#### 17f. Google API Correctness Fixes
+
+**`sync_token` 410 Gone handling:**
+- `_sync_single_calendar` must catch `HttpError` with `status=410`
+- On 410: clear `GoogleCalendarSync.sync_token`, re-run as full sync (no syncToken param), save fresh token on completion
+- Currently unhandled — incremental sync silently fails if Google invalidates the token
+
+**`maxResults=2500` on all `events().list()` calls:**
+- Current default is 250 events per page — 10x more API calls than necessary
+- Add `maxResults=2500` to every `events().list()` call in `_sync_single_calendar`
+- Reduces quota consumption and initial sync time by up to 10x for large calendars
+
+**Webhook signature validation:**
+- Current webhook handler (`GoogleCalendarWebhookAPIView`) does not validate `X-Goog-Channel-Token`
+- Anyone who discovers the webhook URL can POST fake payloads and trigger spurious syncs
+- Fix: look up `GoogleCalendarSync` by `X-Goog-Channel-ID` header, compare `X-Goog-Channel-Token` against stored `webhook_token`, return `403` on mismatch
+- Handle `X-Goog-Resource-State: sync` (initial verification ping) — respond `200` immediately, skip sync
+
+**Race condition — watch channel registration timing:**
+- Currently `ensure_watch_channel()` is called in `GoogleCalendarSelectAPIView` before initial sync runs
+- If a Google event changes while initial sync is in progress, webhook fires incremental sync using a `sync_token` that doesn't exist yet → falls back to full sync → two concurrent full syncs on the same calendar
+- Fix: move watch channel registration to end of `initial_google_sync_task` (already covered in 17d)
+
+---
+
+#### 17g. Notification Model & Deep Links
+
+**Model change (1 migration):**
+- `Notification.type`: remove `choices=TYPE_CHOICES` — plain `CharField(max_length=50)`. New notification types (e.g. `calendar_sync_complete`) never require a migration.
+- `Notification.action_url`: change from `URLField` to `CharField(max_length=255)` — stores a relative frontend route path (e.g. `/tasks`, `/groups/abc-123`), not a full URL. Works regardless of domain/port.
+
+**`emit_notification()` signature update:**
+- Add `action_url: str = ''` parameter
+- Pass to `Notification.objects.create`
+
+**All existing `emit_notification()` call sites** — add `action_url`:
+
+| Notification type | `action_url` |
+|---|---|
+| `task_assigned` | `/tasks` |
+| `task_swap` | `/tasks` |
+| `emergency_reassignment` | `/tasks` |
+| `deadline_reminder` | `/tasks` |
+| `group_invite` | `/groups/{group_id}` |
+| `task_proposal` | `/groups/{group_id}` |
+| `message` | `/groups/{group_id}` |
+| `badge_earned` | `/profile` |
+| `calendar_sync_complete` | `/calendar` |
+
+**Frontend — `App.vue` notification drawer:**
+- Make each notification `q-item` clickable
+- Add `handleNotifClick(n)`:
+  ```typescript
+  function handleNotifClick(n: any) {
+    if (n.action_url) router.push(n.action_url);
+    if (!n.read) markRead(n.id);
+    notifDrawer.value = false;
+  }
+  ```
 
 ---
 
@@ -721,6 +944,488 @@ syncOutlook()          → POST /api/calendar/outlook/sync/
 | P3 | Step 11 (Proposals/Voting) | Phase 3–4 |
 | P3 | Step 12 (Stats Dashboard) | Phase 4 |
 | P4 | Step 13 (Frontend Wiring) | Follows backend completion |
-| P4 | Step 14 (Outlook Calendar Sync) | Microsoft login done; Graph API calendar sync remaining |
-| P4 | Step 15 (Dark Mode) | Polish — Quasar Dark plugin + localStorage persistence |
-| P4 | Step 16 (Security Hardening) | Pre-production |
+| P4 | Step 14 (Outlook Calendar Sync) ✅ | Core sync done; webhook subscriptions in Step 18 |
+| P4 | Step 15 (Dark Mode) ✅ | Complete |
+| P2 | Step 17 (Calendar Architecture Refactor) ✅ | Complete |
+| P2 | Step 18 (Outlook Graph Webhooks + writeback UI) | Real-time Outlook push; writeback toggle in frontend |
+| P3 | Step 19 (Photo Proof upload) | ImageField exists; needs upload endpoint + UI enforcement |
+| P3 | Step 20 (Task Marketplace) | Phase 4 feature from project plan |
+| P3 | Step 21 (Smart Suggestions) | Pattern/availability/fairness suggestions via Celery daily job |
+| P2 | Step 22 (Additional deadline reminders + badge criteria) | 3h/at-due reminders; Early Bird, Team Player, Negotiator badges |
+| P3 | Step 23 (Stats visualizations) | Chart.js frontend components for leaderboard & stats |
+| P4 | Step 24 (Notification preferences) | Per-user notification type config + quiet hours |
+| P4 | Step 25 (Security Hardening) | Pre-production; includes SSE 403 fix |
+| P3 | Step 26 (Fairness & calendar availability fixes) | time_based uses estimated_time; assignment checks calendar blocks |
+| P3 | Step 27 (TaskAssignmentHistory model) | Full history log for every assignment/swap/emergency |
+| P5 | Step 28 (PWA) | Mobile install prompt; service worker; offline support |
+
+---
+
+### Step 18: Outlook Calendar — Graph Webhook Subscriptions + Frontend Writeback Toggle
+
+**Context:** Step 14 implemented delta-link sync and the `OutlookCalendarProvider` writeback. Two gaps remain:
+1. No real-time push when the user's Outlook calendar changes (catchup task covers it every 6h but with lag)
+2. The `OutlookCalendarSelectView.vue` frontend doesn't expose the `is_task_writeback` toggle — the API already handles it
+
+**Backend — Graph webhook subscription (`renew_subscription`):**
+
+`OutlookCalendarSync` already has `subscription_id` and `subscription_expires_at` fields.
+
+In `OutlookCalendarService`:
+```python
+def renew_subscription(self, calendar: Calendar) -> None:
+    """Create or extend a Graph change-notification subscription (max 3-day expiry)."""
+    sync_state = OutlookCalendarSync.objects.get(calendar=calendar)
+    expiry = timezone.now() + timedelta(days=3)
+    payload = {
+        "changeType": "created,updated,deleted",
+        "notificationUrl": f"{settings.BACKEND_BASE_URL}/api/calendar/outlook/webhook/",
+        "resource": f"/me/calendars/{calendar.external_id}/events",
+        "expirationDateTime": expiry.isoformat(),
+        "clientState": settings.OUTLOOK_WEBHOOK_SECRET,
+    }
+    if sync_state.subscription_id:
+        # PATCH to extend
+        requests.patch(f"{GRAPH_BASE}/subscriptions/{sync_state.subscription_id}",
+                       json={"expirationDateTime": expiry.isoformat()}, headers=self._headers(), timeout=15)
+    else:
+        resp = requests.post(f"{GRAPH_BASE}/subscriptions", json=payload, headers=self._headers(), timeout=15)
+        resp.raise_for_status()
+        sync_state.subscription_id = resp.json()["id"]
+    sync_state.subscription_expires_at = expiry
+    sync_state.save(update_fields=["subscription_id", "subscription_expires_at"])
+```
+
+Add beat job in `tasks.py`:
+```python
+@shared_task
+def renew_outlook_subscriptions():
+    """Renew Graph subscriptions expiring within 1 hour. Runs every 2 hours."""
+    ...
+```
+
+Add to `CELERY_BEAT_SCHEDULE` in `settings.py`:
+```python
+'renew-outlook-subscriptions': {'task': 'chore_sync.tasks.renew_outlook_subscriptions', 'schedule': 2 * 3600},
+```
+
+Add webhook receiver endpoint `OutlookCalendarWebhookAPIView` (POST, `AllowAny`, CSRF-exempt):
+- Validate `clientState` header against `settings.OUTLOOK_WEBHOOK_SECRET`
+- On validation ping (no body value): return 200
+- On change notification: queue `initial_outlook_sync_task` for the affected calendar
+
+Register in `urls.py`: `path('api/calendar/outlook/webhook/', OutlookCalendarWebhookAPIView.as_view())`
+
+**Required settings:**
+```
+BACKEND_BASE_URL=http://localhost:8000  # must be publicly accessible for webhooks in production
+OUTLOOK_WEBHOOK_SECRET=<random secret>
+```
+
+**Frontend — `OutlookCalendarSelectView.vue`:**
+- Add a "Use for task events" toggle per calendar row (maps to `is_task_writeback`)
+- Only one calendar can be selected as task writeback (radio-style: selecting one clears others)
+- Pass `is_task_writeback` in the POST payload to `/api/calendar/outlook/select/`
+- Show "Sync in progress…" banner when response contains non-empty `syncing` array
+
+---
+
+### Step 19: Photo Proof Upload
+
+**Context:** `TaskOccurrence.photo_proof = ImageField(upload_to='proof/', blank=True)` exists. `TaskTemplate.photo_proof_required` exists. No upload endpoint or enforcement in the UI.
+
+**Backend — upload endpoint:**
+
+Add `POST /api/tasks/<pk>/upload-proof/` (`TaskPhotoProofAPIView`):
+```python
+class TaskPhotoProofAPIView(APIView):
+    parser_classes = [MultiPartParser]
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication]
+
+    def post(self, request, pk):
+        occurrence = get_object_or_404(TaskOccurrence, pk=pk, assigned_to=request.user)
+        file = request.FILES.get('photo')
+        if not file:
+            return Response({'detail': 'No file provided.'}, status=400)
+        # Validate: max 5 MB, image MIME types only
+        if file.size > 5 * 1024 * 1024:
+            return Response({'detail': 'File too large (max 5 MB).'}, status=400)
+        if file.content_type not in ('image/jpeg', 'image/png', 'image/webp'):
+            return Response({'detail': 'Invalid file type.'}, status=400)
+        occurrence.photo_proof = file
+        occurrence.save(update_fields=['photo_proof'])
+        return Response({'url': occurrence.photo_proof.url})
+```
+
+Register: `path('api/tasks/<uuid:pk>/upload-proof/', TaskPhotoProofAPIView.as_view())`
+
+**Backend — enforce on complete:**
+In `TaskLifecycleService.toggle_occurrence_completed`:
+```python
+if occurrence.template.photo_proof_required and not occurrence.photo_proof:
+    raise ValueError("Photo proof required before marking this task complete.")
+```
+
+**Frontend — complete button in `MyTasksView.vue` / `GroupDetailView.vue`:**
+- If `task.photo_proof_required` and no `task.photo_url`:
+  - Show camera icon button → file input → POST to `/api/tasks/{id}/upload-proof/`
+  - Only enable "Complete" button after upload succeeds
+- Show uploaded photo thumbnail for completed tasks
+
+---
+
+### Step 20: Task Marketplace
+
+**Context:** From project plan Phase 4. Users can list an assigned task on the marketplace with optional bonus points; any household member can claim it (first-come-first-served).
+
+**Backend — new model `MarketplaceListing`:**
+```python
+class MarketplaceListing(models.Model):
+    task_occurrence = models.OneToOneField(TaskOccurrence, on_delete=models.CASCADE, related_name='marketplace_listing')
+    listed_by       = models.ForeignKey(User, on_delete=models.CASCADE, related_name='marketplace_listings')
+    group           = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='marketplace_listings')
+    bonus_points    = models.PositiveIntegerField(default=0)
+    expires_at      = models.DateTimeField()  # 24h after creation
+    created_at      = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            # Cannot list tasks due in <2 hours
+        ]
+```
+
+**Backend — service `MarketplaceService`:**
+- `list_task(*, user, occurrence_id, bonus_points=0) -> MarketplaceListing`
+  - Validates: task assigned to user, not due in <2 hours, not already listed
+  - Creates listing with `expires_at = now() + 24h`
+  - Broadcasts WebSocket notification to household: `"User X listed 'Task Y' on the marketplace"`
+- `claim_task(*, user, listing_id) -> TaskOccurrence`
+  - Validates: listing not expired, user is household member, user is not the lister
+  - Reassigns `occurrence.assigned_to` to claimer
+  - Awards `bonus_points` to claimer
+  - Deletes listing
+  - Notifies both parties
+
+**Backend — beat job:** `cleanup_expired_marketplace_listings` — hourly, deletes expired listings and returns tasks to original assignee.
+
+**Backend — endpoints:**
+- `POST /api/tasks/<pk>/list-marketplace/` — list task (body: `{bonus_points: int}`)
+- `GET /api/groups/<pk>/marketplace/` — list active listings for household
+- `POST /api/marketplace/<pk>/claim/` — claim a listing
+
+**Frontend — `GroupDetailView.vue`:**
+- Add "Marketplace" tab (visible to all members)
+- List cards showing task name, lister, bonus points, time remaining
+- "List on Marketplace" action on user's own pending tasks
+- "Claim" button on others' listings
+
+---
+
+### Step 21: Smart Suggestions
+
+**Context:** From project plan Phase 4. Background job generates personalised suggestions stored as `Notification` rows. Users can accept or dismiss from their dashboard.
+
+**Backend — `SmartSuggestionService`:**
+
+```python
+class SmartSuggestionService:
+    def generate_for_group(self, group: Group) -> int:
+        """Generate suggestions for all members. Returns count created."""
+        ...
+```
+
+Four suggestion types:
+
+**1. Pattern Recognition** — analyse `TaskOccurrence` history per user per template:
+- If user completed same task ≥3 times on same day-of-week → emit notification: "You usually do [task] on Sundays — want it assigned to you this week?"
+- Emit as `suggestion_pattern` notification with `action_url=/tasks`
+
+**2. Availability-based batching** — check user's `Event` rows for free blocks (no `blocks_availability=True` events):
+- If user has 2+ hour free block in next 48h and has ≥2 unassigned tasks → emit: "You're free Saturday morning — want to knock out these 3 tasks?"
+
+**3. Preference-based open tasks** — check `TaskPreference` for high-scored templates with unassigned occurrences:
+- If `TaskPreference.score >= 1` and matching occurrence is unassigned → emit: "There's a [task] you like available — want it?"
+
+**4. Fairness rebalancing** — check `UserStats.total_tasks_completed` distribution:
+- If user is >20% below group average → emit: "You've done fewer tasks this month — take an extra one for bonus points?"
+
+**Backend — Celery beat job:**
+```python
+@shared_task
+def generate_smart_suggestions():
+    """Daily at 08:00 — generate suggestions for all active groups."""
+    ...
+```
+
+Add to `CELERY_BEAT_SCHEDULE`: `{'task': 'chore_sync.tasks.generate_smart_suggestions', 'schedule': crontab(hour=8, minute=0)}`
+
+**Frontend:** Smart suggestion notifications already render via the notification drawer. No new UI needed unless a dedicated "Suggestions" view is desired.
+
+---
+
+### Step 22: Additional Deadline Reminders + New Badge Criteria
+
+#### 22a. Additional Reminder Windows
+
+**Context:** Project plan specifies 4 windows: 24h before, 3h before, at-due-time, 1h overdue. Currently only 24h and overdue are implemented.
+
+In `tasks.py` `dispatch_deadline_reminders`:
+```python
+# Add 3-hour window
+three_hours = TaskOccurrence.objects.filter(
+    status__in=['pending', 'snoozed'],
+    deadline__gte=now + timedelta(hours=2, minutes=55),
+    deadline__lte=now + timedelta(hours=3, minutes=5),
+    reminder_3h_sent=False,  # new field
+)
+# Add at-due-time window
+at_due = TaskOccurrence.objects.filter(
+    status__in=['pending', 'snoozed'],
+    deadline__gte=now - timedelta(minutes=5),
+    deadline__lte=now + timedelta(minutes=5),
+    reminder_due_sent=False,  # new field
+)
+```
+
+Add boolean flags to `TaskOccurrence` model (1 migration):
+- `reminder_3h_sent = BooleanField(default=False)`
+- `reminder_due_sent = BooleanField(default=False)`
+
+#### 22b. New Badge Criteria Types
+
+Add 3 new criteria keys to `GamificationService.evaluate_badges`:
+
+| Criteria key | Measures | Badge |
+|---|---|---|
+| `early_completions` | count of occurrences completed before deadline | "Early Bird" 🐦 |
+| `emergency_accepts` | count of emergency reassignments accepted | "Team Player" 🤝 |
+| `swap_completions` | count of accepted task swaps | "Negotiator" 🤝 |
+
+Add these to `badges.json` and re-run `seed_badges.py`.
+
+Increment `TaskOccurrence` counters on relevant events in `TaskLifecycleService`.
+
+---
+
+### Step 23: Stats Visualizations
+
+**Context:** Backend stats endpoints already exist (`/api/users/me/stats/`, `/api/groups/<pk>/stats/`). Frontend only shows raw numbers. Project plan specifies Chart.js visualizations.
+
+**Install:**
+```bash
+npm install chart.js vue-chartjs
+```
+
+**Frontend — new components:**
+- `components/charts/TasksOverTimeChart.vue` — line chart of tasks completed per week (last 8 weeks)
+- `components/charts/CategoryBreakdownChart.vue` — bar chart of tasks by category
+- `components/charts/FairnessChart.vue` — horizontal bar per member showing fairness score / task count
+- `components/charts/CompletionHeatmap.vue` — 7×N grid of completion counts by day-of-week
+
+**Frontend — integrate into:**
+- `UpdateProfileView.vue` — personal line chart + category breakdown
+- `GroupDetailView.vue` leaderboard tab — fairness chart + completion heatmap
+
+**Backend — extend stats endpoints** to return time-series data needed by charts:
+- `/api/users/me/stats/` → add `weekly_completions: [{week: "2025-W10", count: 5}, ...]` (last 8 weeks)
+- `/api/groups/<pk>/stats/` → add `per_member_totals: [{user_id, username, total, points}, ...]`
+
+---
+
+### Step 24: Notification Preferences
+
+**Context:** Project plan mentions letting users configure which notification types they receive and quiet hours.
+
+**Backend — new model `NotificationPreference`:**
+```python
+class NotificationPreference(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='notification_prefs')
+    # Per-type opt-out flags
+    deadline_reminders   = models.BooleanField(default=True)
+    task_assigned        = models.BooleanField(default=True)
+    task_swap            = models.BooleanField(default=True)
+    emergency_reassign   = models.BooleanField(default=True)
+    badge_earned         = models.BooleanField(default=True)
+    marketplace_activity = models.BooleanField(default=True)
+    smart_suggestions    = models.BooleanField(default=True)
+    # Quiet hours (user's local time)
+    quiet_hours_enabled  = models.BooleanField(default=False)
+    quiet_start          = models.TimeField(null=True, blank=True)  # e.g. 22:00
+    quiet_end            = models.TimeField(null=True, blank=True)  # e.g. 08:00
+```
+
+**Backend — enforce in `emit_notification()`:**
+- Load `NotificationPreference` for recipient
+- Skip if the type flag is False
+- Skip if current time (in user's timezone) is within quiet hours
+
+**Backend — endpoint:**
+- `GET/PATCH /api/users/me/notification-preferences/`
+
+**Frontend — `UpdateProfileView.vue`:**
+- Add "Notification Settings" section
+- Toggle per type + quiet hours time pickers
+
+---
+
+### Step 25: Security Hardening
+
+**Files:** `backend/chore_sync/settings.py`, `backend/chore_sync/models.py`, `backend/chore_sync/api/views.py`
+
+**Actions:**
+1. **Fix SSE 403 (`/api/events/stream/`)** — `EventStreamAPIView` returns 403 for all requests under ASGI/Daphne. Root cause: the SSE generator uses `StreamingHttpResponse` with a blocking `queue.get(timeout=25)` which doesn't interact correctly with ASGI lifecycle. Fix options:
+   - Convert to an async Django view using `StreamingHttpResponse` with an async generator
+   - Or replace SSE entirely with WebSocket (already implemented via `/ws/chores/`) — disable the SSE endpoint and route all real-time updates through the WS consumer
+   - Additionally: the retry loop in the frontend (`CalendarView.vue`) must not retry on 403 (auth failure); add auth check before starting the stream
+
+2. Add `django-ratelimit` to requirements; apply `@ratelimit(key='ip', rate='10/m')` to auth endpoints (`/api/auth/login/`, `/api/auth/register/`)
+
+3. Set `CORS_ALLOW_ALL_ORIGINS = False` in production (already `False` by default)
+
+4. Add production settings block:
+   ```python
+   if not DEBUG:
+       SECURE_HSTS_SECONDS = 31536000
+       SESSION_COOKIE_SECURE = True
+       CSRF_COOKIE_SECURE = True
+       SECURE_SSL_REDIRECT = True
+   ```
+
+5. File upload validation on photo proof (enforced in Step 19): max 5 MB, MIME whitelist (`image/jpeg`, `image/png`, `image/webp`)
+
+6. Add `expires_at` check to `TaskSwap` accept endpoint — reject expired swaps at the API layer, not just via DB constraint
+
+7. Enforce emergency reassign monthly limit server-side (3/month per user per group) — currently only a comment in the service
+
+---
+
+### Step 26: Fairness Algorithm Fixes + Calendar Availability in Assignment
+
+#### 26a. Fix `time_based` Fairness Algorithm
+
+**Problem:** Current implementation uses "days since last assignment" (rotation-style). Project plan defines `time_based` as tracking **total minutes of chore time** per user using `TaskTemplate.estimated_time_to_complete`.
+
+**Fix in `GroupOrchestrator.compute_assignment_matrix`:**
+```python
+elif group.fairness_algorithm == 'time_based':
+    # Sum estimated_time_to_complete for all completed + pending occurrences this user is assigned
+    from django.db.models import Sum
+    total_minutes = TaskOccurrence.objects.filter(
+        assigned_to=user,
+        template__group=group,
+        status__in=['completed', 'pending', 'snoozed'],
+    ).aggregate(total=Sum('template__estimated_time_to_complete'))['total'] or 0
+    score = total_minutes  # lower = higher assignment priority
+```
+
+#### 26b. Calendar Availability in Assignment
+
+**Problem:** `assign_occurrence` calls `compute_assignment_matrix` but ignores the user's blocked calendar slots. A user with a full calendar can still be assigned tasks during their busy periods.
+
+**Add availability check in `assign_occurrence`:**
+```python
+def _is_user_available(self, user, deadline: datetime) -> bool:
+    """Return False if user has a calendar event blocking availability at task deadline time."""
+    from chore_sync.models import Event
+    window_start = deadline - timedelta(hours=1)
+    window_end   = deadline + timedelta(hours=1)
+    return not Event.objects.filter(
+        calendar__user=user,
+        calendar__include_in_availability=True,
+        blocks_availability=True,
+        start__lt=window_end,
+        end__gt=window_start,
+    ).exists()
+```
+
+Filter out unavailable users before running the fairness matrix. If all users are unavailable, fall back to the fairness matrix without the availability filter (task must still be assigned).
+
+---
+
+### Step 27: TaskAssignmentHistory Model
+
+**Context:** Project plan specifies a full history log for every assignment event. Used by Smart Suggestions (Step 21) for pattern recognition.
+
+**New model:**
+```python
+class TaskAssignmentHistory(models.Model):
+    user              = models.ForeignKey(User, on_delete=models.CASCADE, related_name='assignment_history')
+    task_template     = models.ForeignKey(TaskTemplate, on_delete=models.SET_NULL, null=True, related_name='assignment_history')
+    task_occurrence   = models.ForeignKey(TaskOccurrence, on_delete=models.CASCADE, related_name='assignment_history')
+    assigned_at       = models.DateTimeField(auto_now_add=True)
+    completed         = models.BooleanField(default=False)
+    completed_at      = models.DateTimeField(null=True, blank=True)
+    was_swapped       = models.BooleanField(default=False)
+    was_emergency     = models.BooleanField(default=False)
+    was_marketplace   = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-assigned_at']
+        indexes = [
+            models.Index(fields=['user', 'task_template', 'assigned_at']),
+        ]
+```
+
+**Wire into `TaskLifecycleService`:**
+- `assign_occurrence` → create history row
+- `toggle_occurrence_completed` → update `completed=True, completed_at=now`
+- `respond_to_swap_request` (accept) → set `was_swapped=True` on both rows
+- `accept_emergency` → set `was_emergency=True` on new row
+- `MarketplaceService.claim_task` → set `was_marketplace=True` on new row
+
+---
+
+### Step 28: PWA (Progressive Web App — Mobile Install)
+
+**Context:** Yes — PWA is primarily for phones. It lets users install ChoreSync to their home screen like a native app, with offline support and push notifications. No App Store required.
+
+**What it provides:**
+- Install prompt on Android/iOS: "Add to Home Screen"
+- App icon on home screen, launches full-screen (no browser chrome)
+- Offline fallback page when network is unavailable
+- Background sync for task completions made offline
+- (Optional) Web Push notifications — richer than in-app only
+
+**Implementation:**
+
+**`frontend/public/manifest.json`:**
+```json
+{
+  "name": "ChoreSync",
+  "short_name": "ChoreSync",
+  "description": "Intelligent household chore synchronisation",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1976d2",
+  "icons": [
+    {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png"}
+  ]
+}
+```
+
+**`frontend/public/sw.js`** (service worker):
+- Cache app shell on install
+- Network-first strategy for API calls
+- Cache-first for static assets
+- Offline fallback page for navigation requests
+
+**`frontend/index.html`:** Add `<link rel="manifest" href="/manifest.json">` and `<meta name="theme-color" content="#1976d2">`.
+
+**`frontend/src/main.ts`:** Register service worker:
+```typescript
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js');
+}
+```
+
+**Icons needed:** Create `frontend/public/icons/icon-192.png` and `icon-512.png` (ChoreSync logo).
+
+**Vite PWA plugin** (simpler alternative):
+```bash
+npm install -D vite-plugin-pwa
+```
+Configure in `vite.config.ts` — auto-generates service worker and manifest, handles cache versioning.
+

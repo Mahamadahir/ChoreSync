@@ -68,7 +68,8 @@ class TaskTemplateService:
             raise ValueError("Actor is not a member of this group.")
 
         allowed = {'name', 'details', 'recurring_choice', 'difficulty', 'estimated_mins',
-                   'category', 'next_due', 'days_of_week', 'recur_value', 'importance'}
+                   'category', 'next_due', 'days_of_week', 'recur_value', 'importance',
+                   'photo_proof_required'}
         update_fields = []
         for field, value in updates.items():
             if field in allowed:

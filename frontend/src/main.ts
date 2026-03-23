@@ -17,6 +17,7 @@ import GoogleLoginView from './views/GoogleLoginView.vue';
 import MicrosoftLoginView from './views/MicrosoftLoginView.vue';
 import CalendarView from './views/CalendarView.vue';
 import GoogleCalendarSelectView from './views/GoogleCalendarSelectView.vue';
+import OutlookCalendarSelectView from './views/OutlookCalendarSelectView.vue';
 import GroupsView from './views/GroupsView.vue';
 import GroupDetailView from './views/GroupDetailView.vue';
 import MyTasksView from './views/MyTasksView.vue';
@@ -38,6 +39,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/profile', name: 'profile', component: UpdateProfileView, meta: { requiresAuth: true } },
   { path: '/calendar', name: 'calendar', component: CalendarView, meta: { requiresAuth: true } },
   { path: '/calendar/google/select', name: 'google-calendar-select', component: GoogleCalendarSelectView, meta: { requiresAuth: true } },
+  { path: '/calendar/outlook/select', name: 'outlook-calendar-select', component: OutlookCalendarSelectView, meta: { requiresAuth: true } },
   { path: '/forgot-password', name: 'forgot-password', component: ForgotPasswordView, meta: { requiresGuest: true } },
   { path: '/reset-password', name: 'reset-password', component: ResetPasswordView, meta: { requiresGuest: true } },
   { path: '/login/google', name: 'login-google', component: GoogleLoginView, meta: { requiresGuest: true } },

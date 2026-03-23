@@ -44,9 +44,9 @@ class GroupMembershipInline(admin.TabularInline):
 
 @admin.register(models.Group)
 class GroupAdmin(admin.ModelAdmin):
-    list_display = ("name", "group_code", "owner", "reassignment_rule", "reassignment_value")
+    list_display = ("name", "group_code", "owner", "fairness_algorithm", "reassignment_rule", "reassignment_value", "photo_proof_required", "task_proposal_voting_required")
     search_fields = ("name", "group_code", "owner__email")
-    list_filter = ("reassignment_rule",)
+    list_filter = ("reassignment_rule", "fairness_algorithm", "photo_proof_required", "task_proposal_voting_required")
     inlines = [GroupMembershipInline]
 
 
@@ -69,8 +69,8 @@ class TaskOccurrenceInline(admin.TabularInline):
 
 @admin.register(models.TaskTemplate)
 class TaskTemplateAdmin(admin.ModelAdmin):
-    list_display = ("name", "group", "recurring_choice", "recur_value", "next_due", "active")
-    list_filter = ("active", "recurring_choice", "group")
+    list_display = ("name", "group", "category", "importance", "difficulty", "recurring_choice", "recur_value", "next_due", "active")
+    list_filter = ("active", "recurring_choice", "category", "importance", "group")
     search_fields = ("name", "group__name")
     autocomplete_fields = ("creator", "group")
     inlines = [TaskOccurrenceInline]
@@ -78,10 +78,10 @@ class TaskTemplateAdmin(admin.ModelAdmin):
 
 @admin.register(models.TaskOccurrence)
 class TaskOccurrenceAdmin(admin.ModelAdmin):
-    list_display = ("template", "assigned_to", "deadline", "status")
-    list_filter = ("status", "deadline", "template__group")
+    list_display = ("template", "assigned_to", "deadline", "status", "snooze_count", "points_earned", "reassignment_reason")
+    list_filter = ("status", "reassignment_reason", "deadline", "template__group")
     search_fields = ("template__name", "assigned_to__email")
-    autocomplete_fields = ("template", "assigned_to")
+    autocomplete_fields = ("template", "assigned_to", "original_assignee")
 
 
 @admin.register(models.TaskPreference)
@@ -147,18 +147,29 @@ class CalendarAdmin(admin.ModelAdmin):
         "provider",
         "name",
         "external_id",
-        "sync_enabled",
-        "back_sync_enabled",
+        "push_enabled",
+        "is_task_writeback",
         "include_in_availability",
-        "writable",
-        "channel_id",
-        "resource_id",
-        "watch_expires_at",
     )
-    list_filter = ("provider", "sync_enabled", "back_sync_enabled", "include_in_availability", "writable")
+    list_filter = ("provider", "push_enabled", "is_task_writeback", "include_in_availability")
     search_fields = ("name", "external_id", "user__email")
     autocomplete_fields = ("user", "credential")
     inlines = [EventInline]
+
+
+@admin.register(models.GoogleCalendarSync)
+class GoogleCalendarSyncAdmin(admin.ModelAdmin):
+    list_display = ("calendar", "channel_id", "watch_expires_at", "paused", "active_task_id", "oauth_writable")
+    list_filter = ("paused", "oauth_writable")
+    search_fields = ("calendar__name", "calendar__user__email", "channel_id")
+    autocomplete_fields = ("calendar",)
+
+
+@admin.register(models.OutlookCalendarSync)
+class OutlookCalendarSyncAdmin(admin.ModelAdmin):
+    list_display = ("calendar", "subscription_id", "subscription_expires_at")
+    search_fields = ("calendar__name", "calendar__user__email")
+    autocomplete_fields = ("calendar",)
 
 
 @admin.register(models.Event)
@@ -221,9 +232,9 @@ class MessageReceiptAdmin(admin.ModelAdmin):
 
 @admin.register(models.Notification)
 class NotificationAdmin(admin.ModelAdmin):
-    list_display = ("recipient", "type", "group", "task_occurrence", "task_proposal", "message", "read", "dismissed", "created_at")
+    list_display = ("recipient", "title", "type", "read", "dismissed", "created_at")
     list_filter = ("type", "read", "dismissed")
-    search_fields = ("recipient__email", "content")
+    search_fields = ("recipient__email", "title", "content")
     autocomplete_fields = ("recipient", "group", "task_occurrence", "task_proposal", "message")
 
 
@@ -241,8 +252,9 @@ class UserStatsAdmin(admin.ModelAdmin):
 
 @admin.register(models.Badge)
 class BadgeAdmin(admin.ModelAdmin):
-    list_display = ("name", "points_value")
-    search_fields = ("name",)
+    list_display = ("name", "points_value", "description")
+    search_fields = ("name", "description")
+    readonly_fields = ("criteria",)
 
 
 @admin.register(models.UserBadge)

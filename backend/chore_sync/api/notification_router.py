@@ -95,4 +95,5 @@ def _serialize(n) -> dict:
         'task_occurrence_id': n.task_occurrence_id,
         'task_proposal_id': n.task_proposal_id,
         'message_id': n.message_id,
+        'action_url': n.action_url or '',
     }

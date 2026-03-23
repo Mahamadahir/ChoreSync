@@ -19,4 +19,4 @@ coverage/
 secrets.env
 .env
 frontend/.env
-docs/
+frontend/.env.local

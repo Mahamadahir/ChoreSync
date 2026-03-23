@@ -203,3 +203,16 @@ class GroupLeaderboardAPIView(APIView):
         except PermissionError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
         return Response(leaderboard)
+
+
+class GroupLeaveAPIView(APIView):
+    """POST /api/groups/{pk}/leave/"""
+    authentication_classes = [CsrfExemptSessionAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            group_deleted = _svc.leave_group(user=request.user, group_id=str(pk))
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"group_deleted": group_deleted}, status=status.HTTP_200_OK)

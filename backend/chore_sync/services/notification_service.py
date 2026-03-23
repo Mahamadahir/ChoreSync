@@ -29,15 +29,19 @@ class NotificationService:
         task_occurrence_id: int | None = None,
         task_proposal_id: int | None = None,
         message_id: int | None = None,
+        action_url: str = "",
     ) -> Notification:
         """Create an in-app Notification record and push it over WebSocket.
 
         Inputs:
             recipient_id: Target user.
-            notification_type: One of Notification.TYPE_CHOICES keys.
+            notification_type: Free-form type string.
             title: Short display title.
             content: Full notification body.
             group_id / task_occurrence_id / ...: Optional FK references for deep-linking.
+            action_url: Frontend route path (e.g. '/tasks/42') that the notification
+                        should navigate to when clicked. Leave empty for non-actionable
+                        notifications.
         Output:
             Created Notification instance.
         """
@@ -50,6 +54,7 @@ class NotificationService:
             task_occurrence_id=task_occurrence_id,
             task_proposal_id=task_proposal_id,
             message_id=message_id,
+            action_url=action_url,
         )
         self.fan_out_realtime(
             recipient_id=recipient_id,

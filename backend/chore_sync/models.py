@@ -282,6 +282,10 @@ class TaskTemplate(models.Model):
     )
     next_due = models.DateTimeField()
     active = models.BooleanField(default=True)
+    photo_proof_required = models.BooleanField(
+        default=False,
+        help_text="If True, the assignee must upload a photo when marking this task complete.",
+    )
 
     # Task details
     name = models.CharField(max_length=100)
@@ -538,46 +542,6 @@ class Calendar(models.Model):
         help_text="OAuth2 credentials used to sync this calendar",
     )
 
-    # Sync details
-    sync_enabled = models.BooleanField(
-        default=False,
-
-    )
-    back_sync_enabled = models.BooleanField(
-        default=False,
-        help_text="Push app events to external provider?",
-    )
-
-    sync_token = models.CharField(
-        max_length=512,
-        null=True,
-        blank=True,
-        help_text="Provider-specific sync token for incremental sync",
-    )
-    channel_id = models.CharField(
-        max_length=255,
-        null=True,
-        blank=True,
-        help_text="Google webhook channel identifier (events.watch).",
-    )
-    resource_id = models.CharField(
-        max_length=255,
-        null=True,
-        blank=True,
-        help_text="Google resource identifier associated with the watch channel.",
-    )
-    watch_expires_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="When the current Google watch channel expires.",
-    )
-    webhook_token = models.CharField(
-        max_length=255,
-        null=True,
-        blank=True,
-        help_text="Opaque token sent with watch channel to verify callbacks.",
-    )
-
     last_synced_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -607,9 +571,14 @@ class Calendar(models.Model):
         blank=True,
         help_text="Display color for the calendar (if supported by provider)",
     )
-    writable = models.BooleanField(
+    push_enabled = models.BooleanField(
         default=True,
         help_text="If False, skip pushing updates to this external calendar.",
+    )
+
+    is_task_writeback = models.BooleanField(
+        default=False,
+        help_text="If True, task occurrences assigned to this user are written back to this calendar.",
     )
 
     include_in_availability = models.BooleanField(
@@ -626,6 +595,60 @@ class Calendar(models.Model):
 
     def __str__(self):
         return f"{self.user.email} - {self.name or self.provider}"
+
+
+class GoogleCalendarSync(models.Model):
+    calendar = models.OneToOneField(
+        Calendar,
+        on_delete=models.CASCADE,
+        related_name='google_sync',
+    )
+    sync_token = models.CharField(max_length=512, null=True, blank=True)
+    checkpoint_date = models.DateField(
+        null=True, blank=True,
+        help_text="Furthest date processed during initial back-fill; resume point on restart.",
+    )
+    active_task_id = models.CharField(
+        max_length=255, null=True, blank=True,
+        help_text="Celery task ID of the running initial sync — prevents double-queueing.",
+    )
+    channel_id = models.CharField(max_length=255, null=True, blank=True)
+    resource_id = models.CharField(max_length=255, null=True, blank=True)
+    watch_expires_at = models.DateTimeField(null=True, blank=True)
+    webhook_token = models.CharField(max_length=255, null=True, blank=True)
+    paused = models.BooleanField(
+        default=False,
+        help_text="True while initial sync is running; suppresses concurrent webhook syncs.",
+    )
+    oauth_writable = models.BooleanField(
+        default=False,
+        help_text="Cached from Google accessRole — True if owner or writer.",
+    )
+
+    class Meta:
+        verbose_name = "Google Calendar Sync State"
+        verbose_name_plural = "Google Calendar Sync States"
+
+    def __str__(self):
+        return f"GoogleCalendarSync({self.calendar})"
+
+
+class OutlookCalendarSync(models.Model):
+    calendar = models.OneToOneField(
+        Calendar,
+        on_delete=models.CASCADE,
+        related_name='outlook_sync',
+    )
+    delta_link = models.TextField(null=True, blank=True)
+    subscription_id = models.CharField(max_length=255, null=True, blank=True)
+    subscription_expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Outlook Calendar Sync State"
+        verbose_name_plural = "Outlook Calendar Sync States"
+
+    def __str__(self):
+        return f"OutlookCalendarSync({self.calendar})"
 
 
 class Event(models.Model):
@@ -1045,7 +1068,7 @@ class Notification(models.Model):
     """Generic in-app notification dispatched to a user."""
 
     title = models.CharField(max_length=255, default = '')
-    action_url = models.URLField(max_length=500, blank=True, null=True, help_text="Optional deep-link URL for this notification.")
+    action_url = models.CharField(max_length=255, blank=True, default='', help_text="Optional deep-link path or URL for this notification.")
     sent_at = models.DateTimeField(default=timezone.now)
 
 
@@ -1069,7 +1092,6 @@ class Notification(models.Model):
 
     type = models.CharField(
         max_length=50,
-        choices=TYPE_CHOICES,
     )
 
     # Generic target fields for deep-linking later
@@ -1188,8 +1210,9 @@ class UserStats(models.Model):
 class Badge(models.Model):
     """Represents an earned badge for a user."""
 
-    name = models.CharField(max_length=100)
+    name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True)
+    emoji = models.CharField(max_length=8, blank=True, help_text="Single emoji displayed in UI")
     icon_url = models.URLField(blank=True)
     criteria = models.JSONField(help_text="e.g. {'streak_days': 30}")
     points_value = models.PositiveIntegerField(default=0)

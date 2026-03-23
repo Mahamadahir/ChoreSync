@@ -48,6 +48,13 @@ from chore_sync.api.notification_router import (
     NotificationReadAPIView,
     NotificationDismissAPIView,
 )
+from chore_sync.api.outlook_calendar_router import (
+    OutlookCalendarAuthURLAPIView,
+    OutlookCalendarCallbackAPIView,
+    OutlookCalendarListAPIView,
+    OutlookCalendarSelectAPIView,
+    OutlookCalendarSyncAPIView,
+)
 from chore_sync.api.group_router import (
     GroupListCreateAPIView,
     GroupDetailAPIView,
@@ -56,6 +63,7 @@ from chore_sync.api.group_router import (
     GroupAssignmentMatrixAPIView,
     GroupSettingsAPIView,
     GroupLeaderboardAPIView,
+    GroupLeaveAPIView,
 )
 from chore_sync.api.views import (
     SignupAPIView,
@@ -103,6 +111,11 @@ urlpatterns = [
     path('api/calendar/google/callback/', GoogleCalendarCallbackAPIView.as_view(), name='google-cal-callback'),
     path('api/calendar/google/sync/', GoogleCalendarSyncAPIView.as_view(), name='google-cal-sync'),
     path('api/calendar/google/webhook/', GoogleCalendarWebhookAPIView.as_view(), name='google-cal-webhook'),
+    path('api/calendar/outlook/auth-url/', OutlookCalendarAuthURLAPIView.as_view(), name='outlook-cal-auth-url'),
+    path('api/calendar/outlook/callback/', OutlookCalendarCallbackAPIView.as_view(), name='outlook-cal-callback'),
+    path('api/calendar/outlook/list/', OutlookCalendarListAPIView.as_view(), name='outlook-cal-list'),
+    path('api/calendar/outlook/select/', OutlookCalendarSelectAPIView.as_view(), name='outlook-cal-select'),
+    path('api/calendar/outlook/sync/', OutlookCalendarSyncAPIView.as_view(), name='outlook-cal-sync'),
     path('api/events/stream/', EventStreamAPIView.as_view(), name='event-stream'),
     path('api/groups/', GroupListCreateAPIView.as_view(), name='group-list-create'),
     path('api/groups/<uuid:pk>/', GroupDetailAPIView.as_view(), name='group-detail'),
@@ -111,6 +124,7 @@ urlpatterns = [
     path('api/groups/<uuid:pk>/assignment-matrix/', GroupAssignmentMatrixAPIView.as_view(), name='group-assignment-matrix'),
     path('api/groups/<uuid:pk>/settings/', GroupSettingsAPIView.as_view(), name='group-settings'),
     path('api/groups/<uuid:pk>/leaderboard/', GroupLeaderboardAPIView.as_view(), name='group-leaderboard'),
+    path('api/groups/<uuid:pk>/leave/', GroupLeaveAPIView.as_view(), name='group-leave'),
     path('api/groups/<uuid:pk>/task-templates/', GroupTaskTemplateListCreateAPIView.as_view(), name='group-task-templates'),
     path('api/task-templates/<int:pk>/', TaskTemplateDetailAPIView.as_view(), name='task-template-detail'),
     path('api/task-templates/<int:pk>/generate-occurrences/', GenerateOccurrencesAPIView.as_view(), name='task-template-generate-occurrences'),

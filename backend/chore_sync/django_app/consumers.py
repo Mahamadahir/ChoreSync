@@ -172,4 +172,5 @@ class ChoreConsumer(AsyncWebsocketConsumer):
             'created_at': n.created_at.isoformat(),
             'group_id': str(n.group_id) if n.group_id else None,
             'task_occurrence_id': n.task_occurrence_id,
+            'action_url': n.action_url or '',
         }

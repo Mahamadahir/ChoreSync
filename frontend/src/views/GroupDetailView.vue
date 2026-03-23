@@ -22,9 +22,8 @@
         <q-tab name="tasks" icon="task" label="Tasks" />
         <q-tab name="members" icon="people" label="Members" />
         <q-tab name="leaderboard" icon="leaderboard" label="Leaderboard" />
-        <q-tab name="proposals" icon="how_to_vote" label="Proposals" />
+        <q-tab v-if="group.task_proposal_voting_required" name="proposals" icon="how_to_vote" label="Proposals" />
         <q-tab name="chat" icon="chat" label="Chat" />
-        <q-tab name="templates" icon="list_alt" label="Templates" />
         <q-tab v-if="group.role === 'moderator'" name="settings" icon="settings" label="Settings" />
       </q-tabs>
 
@@ -32,6 +31,9 @@
 
         <!-- ── TASKS ── -->
         <q-tab-panel name="tasks">
+          <div class="row justify-end q-mb-sm">
+            <q-btn v-if="!group.task_proposal_voting_required" color="secondary" icon="add_task" label="New task" size="sm" @click="showTemplateForm = true" />
+          </div>
           <div v-if="tasks.length === 0" class="text-center text-grey-6 q-pa-xl">
             <q-icon name="task_alt" size="48px" /><div class="q-mt-sm">No tasks yet.</div>
           </div>
@@ -82,6 +84,15 @@
               {{ invite.message }}
             </div>
           </div>
+
+          <!-- Leave group -->
+          <div class="q-mt-lg">
+            <q-btn
+              flat color="negative" icon="logout" label="Leave group"
+              :loading="leaveLoading" @click="leaveGroup"
+            />
+            <div v-if="leaveError" class="q-mt-xs text-caption text-negative">{{ leaveError }}</div>
+          </div>
         </q-tab-panel>
 
         <!-- ── LEADERBOARD ── -->
@@ -100,7 +111,7 @@
         <q-tab-panel name="proposals">
           <div class="row items-center justify-between q-mb-md">
             <div class="text-subtitle1">Proposals</div>
-            <q-btn color="primary" icon="add" label="New proposal" size="sm" @click="showProposalForm = true" />
+            <q-btn color="primary" icon="how_to_vote" label="New proposal" size="sm" @click="showProposalForm = true" />
           </div>
 
           <div v-if="proposals.length === 0" class="text-grey-6 text-center q-pa-xl">
@@ -178,68 +189,6 @@
           </div>
         </q-tab-panel>
 
-        <!-- ── TEMPLATES ── -->
-        <q-tab-panel name="templates">
-          <div class="row items-center justify-between q-mb-md">
-            <div class="text-subtitle1">Task Templates</div>
-            <q-btn color="primary" icon="add" label="New template" size="sm" @click="showTemplateForm = true" />
-          </div>
-
-          <div v-if="templates.length === 0" class="text-grey-6 text-center q-pa-xl">
-            <q-icon name="list_alt" size="48px" /><div class="q-mt-sm">No templates yet.</div>
-          </div>
-
-          <q-list v-else separator bordered class="rounded-borders">
-            <q-item v-for="t in templates" :key="t.id">
-              <q-item-section>
-                <q-item-label>{{ t.name }}</q-item-label>
-                <q-item-label caption>{{ t.category }} · Every {{ t.recurrence_rule }} · Difficulty {{ t.difficulty }}</q-item-label>
-              </q-item-section>
-              <q-item-section side>
-                <q-badge :color="t.active ? 'positive' : 'grey'" :label="t.active ? 'active' : 'inactive'" />
-              </q-item-section>
-            </q-item>
-          </q-list>
-
-          <!-- New template dialog -->
-          <q-dialog v-model="showTemplateForm">
-            <q-card style="min-width:400px">
-              <q-card-section><div class="text-h6">New task template</div></q-card-section>
-              <q-card-section class="q-gutter-sm">
-                <q-input v-model="templateForm.name" label="Name" outlined />
-                <q-select
-                  v-model="templateForm.category"
-                  :options="categoryOptions"
-                  label="Category"
-                  outlined
-                  emit-value map-options
-                />
-                <q-select
-                  v-model="templateForm.recurring_choice"
-                  :options="recurrenceOptions"
-                  label="Recurrence"
-                  outlined
-                  emit-value map-options
-                />
-                <q-select
-                  v-model="templateForm.importance"
-                  :options="importanceOptions"
-                  label="Importance"
-                  outlined
-                  emit-value map-options
-                />
-                <q-input v-model.number="templateForm.difficulty" type="number" label="Difficulty (1-5)" outlined min="1" max="5" />
-                <q-input v-model="templateForm.base_deadline_time" type="time" label="Default deadline time" outlined />
-                <q-toggle v-model="templateForm.photo_proof_required" label="Photo proof required" />
-              </q-card-section>
-              <q-card-actions align="right">
-                <q-btn flat label="Cancel" v-close-popup />
-                <q-btn color="primary" label="Create" :loading="templateForm.loading" @click="submitTemplate" />
-              </q-card-actions>
-            </q-card>
-          </q-dialog>
-        </q-tab-panel>
-
         <!-- ── SETTINGS (moderator only) ── -->
         <q-tab-panel v-if="group.role === 'moderator'" name="settings">
           <div class="text-subtitle1 q-mb-md">Group Settings</div>
@@ -261,18 +210,75 @@
         </q-tab-panel>
 
       </q-tab-panels>
+
+      <!-- New task dialog (triggered from Proposals tab) -->
+      <q-dialog v-model="showTemplateForm">
+        <q-card style="min-width:400px">
+          <q-card-section><div class="text-h6">New task</div></q-card-section>
+          <q-card-section class="q-gutter-sm">
+            <q-input v-model="templateForm.name" label="Name" outlined />
+            <q-select
+              v-model="templateForm.category"
+              :options="categoryOptions"
+              label="Category"
+              outlined emit-value map-options
+            />
+            <q-select
+              v-model="templateForm.recurring_choice"
+              :options="recurrenceOptions"
+              label="Recurrence"
+              outlined emit-value map-options
+            />
+            <q-select
+              v-model="templateForm.importance"
+              :options="importanceOptions"
+              label="Importance"
+              outlined emit-value map-options
+            />
+            <q-input v-model.number="templateForm.difficulty" type="number" label="Difficulty (1-5)" outlined min="1" max="5" />
+            <q-input
+              v-model="templateForm.due_datetime"
+              type="datetime-local"
+              :label="templateForm.recurring_choice === 'none' ? 'Due date & time' : 'First due date & time'"
+              outlined
+            />
+            <q-input
+              v-if="templateForm.recurring_choice === 'every_n_days'"
+              v-model.number="templateForm.recur_value"
+              type="number" label="Repeat every N days" outlined min="1"
+            />
+            <q-select
+              v-if="templateForm.recurring_choice === 'custom'"
+              v-model="templateForm.days_of_week"
+              :options="[
+                { label: 'Mon', value: 'mon' }, { label: 'Tue', value: 'tue' },
+                { label: 'Wed', value: 'wed' }, { label: 'Thu', value: 'thu' },
+                { label: 'Fri', value: 'fri' }, { label: 'Sat', value: 'sat' },
+                { label: 'Sun', value: 'sun' },
+              ]"
+              label="Days of week" outlined multiple emit-value map-options
+            />
+            <q-toggle v-model="templateForm.photo_proof_required" label="Photo proof required" />
+          </q-card-section>
+          <q-card-actions align="right">
+            <q-btn flat label="Cancel" v-close-popup />
+            <q-btn color="primary" label="Create" :loading="templateForm.loading" @click="submitTemplate" />
+          </q-card-actions>
+        </q-card>
+      </q-dialog>
     </template>
   </q-page>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { groupApi, taskApi } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 import { NotificationSocketService } from '../services/NotificationSocketService';
 
 const route = useRoute();
+const router = useRouter();
 const groupId = route.params.id as string;
 const authStore = useAuthStore();
 const myUserId = computed(() => authStore.userId);
@@ -296,6 +302,10 @@ const socketSvc = new NotificationSocketService();
 // Invite
 const invite = ref({ email: '', role: 'member', loading: false, message: '', error: false });
 
+// Leave group
+const leaveLoading = ref(false);
+const leaveError = ref('');
+
 // Proposal form
 const showProposalForm = ref(false);
 const proposalForm = ref({ task_template_id: null as number | null, reason: '', loading: false });
@@ -304,7 +314,8 @@ const proposalForm = ref({ task_template_id: null as number | null, reason: '', 
 const showTemplateForm = ref(false);
 const templateForm = ref({
   name: '', category: 'cleaning', recurring_choice: 'none', importance: 'core',
-  difficulty: 3, base_deadline_time: '20:00', photo_proof_required: false, loading: false,
+  difficulty: 3, due_datetime: '', photo_proof_required: false,
+  recur_value: 7, days_of_week: [] as string[], loading: false,
 });
 
 // Settings
@@ -326,6 +337,7 @@ const fairnessOptions = [
   { label: 'Count-based (least tasks done)', value: 'count_based' },
   { label: 'Time-based (longest waiting)', value: 'time_based' },
   { label: 'Difficulty-based (preferences & difficulty)', value: 'difficulty_based' },
+  { label: 'Weighted (tasks 60% + points 40%)', value: 'weighted' },
 ];
 
 const recurrenceOptions = [
@@ -447,15 +459,28 @@ async function submitProposal() {
 }
 
 async function submitTemplate() {
+  if (!templateForm.value.due_datetime) {
+    error.value = 'Please select a due date and time.';
+    return;
+  }
   templateForm.value.loading = true;
   try {
     const { api } = await import('../services/api');
-    await api.post(`/api/groups/${groupId}/task-templates/`, templateForm.value);
+    const { loading: _loading, due_datetime, ...rest } = templateForm.value;
+    // Convert local datetime-local value to ISO 8601 with UTC offset
+    const next_due = new Date(due_datetime).toISOString();
+    const payload = { ...rest, next_due };
+    const res = await api.post(`/api/groups/${groupId}/task-templates/`, payload);
     showTemplateForm.value = false;
-    templateForm.value = { name: '', category: 'cleaning', recurring_choice: 'none', importance: 'core', difficulty: 3, base_deadline_time: '20:00', photo_proof_required: false, loading: false };
+    templateForm.value = { name: '', category: 'cleaning', recurring_choice: 'none', importance: 'core', difficulty: 3, due_datetime: '', photo_proof_required: false, recur_value: 7, days_of_week: [], loading: false };
+    const created = res.data.occurrences_created ?? 0;
+    if (created > 0) {
+      tasks.value = (await (await import('../services/api')).taskApi.groupTasks(groupId)).data;
+    }
     await loadTemplates();
+    await loadProposals();
   } catch (e: any) {
-    error.value = e?.response?.data?.detail ?? 'Failed to create template.';
+    error.value = e?.response?.data?.detail ?? 'Failed to create task.';
   } finally {
     templateForm.value.loading = false;
   }
@@ -477,6 +502,21 @@ async function saveSettings() {
     settings.value.error = true;
   } finally {
     settings.value.loading = false;
+  }
+}
+
+async function leaveGroup() {
+  if (!window.confirm('Are you sure you want to leave this group?')) return;
+  leaveLoading.value = true;
+  leaveError.value = '';
+  try {
+    const { api } = await import('../services/api');
+    await api.post(`/api/groups/${groupId}/leave/`);
+    router.push({ name: 'groups' });
+  } catch (e: any) {
+    leaveError.value = e?.response?.data?.detail ?? 'Failed to leave group.';
+  } finally {
+    leaveLoading.value = false;
   }
 }
 

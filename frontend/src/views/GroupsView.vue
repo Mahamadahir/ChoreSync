@@ -132,6 +132,7 @@ const fairnessOptions = [
   { label: 'Count-based (least tasks done)', value: 'count_based' },
   { label: 'Time-based (longest waiting)', value: 'time_based' },
   { label: 'Difficulty-based (preferences & difficulty)', value: 'difficulty_based' },
+  { label: 'Weighted (tasks 60% + points 40%)', value: 'weighted' },
 ];
 
 const reassignOptions = [

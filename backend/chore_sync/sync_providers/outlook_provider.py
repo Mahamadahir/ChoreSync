@@ -3,53 +3,57 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from chore_sync.services.sync_providers.base import CalendarProvider
+
 
 @dataclass
-class OutlookCalendarProvider:
-    """Wraps Microsoft Graph calendar operations."""
+class OutlookCalendarProvider(CalendarProvider):
+    """Wraps Microsoft Graph calendar operations via OutlookCalendarService."""
 
-    def list_calendars(self, *, user_id: str) -> None:
-        """Fetch calendars via Microsoft Graph.
+    def create_task_event(self, task_occurrence) -> str | None:
+        from chore_sync.services.outlook_calendar_service import OutlookCalendarService
+        from chore_sync.models import Event, Calendar
+        user = task_occurrence.assigned_to
+        cal = Calendar.objects.filter(user=user, provider="microsoft", is_task_writeback=True).first()
+        if not cal:
+            return None
+        ev = Event.objects.create(
+            calendar=cal,
+            user=user,
+            title=task_occurrence.template.name,
+            start=task_occurrence.deadline,
+            end=task_occurrence.deadline,
+            source="task",
+            task_occurrence=task_occurrence,
+        )
+        try:
+            svc = OutlookCalendarService(user)
+            svc.push_created_event(ev)
+        except Exception:
+            pass
+        return ev.external_id
 
-        Inputs:
-            user_id: Owner of the Outlook credential.
-        Output:
-            List of normalized calendar records (id, name, color, default status).
-        TODO: Call /me/calendars with pagination, include default calendar info, normalize fields, and cache selection state.
-        """
-        raise NotImplementedError("TODO: implement Outlook calendar listing")
+    def update_task_event(self, task_occurrence) -> None:
+        from chore_sync.services.outlook_calendar_service import OutlookCalendarService
+        from chore_sync.models import Event
+        ev = Event.objects.filter(task_occurrence=task_occurrence).first()
+        if not ev:
+            return
+        try:
+            svc = OutlookCalendarService(task_occurrence.assigned_to)
+            svc.push_updated_event(ev)
+        except Exception:
+            pass
 
-    def pull_events(self, *, user_id: str, delta_link: str | None) -> None:
-        """Fetch event changes using Graph delta queries.
-
-        Inputs:
-            user_id: Credential owner.
-            delta_link: Optional deltaLink to resume incremental sync; None for initial.
-        Output:
-            Delta payload (events and new deltaLink) for ingestion.
-        TODO: Invoke /me/events/delta, follow nextLink pagination, capture new deltaLink, normalize events, and detect deletes.
-        """
-        raise NotImplementedError("TODO: implement Outlook event pull")
-
-    def push_events(self, *, user_id: str, event_payloads: list[dict]) -> None:
-        """Upsert local events into Outlook.
-
-        Inputs:
-            user_id: Credential owner.
-            event_payloads: List of Graph event payloads and operations.
-        Output:
-            None. Should reconcile remote ids/ETags for SyncedEvent records.
-        TODO: Use Graph create/update endpoints or batch requests, handle concurrency + throttling, and map response ids to local events.
-        """
-        raise NotImplementedError("TODO: implement Outlook event push")
-
-    def renew_subscription(self, *, user_id: str) -> None:
-        """Refresh Graph webhook subscriptions for near-real-time sync.
-
-        Inputs:
-            user_id: Owner whose subscriptions need renewal.
-        Output:
-            Updated subscription metadata (expiration, notification URL).
-        TODO: Renew subscriptions before expiry, handle validation tokens, persist new expiration times, and log errors for retries.
-        """
-        raise NotImplementedError("TODO: implement Outlook subscription renewal")
+    def delete_task_event(self, task_occurrence) -> None:
+        from chore_sync.services.outlook_calendar_service import OutlookCalendarService
+        from chore_sync.models import Event
+        ev = Event.objects.filter(task_occurrence=task_occurrence).first()
+        if not ev:
+            return
+        try:
+            svc = OutlookCalendarService(task_occurrence.assigned_to)
+            svc.push_deleted_event(ev)
+        except Exception:
+            pass
+        ev.delete()

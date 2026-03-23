@@ -43,6 +43,34 @@
             />
           </q-card>
         </div>
+        <div class="col-12 col-md-6">
+          <q-card flat bordered class="q-pa-md">
+            <div class="text-subtitle1 q-mb-xs">Outlook Calendar</div>
+            <div class="text-body2 text-grey-7 q-mb-sm">Connect your Microsoft Outlook calendar to sync events.</div>
+            <q-btn
+              color="primary"
+              outline
+              label="Connect Outlook Calendar"
+              :loading="connectingOutlook"
+              @click="handleOutlookConnect"
+            />
+            <q-btn
+              class="q-mt-sm"
+              color="secondary"
+              outline
+              label="Sync Outlook Now"
+              :loading="syncingOutlook"
+              @click="handleOutlookSync"
+            />
+            <q-btn
+              class="q-mt-sm"
+              color="primary"
+              flat
+              label="Choose Outlook Calendars"
+              @click="router.push({ name: 'outlook-calendar-select' })"
+            />
+          </q-card>
+        </div>
       </div>
       <div v-if="googleMessage" class="q-mt-md">
         <q-banner type="positive" dense>{{ googleMessage }}</q-banner>
@@ -63,6 +91,8 @@ const googleMessage = ref<string | null>(null);
 const route = useRoute();
 const router = useRouter();
 const syncingGoogle = ref(false);
+const connectingOutlook = ref(false);
+const syncingOutlook = ref(false);
 
 async function handleGoogleConnect() {
   connectingGoogle.value = true;
@@ -95,6 +125,31 @@ onMounted(() => {
     router.replace({ query: rest });
   }
 });
+
+async function handleOutlookConnect() {
+  connectingOutlook.value = true;
+  try {
+    const resp = await calendarService.getOutlookAuthUrl();
+    if (resp.data?.auth_url) {
+      window.location.href = resp.data.auth_url;
+    }
+  } catch {
+    // ignore
+  } finally {
+    connectingOutlook.value = false;
+  }
+}
+
+async function handleOutlookSync() {
+  syncingOutlook.value = true;
+  try {
+    await calendarService.syncOutlook();
+  } catch {
+    // ignore
+  } finally {
+    syncingOutlook.value = false;
+  }
+}
 
 async function handleGoogleSync() {
   syncingGoogle.value = true;

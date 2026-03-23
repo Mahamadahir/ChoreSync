@@ -17,7 +17,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from django.utils import timezone
 
-from chore_sync.models import ExternalCredential, Calendar, Event
+from chore_sync.models import ExternalCredential, Calendar, Event, GoogleCalendarSync
 
 logger = logging.getLogger(__name__)
 
@@ -110,17 +110,18 @@ class GoogleCalendarService:
             account_email=account_email,
             defaults={"secret": secret_payload},
         )
-        Calendar.objects.update_or_create(
+        from chore_sync.models import GoogleCalendarSync
+        cal, _ = Calendar.objects.update_or_create(
             user=self.user,
             provider="google",
             external_id="primary",
             defaults={
                 "name": "Google Calendar (Primary)",
-                "sync_enabled": True,
                 "include_in_availability": True,
                 "timezone": decoded_info.get("timezone", "UTC"),
             },
         )
+        GoogleCalendarSync.objects.get_or_create(calendar=cal)
         return cred
 
     def _load_credentials(self) -> Optional[Credentials]:
@@ -189,7 +190,7 @@ class GoogleCalendarService:
         calendars = (
             [calendar]
             if calendar
-            else Calendar.objects.filter(user=self.user, provider="google", sync_enabled=True)
+            else Calendar.objects.filter(user=self.user, provider="google", google_sync__isnull=False)
         )
         total = 0
         for cal in calendars:
@@ -197,10 +198,12 @@ class GoogleCalendarService:
         return total
 
     def _sync_single_calendar(self, service, cal: Calendar, force_full: bool = False) -> int:
+        from chore_sync.models import GoogleCalendarSync
+        sync_state, _ = GoogleCalendarSync.objects.get_or_create(calendar=cal)
         calendar_id = cal.external_id or "primary"
         count = 0
         page_token = None
-        use_sync_token = bool(cal.sync_token) and not force_full
+        use_sync_token = bool(sync_state.sync_token) and not force_full
         time_min = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc).isoformat()
 
         while True:
@@ -209,10 +212,10 @@ class GoogleCalendarService:
                     "calendarId": calendar_id,
                     "singleEvents": True,
                     "orderBy": "startTime",
-                    "maxResults": 500,
+                    "maxResults": 2500,
                 }
                 if use_sync_token:
-                    params["syncToken"] = cal.sync_token
+                    params["syncToken"] = sync_state.sync_token
                 else:
                     params["timeMin"] = time_min
                     if page_token:
@@ -220,10 +223,10 @@ class GoogleCalendarService:
                 events_result = service.events().list(**params).execute()
             except HttpError as exc:
                 if exc.resp is not None and exc.resp.status == 410 and use_sync_token:
-                    # Sync token expired, fall back to full sync
+                    # Sync token invalidated by Google — fall back to full sync
                     use_sync_token = False
-                    cal.sync_token = None
-                    cal.save(update_fields=["sync_token"])
+                    sync_state.sync_token = None
+                    sync_state.save(update_fields=["sync_token"])
                     continue
                 logger.exception("Failed syncing Google calendar %s", calendar_id, exc_info=exc)
                 break
@@ -283,12 +286,94 @@ class GoogleCalendarService:
             if use_sync_token or not page_token:
                 next_sync = events_result.get("nextSyncToken")
                 if next_sync:
-                    cal.sync_token = next_sync
-                    cal.save(update_fields=["sync_token"])
+                    sync_state.sync_token = next_sync
+                    sync_state.save(update_fields=["sync_token"])
                 break
         cal.last_synced_at = timezone.now()
         cal.save(update_fields=["last_synced_at"])
-        self._ensure_watch(service, cal)
+        self._ensure_watch(service, cal, sync_state)
+        return count
+
+    def _sync_chunk(self, cal: Calendar, sync_state, time_min: str, time_max: str) -> int:
+        """
+        Pull and upsert one time-bounded chunk of events from Google.
+        Used by initial_google_sync_task for monthly pagination with crash-safe checkpoints.
+        Does NOT update sync_token (full-sync token is not available per-chunk).
+        """
+        creds = self._load_credentials()
+        if not creds:
+            raise ValueError("Google credentials not found. Connect first.")
+        service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        calendar_id = cal.external_id or "primary"
+        count = 0
+        page_token = None
+        while True:
+            params = {
+                "calendarId": calendar_id,
+                "singleEvents": True,
+                "orderBy": "startTime",
+                "maxResults": 2500,
+                "timeMin": time_min,
+                "timeMax": time_max,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            events_result = service.events().list(**params).execute()
+            items = events_result.get("items", [])
+            for item in items:
+                start = item.get("start", {}).get("dateTime") or item.get("start", {}).get("date")
+                end = item.get("end", {}).get("dateTime") or item.get("end", {}).get("date")
+                if not start or not end:
+                    continue
+                is_all_day = "T" not in start
+                start_dt = datetime.datetime.fromisoformat(start.replace("Z", "+00:00"))
+                end_dt = datetime.datetime.fromisoformat(end.replace("Z", "+00:00"))
+                updated_str = item.get("updated")
+                updated_dt = None
+                if updated_str:
+                    try:
+                        updated_dt = datetime.datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+                    except Exception:
+                        updated_dt = None
+                existing = Event.objects.filter(external_event_id=item.get("id"), calendar=cal).order_by("id")
+                ev = existing.first()
+                if ev:
+                    existing.exclude(pk=ev.pk).delete()
+                    for field, val in {
+                        "title": item.get("summary", "(no title)"),
+                        "description": item.get("description", "") or "",
+                        "start": start_dt,
+                        "end": end_dt,
+                        "is_all_day": is_all_day,
+                        "blocks_availability": cal.include_in_availability,
+                        "source": "external",
+                        "status": item.get("status", "confirmed"),
+                        "external_calendar_id": calendar_id,
+                        "external_etag": item.get("etag"),
+                        "external_updated": updated_dt,
+                    }.items():
+                        setattr(ev, field, val)
+                    ev.save()
+                else:
+                    Event.objects.create(
+                        external_event_id=item.get("id"),
+                        calendar=cal,
+                        title=item.get("summary", "(no title)"),
+                        description=item.get("description", "") or "",
+                        start=start_dt,
+                        end=end_dt,
+                        is_all_day=is_all_day,
+                        blocks_availability=cal.include_in_availability,
+                        source="external",
+                        status=item.get("status", "confirmed"),
+                        external_calendar_id=calendar_id,
+                        external_etag=item.get("etag"),
+                        external_updated=updated_dt,
+                    )
+                count += 1
+            page_token = events_result.get("nextPageToken")
+            if not page_token:
+                break
         return count
 
     def _build_event_body(self, ev: Event) -> dict:
@@ -310,16 +395,19 @@ class GoogleCalendarService:
             }
         return body
 
-    def _ensure_watch(self, service, cal: Calendar) -> None:
+    def _ensure_watch(self, service, cal: Calendar, sync_state=None) -> None:
+        from chore_sync.models import GoogleCalendarSync
         callback = getattr(settings, "GOOGLE_WEBHOOK_CALLBACK_URL", "")
         if not callback:
             return  # no callback configured; skip watch
+        if sync_state is None:
+            sync_state, _ = GoogleCalendarSync.objects.get_or_create(calendar=cal)
         renew_margin = datetime.timedelta(minutes=30)
         now = datetime.datetime.now(datetime.timezone.utc)
-        if cal.watch_expires_at and cal.watch_expires_at - now > renew_margin:
+        if sync_state.watch_expires_at and sync_state.watch_expires_at - now > renew_margin:
             return
         # stop any existing channel before starting a new one
-        self._stop_watch(service, cal)
+        self._stop_watch(service, cal, sync_state)
         channel_id = str(uuid.uuid4())
         token = secrets.token_urlsafe(16)
         try:
@@ -350,38 +438,41 @@ class GoogleCalendarService:
                 expires_at = datetime.datetime.fromtimestamp(int(expiration_ms) / 1000.0, tz=datetime.timezone.utc)
             except Exception:
                 expires_at = None
-        cal.channel_id = channel_id
-        cal.resource_id = resource_id
-        cal.webhook_token = token
-        cal.watch_expires_at = expires_at
-        cal.save(update_fields=["channel_id", "resource_id", "webhook_token", "watch_expires_at"])
+        sync_state.channel_id = channel_id
+        sync_state.resource_id = resource_id
+        sync_state.webhook_token = token
+        sync_state.watch_expires_at = expires_at
+        sync_state.save(update_fields=["channel_id", "resource_id", "webhook_token", "watch_expires_at"])
 
-    def _stop_watch(self, service, cal: Calendar) -> None:
-        if not cal.channel_id or not cal.resource_id:
+    def _stop_watch(self, service, cal: Calendar, sync_state=None) -> None:
+        from chore_sync.models import GoogleCalendarSync
+        if sync_state is None:
+            sync_state, _ = GoogleCalendarSync.objects.get_or_create(calendar=cal)
+        if not sync_state.channel_id or not sync_state.resource_id:
             return
         try:
-            service.channels().stop(body={"id": cal.channel_id, "resourceId": cal.resource_id}).execute()
+            service.channels().stop(body={"id": sync_state.channel_id, "resourceId": sync_state.resource_id}).execute()
         except Exception:
             logger.debug("Failed to stop watch channel for calendar %s", cal.id, exc_info=True)
-        cal.channel_id = None
-        cal.resource_id = None
-        cal.watch_expires_at = None
-        cal.webhook_token = None
-        cal.save(update_fields=["channel_id", "resource_id", "watch_expires_at", "webhook_token"])
+        sync_state.channel_id = None
+        sync_state.resource_id = None
+        sync_state.watch_expires_at = None
+        sync_state.webhook_token = None
+        sync_state.save(update_fields=["channel_id", "resource_id", "watch_expires_at", "webhook_token"])
 
     def ensure_watch_channel(self, cal: Calendar) -> None:
         creds = self._load_credentials()
         if not creds:
             raise ValueError("Google credentials not found. Connect first.")
         service = build("calendar", "v3", credentials=creds, cache_discovery=False)
-        self._ensure_watch(service, cal)
+        self._ensure_watch(service, cal)  # sync_state loaded inside
 
     def stop_watch_channel(self, cal: Calendar) -> None:
         creds = self._load_credentials()
         if not creds:
             raise ValueError("Google credentials not found. Connect first.")
         service = build("calendar", "v3", credentials=creds, cache_discovery=False)
-        self._stop_watch(service, cal)
+        self._stop_watch(service, cal)  # sync_state loaded inside
 
     def _should_push(self, event: Event) -> bool:
         return event.calendar.provider == "google"
@@ -494,7 +585,7 @@ class GoogleCalendarService:
 
         service = build("calendar", "v3", credentials=creds, cache_discovery=False)
 
-        calendars = Calendar.objects.filter(user=self.user, provider="google", writable=True)
+        calendars = Calendar.objects.filter(user=self.user, provider="google", push_enabled=True)
         inserted = 0
         updated = 0
 

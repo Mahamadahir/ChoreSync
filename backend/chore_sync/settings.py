@@ -38,6 +38,7 @@ ALLOWED_HOSTS = env.list('ALLOWED_HOSTS')
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',  # must be first — overrides runserver with Daphne's ASGI server
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -137,6 +138,10 @@ FRONTEND_VERIFY_EMAIL_URL = env(
     'FRONTEND_VERIFY_EMAIL_URL',
     default='http://localhost:5173/verify-email' # Default for development
 )
+FRONTEND_RESET_PASSWORD_URL = env(
+    'FRONTEND_RESET_PASSWORD_URL',
+    default='http://localhost:5173/reset-password'
+)
 # Base frontend URL for redirects after OAuth/connect flows
 FRONTEND_APP_URL = env('FRONTEND_APP_URL', default='http://localhost:5173')
 # ---------------------------
@@ -144,15 +149,21 @@ FRONTEND_APP_URL = env('FRONTEND_APP_URL', default='http://localhost:5173')
 # CORS / DRF
 CORS_ALLOWED_ORIGINS = env.list(
     'CORS_ALLOWED_ORIGINS',
-    default=['http://localhost:5173', 'http://127.0.0.1:5173']
+    default=['http://localhost:5173', 'http://127.0.0.1:5173',]
 )
 CORS_ALLOW_CREDENTIALS = True
 # Development convenience; tighten in production
 CORS_ALLOW_ALL_ORIGINS = env.bool('CORS_ALLOW_ALL_ORIGINS', default=False)
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r'^http://localhost:\d+$',
+    r'^http://127\.0\.0\.1:\d+$',
+]
 
 CSRF_TRUSTED_ORIGINS = env.list(
     'CSRF_TRUSTED_ORIGINS',
-    default=['http://localhost:5173', 'http://127.0.0.1:5173']
+    default=[
+        'http://localhost:5173', 'http://127.0.0.1:5173',
+    ]
 )
 
 REST_FRAMEWORK = {
@@ -194,6 +205,29 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'chore_sync.tasks.recalculate_leaderboard',
         'schedule': 3600,  # every hour
     },
+    'renew-google-watch-channels': {
+        'task': 'chore_sync.tasks.renew_google_watch_channels',
+        'schedule': crontab(hour=3, minute=0),  # daily at 03:00
+    },
+    'catchup-google-calendar-sync': {
+        'task': 'chore_sync.tasks.catchup_google_calendar_sync',
+        'schedule': 6 * 3600,  # every 6 hours
+    },
+    # Outlook / Microsoft Graph
+    'refresh-outlook-tokens': {
+        'task': 'chore_sync.tasks.refresh_outlook_tokens',
+        'schedule': 30 * 60,  # every 30 minutes
+    },
+    'catchup-outlook-calendar-sync': {
+        'task': 'chore_sync.tasks.catchup_outlook_calendar_sync',
+        'schedule': 6 * 3600,  # every 6 hours
+    },
+}
+
+# Route initial calendar syncs to a dedicated low-concurrency queue.
+CELERY_TASK_ROUTES = {
+    'chore_sync.tasks.initial_google_sync_task': {'queue': 'calendar_sync'},
+    'chore_sync.tasks.initial_outlook_sync_task': {'queue': 'calendar_sync'},
 }
 
 # Google OAuth
@@ -204,6 +238,8 @@ GOOGLE_WEBHOOK_CALLBACK_URL = env('GOOGLE_WEBHOOK_CALLBACK_URL', default='')
 # Microsoft OAuth
 MICROSOFT_CLIENT_ID = env('MICROSOFT_CLIENT_ID', default='')
 MICROSOFT_TENANT_ID = env('MICROSOFT_TENANT_ID', default='common')
+MICROSOFT_CLIENT_SECRET = env('MICROSOFT_CLIENT_SECRET', default='')
+OUTLOOK_OAUTH_REDIRECT_URI = env('OUTLOOK_OAUTH_REDIRECT_URI', default='http://localhost:8000/api/calendar/outlook/callback/')
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/

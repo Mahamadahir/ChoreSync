@@ -1,0 +1,142 @@
+[
+  {
+    "name": "First Step",
+    "description": "Complete your very first chore.",
+    "emoji": "🐣",
+    "criteria": {"tasks_completed": 1},
+    "points_value": 10
+  },
+  {
+    "name": "Getting Started",
+    "description": "Complete 10 chores.",
+    "emoji": "✅",
+    "criteria": {"tasks_completed": 10},
+    "points_value": 25
+  },
+  {
+    "name": "Reliable",
+    "description": "Complete 50 chores.",
+    "emoji": "💪",
+    "criteria": {"tasks_completed": 50},
+    "points_value": 75
+  },
+  {
+    "name": "Chore Champion",
+    "description": "Complete 100 chores.",
+    "emoji": "🏆",
+    "criteria": {"tasks_completed": 100},
+    "points_value": 150
+  },
+  {
+    "name": "Century Club",
+    "description": "Complete 250 chores.",
+    "emoji": "💯",
+    "criteria": {"tasks_completed": 250},
+    "points_value": 300
+  },
+  {
+    "name": "On a Roll",
+    "description": "Maintain a 3-day on-time streak.",
+    "emoji": "🔥",
+    "criteria": {"streak_days": 3},
+    "points_value": 20
+  },
+  {
+    "name": "Week Warrior",
+    "description": "Maintain a 7-day on-time streak.",
+    "emoji": "⚡",
+    "criteria": {"streak_days": 7},
+    "points_value": 50
+  },
+  {
+    "name": "Fortnight Fighter",
+    "description": "Maintain a 14-day on-time streak.",
+    "emoji": "🌟",
+    "criteria": {"streak_days": 14},
+    "points_value": 100
+  },
+  {
+    "name": "Monthly Master",
+    "description": "Maintain a 30-day on-time streak.",
+    "emoji": "🥇",
+    "criteria": {"streak_days": 30},
+    "points_value": 200
+  },
+  {
+    "name": "Unstoppable",
+    "description": "Maintain a 100-day on-time streak.",
+    "emoji": "🚀",
+    "criteria": {"streak_days": 100},
+    "points_value": 500
+  },
+  {
+    "name": "Point Collector",
+    "description": "Earn 100 points.",
+    "emoji": "⭐",
+    "criteria": {"total_points": 100},
+    "points_value": 15
+  },
+  {
+    "name": "High Scorer",
+    "description": "Earn 500 points.",
+    "emoji": "💎",
+    "criteria": {"total_points": 500},
+    "points_value": 50
+  },
+  {
+    "name": "Points Millionaire",
+    "description": "Earn 1000 points.",
+    "emoji": "👑",
+    "criteria": {"total_points": 1000},
+    "points_value": 100
+  },
+  {
+    "name": "Punctual",
+    "description": "Maintain an 80% on-time completion rate.",
+    "emoji": "⏰",
+    "criteria": {"on_time_rate": 0.8},
+    "points_value": 50
+  },
+  {
+    "name": "Perfectionist",
+    "description": "Maintain a 95% on-time completion rate.",
+    "emoji": "🎯",
+    "criteria": {"on_time_rate": 0.95},
+    "points_value": 100
+  },
+  {
+    "name": "Chef in Training",
+    "description": "Complete 10 cooking-related chores.",
+    "emoji": "🍳",
+    "criteria": {"category_count": {"category": "cooking", "count": 10}},
+    "points_value": 40
+  },
+  {
+    "name": "Clean Freak",
+    "description": "Complete 10 cleaning-related chores.",
+    "emoji": "🧹",
+    "criteria": {"category_count": {"category": "cleaning", "count": 10}},
+    "points_value": 40
+  },
+  {
+    "name": "Laundry Legend",
+    "description": "Complete 10 laundry-related chores.",
+    "emoji": "🧺",
+    "criteria": {"category_count": {"category": "laundry", "count": 10}},
+    "points_value": 40
+  },
+  {
+    "name": "Green Thumb",
+    "description": "Complete 10 gardening-related chores.",
+    "emoji": "🌱",
+    "criteria": {"category_count": {"category": "gardening", "count": 10}},
+    "points_value": 40
+  },
+  {
+    "name": "Errand Runner",
+    "description": "Complete 10 errand-related chores.",
+    "emoji": "🛒",
+    "criteria": {"category_count": {"category": "errands", "count": 10}},
+    "points_value": 40
+  }
+]
