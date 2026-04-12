@@ -1,0 +1,15 @@
+[Unit]
+Description=ChoreSync Celery worker
+After=network.target redis.service
+
+[Service]
+User=mahamad
+WorkingDirectory=/home/mahamad/Projects/ChoreSync/backend
+ExecStart=/home/mahamad/miniconda3/envs/choreSync/bin/celery \
+    -A chore_sync worker -l info
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/home/mahamad/Projects/ChoreSync/backend/secrets.prod.env
+
+[Install]
+WantedBy=multi-user.target

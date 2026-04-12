@@ -1,0 +1,13 @@
+# Cloudflare Tunnel config
+# Place at: ~/.cloudflared/config.yml
+# Replace <TUNNEL-ID> with the UUID printed by: cloudflared tunnel create choresync
+
+tunnel: choresync
+credentials-file: /home/mahamad/.cloudflared/48d85ba6-96fe-4df7-bcf1-07fdb089eb69.json
+
+ingress:
+  - hostname: choresync.mahamadahir.com
+    service: http://localhost:80
+    originRequest:
+      noTLSVerify: true   # local traffic is plain HTTP; TLS terminates at Cloudflare edge
+  - service: http_status:404  # required catch-all

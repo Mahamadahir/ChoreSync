@@ -1,0 +1,16 @@
+[Unit]
+Description=ChoreSync Celery beat scheduler
+After=network.target redis.service
+
+[Service]
+User=mahamad
+WorkingDirectory=/home/mahamad/Projects/ChoreSync/backend
+ExecStart=/home/mahamad/miniconda3/envs/choreSync/bin/celery \
+    -A chore_sync beat -l info \
+    --scheduler django_celery_beat.schedulers:DatabaseScheduler
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/home/mahamad/Projects/ChoreSync/backend/secrets.prod.env
+
+[Install]
+WantedBy=multi-user.target

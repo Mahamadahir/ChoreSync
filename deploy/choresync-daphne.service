@@ -1,0 +1,16 @@
+[Unit]
+Description=ChoreSync Daphne ASGI server
+After=network.target postgresql.service redis.service
+
+[Service]
+User=mahamad
+WorkingDirectory=/home/mahamad/Projects/ChoreSync/backend
+ExecStart=/home/mahamad/miniconda3/envs/choreSync/bin/daphne \
+    -b 127.0.0.1 -p 8000 \
+    chore_sync.asgi:application
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/home/mahamad/Projects/ChoreSync/backend/secrets.prod.env
+
+[Install]
+WantedBy=multi-user.target
