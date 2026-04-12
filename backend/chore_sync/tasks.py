@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 from celery import shared_task
 from django.contrib.auth import get_user_model
 from django.db.models import Q
+
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
@@ -24,31 +28,111 @@ def send_verification_email_task(user_id: int) -> None:
 # ------------------------------------------------------------------ #
 
 @shared_task
-def generate_daily_occurrences() -> dict:
-    """Materialise task occurrences for the next 7 days across all active templates."""
+def confirm_suggested_assignment(occurrence_id: int) -> dict:
+    """Auto-confirm a streak suggestion if the user has not responded within the window.
+
+    Called by a Celery countdown scheduled in _assign_with_streak_window().
+    Only fires for streak suggestions (status='suggested'). Normal pipeline
+    assignments are direct ('pending') and never reach this task.
+    """
+    from chore_sync.models import TaskOccurrence
+    from chore_sync.services.task_lifecycle_service import TaskLifecycleService
+
+    occurrence = (
+        TaskOccurrence.objects
+        .select_related('template__group', 'assigned_to')
+        .filter(id=occurrence_id, status='suggested')
+        .first()
+    )
+    if not occurrence:
+        return {'skipped': 'already_resolved', 'occurrence_id': occurrence_id}
+
+    TaskLifecycleService._confirm_assignment(occurrence)
+    return {'confirmed': occurrence_id}
+
+
+@shared_task
+def spawn_next_occurrence(template_id: str) -> dict:
+    """Advance next_due and create the next single occurrence for one template.
+
+    Called as a Celery task after a task is completed so the completion
+    HTTP response is not blocked by assignment logic.
+    """
     from chore_sync.models import TaskTemplate
     from chore_sync.services.task_lifecycle_service import TaskLifecycleService
 
-    svc = TaskLifecycleService()
-    templates = TaskTemplate.objects.filter(active=True).values_list('id', flat=True)
-    total_created = 0
+    template = TaskTemplate.objects.filter(id=template_id, active=True).first()
+    if template is None:
+        return {'skipped': 'template_not_found', 'template_id': template_id}
 
-    for template_id in templates:
+    # Advance next_due by one interval so _next_deadline returns the correct
+    # following deadline rather than the one we just completed.
+    TaskLifecycleService._advance_next_due(template)
+
+    svc = TaskLifecycleService()
+    try:
+        created = svc.generate_recurring_instances(task_template_id=template_id)
+        return {'template_id': template_id, 'occurrences_created': len(created)}
+    except Exception:
+        logger.exception("spawn_next_occurrence: failed for template_id=%s", template_id)
+        return {'template_id': template_id, 'occurrences_created': 0, 'error': True}
+
+
+@shared_task
+def generate_daily_occurrences() -> dict:
+    """Safety-net gap-fill: create a next occurrence for any template that has none active.
+
+    Under the one-active-occurrence model, spawn_next_occurrence handles
+    creation immediately after each completion. This periodic task is a
+    fallback that catches edge cases: server restarts mid-task, worker
+    failures, manual DB edits, or newly created templates.
+    """
+    from chore_sync.models import TaskOccurrence, TaskTemplate
+    from chore_sync.services.task_lifecycle_service import TaskLifecycleService
+
+    active_statuses = TaskLifecycleService._ACTIVE_STATUSES | {'overdue'}
+
+    # Templates that currently have at least one active/overdue occurrence
+    templates_with_active = set(
+        TaskOccurrence.objects.filter(
+            template__active=True,
+            status__in=active_statuses,
+        ).values_list('template_id', flat=True).distinct()
+    )
+
+    # Templates with no active occurrence at all — these need gap-filling
+    gap_templates = (
+        TaskTemplate.objects
+        .filter(active=True)
+        .exclude(id__in=templates_with_active)
+        .values_list('id', flat=True)
+    )
+
+    svc = TaskLifecycleService()
+    total_created = 0
+    processed = 0
+
+    for template_id in gap_templates:
+        processed += 1
         try:
-            created = svc.generate_recurring_instances(
-                task_template_id=str(template_id),
-                horizon_days=7,
-            )
+            created = svc.generate_recurring_instances(task_template_id=str(template_id))
             total_created += len(created)
         except Exception:
-            pass  # Don't let one broken template abort the whole run
+            logger.exception("generate_daily_occurrences: failed for template_id=%s", template_id)
 
-    return {'templates_processed': len(templates), 'occurrences_created': total_created}
+    return {'templates_gap_filled': processed, 'occurrences_created': total_created}
 
 
 @shared_task
 def dispatch_deadline_reminders() -> dict:
-    """Send deadline reminder notifications at three windows: 24h, 3h, and at-due-time."""
+    """Send deadline reminder notifications at three windows: 24h, 3h, and at-due-time.
+
+    Each window uses select_for_update(skip_locked=True) inside a transaction so
+    concurrent Celery workers cannot claim the same rows. The sentinel flag is
+    written inside the transaction (before commit) so that any other worker that
+    was skipped will find the flag already set when it runs its own query.
+    """
+    from django.db import transaction
     from django.utils import timezone
     from datetime import timedelta
     from chore_sync.models import TaskOccurrence
@@ -59,13 +143,23 @@ def dispatch_deadline_reminders() -> dict:
     sent = 0
 
     # ── 24-hour window ──────────────────────────────────────────────────
-    for occ in TaskOccurrence.objects.select_related('template', 'assigned_to').filter(
-        status__in=['pending', 'snoozed'],
-        deadline__gt=now,
-        deadline__lte=now + timedelta(hours=24),
-        reminder_sent_at__isnull=True,
-        assigned_to__isnull=False,
-    ):
+    with transaction.atomic():
+        occs_24h = list(
+            TaskOccurrence.objects
+            .select_related('template', 'assigned_to')
+            .select_for_update(skip_locked=True)
+            .filter(
+                status__in=['pending', 'snoozed'],
+                deadline__gt=now,
+                deadline__lte=now + timedelta(hours=24),
+                reminder_sent_at__isnull=True,
+                assigned_to__isnull=False,
+            )
+        )
+        for occ in occs_24h:
+            occ.reminder_sent_at = now
+            occ.save(update_fields=['reminder_sent_at'])
+    for occ in occs_24h:
         nsvc.emit_notification(
             recipient_id=str(occ.assigned_to_id),
             notification_type='deadline_reminder',
@@ -74,18 +168,26 @@ def dispatch_deadline_reminders() -> dict:
             task_occurrence_id=occ.id,
             action_url=f"/tasks/{occ.id}",
         )
-        occ.reminder_sent_at = now
-        occ.save(update_fields=['reminder_sent_at'])
         sent += 1
 
     # ── 3-hour window ───────────────────────────────────────────────────
-    for occ in TaskOccurrence.objects.select_related('template', 'assigned_to').filter(
-        status__in=['pending', 'snoozed'],
-        deadline__gt=now + timedelta(hours=2, minutes=50),
-        deadline__lte=now + timedelta(hours=3, minutes=10),
-        reminder_3h_sent=False,
-        assigned_to__isnull=False,
-    ):
+    with transaction.atomic():
+        occs_3h = list(
+            TaskOccurrence.objects
+            .select_related('template', 'assigned_to')
+            .select_for_update(skip_locked=True)
+            .filter(
+                status__in=['pending', 'snoozed'],
+                deadline__gt=now + timedelta(hours=2, minutes=50),
+                deadline__lte=now + timedelta(hours=3, minutes=10),
+                reminder_3h_sent=False,
+                assigned_to__isnull=False,
+            )
+        )
+        for occ in occs_3h:
+            occ.reminder_3h_sent = True
+            occ.save(update_fields=['reminder_3h_sent'])
+    for occ in occs_3h:
         nsvc.emit_notification(
             recipient_id=str(occ.assigned_to_id),
             notification_type='deadline_reminder',
@@ -94,18 +196,26 @@ def dispatch_deadline_reminders() -> dict:
             task_occurrence_id=occ.id,
             action_url=f"/tasks/{occ.id}",
         )
-        occ.reminder_3h_sent = True
-        occ.save(update_fields=['reminder_3h_sent'])
         sent += 1
 
     # ── At-due-time window ──────────────────────────────────────────────
-    for occ in TaskOccurrence.objects.select_related('template', 'assigned_to').filter(
-        status__in=['pending', 'snoozed'],
-        deadline__gte=now - timedelta(minutes=5),
-        deadline__lte=now + timedelta(minutes=5),
-        reminder_due_sent=False,
-        assigned_to__isnull=False,
-    ):
+    with transaction.atomic():
+        occs_due = list(
+            TaskOccurrence.objects
+            .select_related('template', 'assigned_to')
+            .select_for_update(skip_locked=True)
+            .filter(
+                status__in=['pending', 'snoozed'],
+                deadline__gte=now - timedelta(minutes=5),
+                deadline__lte=now + timedelta(minutes=5),
+                reminder_due_sent=False,
+                assigned_to__isnull=False,
+            )
+        )
+        for occ in occs_due:
+            occ.reminder_due_sent = True
+            occ.save(update_fields=['reminder_due_sent'])
+    for occ in occs_due:
         nsvc.emit_notification(
             recipient_id=str(occ.assigned_to_id),
             notification_type='deadline_reminder',
@@ -114,8 +224,6 @@ def dispatch_deadline_reminders() -> dict:
             task_occurrence_id=occ.id,
             action_url=f"/tasks/{occ.id}",
         )
-        occ.reminder_due_sent = True
-        occ.save(update_fields=['reminder_due_sent'])
         sent += 1
 
     return {'reminders_sent': sent}
@@ -137,10 +245,14 @@ def mark_overdue_tasks() -> dict:
     from chore_sync.services.notification_service import NotificationService
     nsvc = NotificationService()
 
-    count = 0
-    ids_to_update = []
-    for occurrence in overdue:
-        ids_to_update.append(occurrence.id)
+    occurrences = list(overdue)
+    ids_to_update = [o.id for o in occurrences]
+
+    # Atomically mark overdue BEFORE notifying so a second concurrent worker
+    # sees status='overdue' and skips these rows entirely.
+    TaskOccurrence.objects.filter(id__in=ids_to_update).update(status='overdue')
+
+    for occurrence in occurrences:
         nsvc.emit_notification(
             recipient_id=str(occurrence.assigned_to_id),
             notification_type='deadline_reminder',
@@ -152,10 +264,8 @@ def mark_overdue_tasks() -> dict:
             task_occurrence_id=occurrence.id,
             action_url=f"/tasks/{occurrence.id}",
         )
-        count += 1
 
-    TaskOccurrence.objects.filter(id__in=ids_to_update).update(status='overdue')
-    return {'marked_overdue': count}
+    return {'marked_overdue': len(occurrences)}
 
 
 @shared_task
@@ -299,6 +409,19 @@ def initial_google_sync_task(self, calendar_id: int) -> dict:
 
         svc.ensure_watch_channel(cal)
 
+        # Notify the user that their calendar has finished syncing.
+        try:
+            from chore_sync.services.notification_service import NotificationService
+            NotificationService().emit_notification(
+                recipient_id=str(cal.user_id),
+                notification_type="calendar_sync_complete",
+                title="Calendar synced",
+                content=f'"{cal.name}" finished syncing with Google Calendar.',
+                action_url="/calendar",
+            )
+        except Exception:
+            pass  # Non-critical — don't fail the task if notification creation fails
+
         return {'status': 'complete', 'calendar_id': calendar_id}
 
     except Exception as exc:
@@ -334,6 +457,7 @@ def renew_google_watch_channels() -> dict:
     )
 
     renewed = 0
+    failed = 0
     for sync_state in expiring:
         cal = sync_state.calendar
         try:
@@ -341,9 +465,13 @@ def renew_google_watch_channels() -> dict:
             svc.ensure_watch_channel(cal)
             renewed += 1
         except Exception:
-            pass  # log but don't abort the whole run
+            logger.exception(
+                "renew_google_watch_channels: failed for calendar_id=%s user_id=%s",
+                cal.id, cal.user_id,
+            )
+            failed += 1
 
-    return {'renewed': renewed}
+    return {'renewed': renewed, 'failed': failed}
 
 
 @shared_task
@@ -366,6 +494,7 @@ def catchup_google_calendar_sync() -> dict:
     )
 
     synced = 0
+    failed = 0
     for sync_state in stale:
         cal = sync_state.calendar
         try:
@@ -374,9 +503,13 @@ def catchup_google_calendar_sync() -> dict:
             svc.sync_events(calendar=cal)
             synced += 1
         except Exception:
-            pass
+            logger.exception(
+                "catchup_google_calendar_sync: failed for calendar_id=%s user_id=%s",
+                cal.id, cal.user_id,
+            )
+            failed += 1
 
-    return {'synced': synced}
+    return {'synced': synced, 'failed': failed}
 
 
 # ------------------------------------------------------------------ #
@@ -449,7 +582,10 @@ def renew_outlook_subscriptions() -> dict:
             svc.renew_subscription(cal)
             renewed += 1
         except Exception:
-            pass
+            logger.exception(
+                "renew_outlook_subscriptions: failed for calendar_id=%s user_id=%s",
+                cal.id, cal.user_id,
+            )
 
     return {'renewed': renewed}
 
@@ -474,15 +610,20 @@ def refresh_outlook_tokens() -> dict:
     ).select_related('user')
 
     refreshed = 0
+    failed = 0
     for cred in expiring:
         try:
             svc = OutlookCalendarService(user=cred.user)
             svc._get_access_token()  # refreshes and persists if needed
             refreshed += 1
         except Exception:
-            pass
+            logger.exception(
+                "refresh_outlook_tokens: failed to refresh token for user_id=%s",
+                cred.user_id,
+            )
+            failed += 1
 
-    return {'refreshed': refreshed}
+    return {'refreshed': refreshed, 'failed': failed}
 
 
 @shared_task
@@ -494,12 +635,16 @@ def generate_smart_suggestions() -> dict:
     svc = SmartSuggestionService()
     groups = Group.objects.all()
     total = 0
+    failed = 0
     for group in groups:
         try:
             total += svc.generate_for_group(group)
         except Exception:
-            pass
-    return {'groups_processed': groups.count(), 'suggestions_created': total}
+            logger.exception(
+                "generate_smart_suggestions: failed for group_id=%s", group.id
+            )
+            failed += 1
+    return {'groups_processed': groups.count(), 'suggestions_created': total, 'failed': failed}
 
 
 @shared_task
@@ -508,6 +653,17 @@ def cleanup_expired_marketplace_listings() -> dict:
     from django.utils import timezone
     from chore_sync.models import MarketplaceListing
     deleted, _ = MarketplaceListing.objects.filter(expires_at__lt=timezone.now()).delete()
+    return {'deleted': deleted}
+
+
+@shared_task
+def cleanup_stale_chatbot_sessions() -> dict:
+    """Delete chatbot sessions inactive for more than 7 days. Runs daily."""
+    from django.utils import timezone
+    from datetime import timedelta
+    from chore_sync.models import ChatbotSession
+    cutoff = timezone.now() - timedelta(days=7)
+    deleted, _ = ChatbotSession.objects.filter(last_active__lt=cutoff).delete()
     return {'deleted': deleted}
 
 
@@ -532,12 +688,17 @@ def catchup_outlook_calendar_sync() -> dict:
     )
 
     synced = 0
+    failed = 0
     for cal in stale:
         try:
             svc = OutlookCalendarService(user=cal.user)
             svc.sync_events(calendar=cal)
             synced += 1
         except Exception:
-            pass
+            logger.exception(
+                "catchup_outlook_calendar_sync: failed for calendar_id=%s user_id=%s",
+                cal.id, cal.user_id,
+            )
+            failed += 1
 
-    return {'synced': synced}
+    return {'synced': synced, 'failed': failed}

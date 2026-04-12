@@ -36,10 +36,14 @@ from chore_sync.api.task_router import (
     TaskAcceptEmergencyAPIView,
     TaskPhotoProofAPIView,
     PendingSwapsAPIView,
+    TaskAcceptSuggestionAPIView,
+    TaskDeclineSuggestionAPIView,
+    TaskOccurrenceAssignmentBreakdownAPIView,
 )
 from chore_sync.api.marketplace_router import (
     TaskListMarketplaceAPIView,
     GroupMarketplaceListAPIView,
+    MarketplaceCancelAPIView,
     MarketplaceClaimAPIView,
 )
 from chore_sync.api.stats_router import (
@@ -49,14 +53,18 @@ from chore_sync.api.stats_router import (
 )
 from chore_sync.api.proposal_router import (
     GroupProposalListCreateAPIView,
-    ProposalVoteAPIView,
+    ProposalApproveAPIView,
+    ProposalRejectAPIView,
 )
+from chore_sync.api.messaging_router import GroupMessageListAPIView, MarkReadAPIView
+from chore_sync.api.preference_router import GroupPreferenceListAPIView, TaskPreferenceAPIView
 from chore_sync.api.notification_router import (
     NotificationListAPIView,
     NotificationHistoryAPIView,
     NotificationReadAPIView,
     NotificationDismissAPIView,
     NotificationPreferenceAPIView,
+    PushTokenAPIView,
 )
 from chore_sync.api.outlook_calendar_router import (
     OutlookCalendarAuthURLAPIView,
@@ -66,9 +74,19 @@ from chore_sync.api.outlook_calendar_router import (
     OutlookCalendarSyncAPIView,
     OutlookCalendarWebhookAPIView,
 )
+from chore_sync.api.chatbot_router import ChatbotMessageAPIView, ChatbotSessionListAPIView
+from chore_sync.api.jwt_views import (
+    JWTObtainTokenAPIView,
+    GoogleMobileLoginAPIView,
+    MicrosoftMobileLoginAPIView,
+    TokenRefreshView,
+    TokenVerifyView,
+)
+
 from chore_sync.api.group_router import (
     GroupListCreateAPIView,
     GroupDetailAPIView,
+    GroupJoinByCodeAPIView,
     GroupInviteAPIView,
     GroupMembersAPIView,
     GroupAssignmentMatrixAPIView,
@@ -84,6 +102,7 @@ from chore_sync.api.views import (
     LogoutAPIView,
     UpdateEmailAPIView,
     ProfileAPIView,
+    AvatarUploadAPIView,
     ForgotPasswordAPIView,
     ResetPasswordAPIView,
     ChangePasswordAPIView,
@@ -98,10 +117,17 @@ from chore_sync.api.views import (
     GoogleCalendarSelectAPIView,
     GoogleCalendarWebhookAPIView,
     EventStreamAPIView,
+    CalendarStatusAPIView,
+    UserCalendarListAPIView,
 )
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    # JWT auth — React Native mobile client
+    path('api/auth/token/', JWTObtainTokenAPIView.as_view(), name='jwt-obtain'),
+    path('api/auth/token/refresh/', TokenRefreshView.as_view(), name='jwt-refresh'),
+    path('api/auth/token/verify/', TokenVerifyView.as_view(), name='jwt-verify'),
+    # Session auth — Vue web app
     path('api/auth/signup/', SignupAPIView.as_view(), name='signup'),
     path('api/auth/login/', LoginAPIView.as_view(), name='login'),
     path('api/auth/resend-verification/', ResendVerificationAPIView.as_view(), name='resend-verification'),
@@ -113,7 +139,11 @@ urlpatterns = [
     path('api/auth/change-password/', ChangePasswordAPIView.as_view(), name='change-password'),
     path('api/auth/google/', GoogleLoginAPIView.as_view(), name='google-login'),
     path('api/auth/microsoft/', MicrosoftLoginAPIView.as_view(), name='microsoft-login'),
+    # Mobile JWT SSO — returns access+refresh instead of a session cookie
+    path('api/auth/google/mobile/', GoogleMobileLoginAPIView.as_view(), name='google-mobile-login'),
+    path('api/auth/microsoft/mobile/', MicrosoftMobileLoginAPIView.as_view(), name='microsoft-mobile-login'),
     path('api/profile/', ProfileAPIView.as_view(), name='profile'),
+    path('api/users/me/avatar/', AvatarUploadAPIView.as_view(), name='avatar-upload'),
     path('api/events/', EventsAPIView.as_view(), name='events'),
     path('api/events/<int:pk>/', EventDetailAPIView.as_view(), name='event-detail'),
     path('api/calendar/google/list/', GoogleCalendarListAPIView.as_view(), name='google-cal-list'),
@@ -128,8 +158,11 @@ urlpatterns = [
     path('api/calendar/outlook/select/', OutlookCalendarSelectAPIView.as_view(), name='outlook-cal-select'),
     path('api/calendar/outlook/sync/', OutlookCalendarSyncAPIView.as_view(), name='outlook-cal-sync'),
     path('api/calendar/outlook/webhook/', OutlookCalendarWebhookAPIView.as_view(), name='outlook-cal-webhook'),
+    path('api/calendar/status/', CalendarStatusAPIView.as_view(), name='calendar-status'),
+    path('api/calendars/', UserCalendarListAPIView.as_view(), name='user-calendars'),
     path('api/events/stream/', EventStreamAPIView.as_view(), name='event-stream'),
     path('api/groups/', GroupListCreateAPIView.as_view(), name='group-list-create'),
+    path('api/groups/join/', GroupJoinByCodeAPIView.as_view(), name='group-join-by-code'),
     path('api/groups/<uuid:pk>/', GroupDetailAPIView.as_view(), name='group-detail'),
     path('api/groups/<uuid:pk>/invite/', GroupInviteAPIView.as_view(), name='group-invite'),
     path('api/groups/<uuid:pk>/members/', GroupMembersAPIView.as_view(), name='group-members'),
@@ -150,18 +183,30 @@ urlpatterns = [
     path('api/tasks/<int:pk>/emergency-reassign/', TaskEmergencyReassignAPIView.as_view(), name='task-emergency-reassign'),
     path('api/tasks/<int:pk>/accept-emergency/', TaskAcceptEmergencyAPIView.as_view(), name='task-accept-emergency'),
     path('api/tasks/<int:pk>/upload-proof/', TaskPhotoProofAPIView.as_view(), name='task-upload-proof'),
+    path('api/tasks/<int:pk>/accept-suggestion/', TaskAcceptSuggestionAPIView.as_view(), name='task-accept-suggestion'),
+    path('api/tasks/<int:pk>/decline-suggestion/', TaskDeclineSuggestionAPIView.as_view(), name='task-decline-suggestion'),
+    path('api/tasks/<int:pk>/assignment-breakdown/', TaskOccurrenceAssignmentBreakdownAPIView.as_view(), name='task-assignment-breakdown'),
     path('api/users/me/pending-swaps/', PendingSwapsAPIView.as_view(), name='user-pending-swaps'),
     path('api/tasks/<int:pk>/list-marketplace/', TaskListMarketplaceAPIView.as_view(), name='task-list-marketplace'),
     path('api/groups/<uuid:pk>/marketplace/', GroupMarketplaceListAPIView.as_view(), name='group-marketplace'),
     path('api/marketplace/<int:pk>/claim/', MarketplaceClaimAPIView.as_view(), name='marketplace-claim'),
+    path('api/marketplace/<int:pk>/cancel/', MarketplaceCancelAPIView.as_view(), name='marketplace-cancel'),
     path('api/users/me/stats/', UserStatsAPIView.as_view(), name='user-stats'),
     path('api/users/me/badges/', UserBadgesAPIView.as_view(), name='user-badges'),
     path('api/groups/<uuid:pk>/stats/', GroupStatsAPIView.as_view(), name='group-stats'),
     path('api/groups/<uuid:pk>/proposals/', GroupProposalListCreateAPIView.as_view(), name='group-proposals'),
-    path('api/proposals/<int:pk>/vote/', ProposalVoteAPIView.as_view(), name='proposal-vote'),
+    path('api/proposals/<int:pk>/approve/', ProposalApproveAPIView.as_view(), name='proposal-approve'),
+    path('api/proposals/<int:pk>/reject/', ProposalRejectAPIView.as_view(), name='proposal-reject'),
     path('api/notifications/', NotificationListAPIView.as_view(), name='notification-list'),
     path('api/notifications/history/', NotificationHistoryAPIView.as_view(), name='notification-history'),
     path('api/notifications/<int:pk>/read/', NotificationReadAPIView.as_view(), name='notification-read'),
     path('api/notifications/<int:pk>/dismiss/', NotificationDismissAPIView.as_view(), name='notification-dismiss'),
     path('api/users/me/notification-preferences/', NotificationPreferenceAPIView.as_view(), name='notification-preferences'),
+    path('api/push-token/', PushTokenAPIView.as_view(), name='push-token'),
+    path('api/groups/<uuid:pk>/messages/', GroupMessageListAPIView.as_view(), name='group-messages'),
+    path('api/groups/<uuid:pk>/messages/read/', MarkReadAPIView.as_view(), name='group-messages-read'),
+    path('api/assistant/', ChatbotMessageAPIView.as_view(), name='assistant'),
+    path('api/assistant/sessions/', ChatbotSessionListAPIView.as_view(), name='assistant-sessions'),
+    path('api/groups/<uuid:pk>/my-preferences/', GroupPreferenceListAPIView.as_view(), name='group-my-preferences'),
+    path('api/task-templates/<int:pk>/my-preference/', TaskPreferenceAPIView.as_view(), name='task-template-my-preference'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

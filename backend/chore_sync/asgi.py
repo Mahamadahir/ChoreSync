@@ -13,6 +13,7 @@ from django.core.asgi import get_asgi_application
 from django.urls import path
 from channels.auth import AuthMiddlewareStack
 from chore_sync.django_app.consumers import ChoreConsumer
+from chore_sync.django_app.middleware import JWTAuthMiddleware
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'chore_sync.settings')
 
@@ -20,9 +21,11 @@ django_asgi_app = get_asgi_application()
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
-    "websocket": AuthMiddlewareStack(
-        URLRouter([
-            path("ws/chores/", ChoreConsumer.as_asgi()),
-        ])
+    "websocket": JWTAuthMiddleware(
+        AuthMiddlewareStack(
+            URLRouter([
+                path("ws/chores/", ChoreConsumer.as_asgi()),
+            ])
+        )
     ),
 })

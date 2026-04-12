@@ -44,9 +44,9 @@ class GroupMembershipInline(admin.TabularInline):
 
 @admin.register(models.Group)
 class GroupAdmin(admin.ModelAdmin):
-    list_display = ("name", "group_code", "owner", "fairness_algorithm", "reassignment_rule", "reassignment_value", "photo_proof_required", "task_proposal_voting_required")
+    list_display = ("name", "group_code", "owner", "reassignment_rule", "reassignment_value", "photo_proof_required", "task_proposal_voting_required")
     search_fields = ("name", "group_code", "owner__email")
-    list_filter = ("reassignment_rule", "fairness_algorithm", "photo_proof_required", "task_proposal_voting_required")
+    list_filter = ("reassignment_rule", "photo_proof_required", "task_proposal_voting_required")
     inlines = [GroupMembershipInline]
 
 
@@ -108,11 +108,22 @@ class TaskVoteInline(admin.TabularInline):
 
 @admin.register(models.TaskProposal)
 class TaskProposalAdmin(admin.ModelAdmin):
-    list_display = ("task_template", "group", "proposed_by", "state", "required_support_ratio", "created_at")
+    list_display = ("proposal_name", "group", "proposed_by", "state", "approved_by", "created_at")
     list_filter = ("state", "group")
-    search_fields = ("task_template__name", "group__name", "proposed_by__email")
-    autocomplete_fields = ("proposed_by", "group", "task_template")
-    inlines = [TaskVoteInline]
+    search_fields = ("proposed_payload", "group__name", "proposed_by__email")
+    autocomplete_fields = ("proposed_by", "group", "task_template", "approved_by")
+    readonly_fields = ("proposed_payload", "payload_diff_display", "created_at", "updated_at")
+
+    @admin.display(description="Task Name")
+    def proposal_name(self, obj):
+        return obj.proposed_payload.get("name", f"Proposal #{obj.pk}") if obj.proposed_payload else f"Proposal #{obj.pk}"
+
+    @admin.display(description="Moderator Edits")
+    def payload_diff_display(self, obj):
+        diff = obj.payload_diff
+        if not diff:
+            return "No changes"
+        return "; ".join(f"{k}: {v['from']} → {v['to']}" for k, v in diff.items())
 
 
 @admin.register(models.TaskVote)
@@ -191,13 +202,6 @@ class EventAdmin(admin.ModelAdmin):
     autocomplete_fields = ("calendar", "task_occurrence")
 
 
-@admin.register(models.GroupCalendar)
-class GroupCalendarAdmin(admin.ModelAdmin):
-    list_display = ("group", "timezone", "show_member_calendars", "show_group_tasks")
-    list_filter = ("show_member_calendars", "show_group_tasks")
-    search_fields = ("group__name",)
-    autocomplete_fields = ("group",)
-
 
 # -------------------------------------------------------------------
 # Messaging and Notifications
@@ -263,4 +267,36 @@ class UserBadgeAdmin(admin.ModelAdmin):
     list_filter = ("badge", "household")
     search_fields = ("user__email", "badge__name", "household__name")
     autocomplete_fields = ("user", "badge", "household")
+
+
+# -------------------------------------------------------------------
+# AI Assistant
+# -------------------------------------------------------------------
+@admin.register(models.ChatbotSession)
+class ChatbotSessionAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "message_count", "last_active", "created_at")
+    list_filter = ("created_at", "last_active")
+    search_fields = ("user__username", "user__email")
+    readonly_fields = ("user", "messages_pretty", "pending_action", "created_at", "last_active")
+    ordering = ("-last_active",)
+
+    def message_count(self, obj):
+        return len(obj.messages or [])
+    message_count.short_description = "Messages"
+
+    def messages_pretty(self, obj):
+        from django.utils.html import format_html, escape
+        lines = []
+        for m in (obj.messages or []):
+            role = m.get("role", "?")
+            content = escape(m.get("content", ""))
+            colour = "#0066cc" if role == "user" else "#2a7a2a"
+            lines.append(
+                f'<p><strong style="color:{colour}">[{role}]</strong> {content}</p>'
+            )
+        return format_html("".join(lines) or "<em>No messages</em>")
+    messages_pretty.short_description = "Conversation"
+
+    def has_add_permission(self, request):
+        return False
 

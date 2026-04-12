@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'rest_framework_simplejwt',
     'corsheaders',
     'django_celery_beat',
     'chore_sync.django_app.ChoreSyncConfig',
@@ -54,6 +55,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -83,11 +85,24 @@ TEMPLATES = [
 WSGI_APPLICATION = 'chore_sync.wsgi.application'
 ASGI_APPLICATION = 'chore_sync.asgi.application'
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer",
-    },
-}
+# Use Redis-backed channel layer when a broker URL is configured (staging/production).
+# Falls back to InMemoryChannelLayer for local development (no Redis required).
+_redis_url = env('CELERY_BROKER_URL', default='')
+if _redis_url:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": [_redis_url],
+            },
+        },
+    }
+else:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+        },
+    }
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
@@ -168,11 +183,30 @@ CSRF_TRUSTED_ORIGINS = env.list(
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
+        # Session auth — used by the Vue web app (cookie-based)
         "rest_framework.authentication.SessionAuthentication",
+        # JWT auth — used by the React Native mobile app (Bearer token)
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+}
+
+from datetime import timedelta  # noqa: E402
+
+SIMPLE_JWT = {
+    # Short-lived access token; the RN app auto-refreshes silently
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    # Long-lived refresh token — user stays "logged in" for 90 days of inactivity
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=90),
+    # Rotate refresh tokens on every refresh call so each token is single-use
+    "ROTATE_REFRESH_TOKENS": True,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
+    # Include email + username in the token payload for convenience
+    "TOKEN_OBTAIN_SERIALIZER": "chore_sync.api.jwt_views.ChoresSyncTokenObtainSerializer",
 }
 
 # Allow Google OAuth popup to communicate back via postMessage
@@ -234,6 +268,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'chore_sync.tasks.generate_smart_suggestions',
         'schedule': crontab(hour=8, minute=0),  # daily at 08:00
     },
+    'cleanup-stale-chatbot-sessions': {
+        'task': 'chore_sync.tasks.cleanup_stale_chatbot_sessions',
+        'schedule': crontab(hour=3, minute=30),  # daily at 03:30
+    },
 }
 
 # Route initial calendar syncs to a dedicated low-concurrency queue.
@@ -244,6 +282,8 @@ CELERY_TASK_ROUTES = {
 
 # Google OAuth
 GOOGLE_OAUTH_CLIENT_ID = env('GOOGLE_OAUTH_CLIENT_ID', default='')
+# Additional Google OAuth client IDs for mobile (iOS + Android) — used for ID token audience validation
+GOOGLE_MOBILE_CLIENT_IDS = env.list('GOOGLE_MOBILE_CLIENT_IDS', default=[])
 GOOGLE_OAUTH_CLIENT_SECRET = env('GOOGLE_OAUTH_CLIENT_SECRET', default='')
 GOOGLE_OAUTH_REDIRECT_URI = env('GOOGLE_OAUTH_REDIRECT_URI', default='http://localhost:8000/api/calendar/google/callback/')
 GOOGLE_WEBHOOK_CALLBACK_URL = env('GOOGLE_WEBHOOK_CALLBACK_URL', default='')
@@ -254,8 +294,28 @@ MICROSOFT_CLIENT_SECRET = env('MICROSOFT_CLIENT_SECRET', default='')
 OUTLOOK_OAUTH_REDIRECT_URI = env('OUTLOOK_OAUTH_REDIRECT_URI', default='http://localhost:8000/api/calendar/outlook/callback/')
 # Public-facing base URL of this backend (must be HTTPS and internet-reachable for Graph webhooks to fire)
 BACKEND_BASE_URL = env('BACKEND_BASE_URL', default='http://localhost:8000')
+# Custom URI scheme for mobile OAuth redirects (deep link back into the app after calendar connect)
+MOBILE_CALENDAR_REDIRECT_URI = env('MOBILE_CALENDAR_REDIRECT_URI', default='choresync://calendar/connected')
 # Shared secret sent in every Graph change-notification; validated in the webhook receiver
 OUTLOOK_WEBHOOK_SECRET = env('OUTLOOK_WEBHOOK_SECRET', default='')
+
+# AI Assistant — Ollama-compatible endpoint and model
+# Override in staging/production to point at OpenRouter, Groq, or any OpenAI-compatible API
+OLLAMA_URL = env('OLLAMA_URL', default='http://localhost:11434/api/chat')
+OLLAMA_MODEL = env('OLLAMA_MODEL', default='phi3:mini')
+OPENROUTER_API_KEY = env('OPENROUTER_API_KEY', default='')
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+    },
+    "loggers": {
+        "chore_sync": {"handlers": ["console"], "level": "DEBUG", "propagate": False},
+        "django.request": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+    },
+}
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
@@ -273,6 +333,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Media files (user-uploaded content such as photo proofs)
 MEDIA_URL = '/media/'

@@ -8,3 +8,5 @@ class UserDTO:
     email: str
     is_active: bool
     email_verified: bool
+    first_name: str = ''
+    last_name: str = ''

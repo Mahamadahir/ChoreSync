@@ -72,6 +72,30 @@ class User(AbstractUser):
         help_text="Date on which the streak was last updated.",
     )
 
+    avatar = models.ImageField(
+        upload_to='avatars/',
+        null=True,
+        blank=True,
+        help_text="Profile photo. Populated from SSO provider on first sign-in.",
+    )
+    avatar_url = models.URLField(
+        max_length=500,
+        blank=True,
+        default='',
+        help_text="External avatar URL (e.g. from Google/Microsoft). "
+                  "Used when no uploaded avatar is present.",
+    )
+
+    def get_avatar_url(self, request=None) -> str | None:
+        """Return the best available avatar URL, or None."""
+        if self.avatar:
+            url = self.avatar.url
+            if request:
+                return request.build_absolute_uri(url)
+            return url
+        if self.avatar_url:
+            return self.avatar_url
+        return None
 
     def __str__(self):
         return self.email or self.username
@@ -182,18 +206,30 @@ class Group(models.Model):
         help_text='Timestamp of last reassignment',
     )
 
-    fairness_algorithm = models.CharField(
-        choices=[
-            ('time_based', 'Time-based (rotate based on who has been waiting longest)'),
-            ('count_based', 'Count-based (rotate based on who has done the least tasks)'),
-            ('difficulty_based', 'Difficulty-based (assign based on task preferences and difficulty)'),
-            ('weighted', 'Weighted (combine multiple factors like time, count, and preferences)'),
-        ],
-        default = 'count_based',
-        max_length=50,
+    GROUP_TYPE_CHOICES = [
+        ('flatshare', 'Flat Share'),
+        ('family',    'Family'),
+        ('work_team', 'Work Team'),
+        ('custom',    'Custom'),
+    ]
+    group_type = models.CharField(
+        max_length=20,
+        choices=GROUP_TYPE_CHOICES,
+        default='custom',
+        help_text=(
+            "Determines join behaviour and invite-UI role labels. "
+            "flatshare: everyone joins as moderator. "
+            "family/work_team/custom: owner chooses role per invite."
+        ),
     )
     photo_proof_required = models.BooleanField(default=False)
-    task_proposal_voting_required = models.BooleanField(default=False)
+    task_proposal_voting_required = models.BooleanField(
+        default=False,
+        help_text=(
+            "When True, only moderators can create tasks directly. "
+            "Members must submit suggestions which moderators approve or reject."
+        ),
+    )
 
     def __str__(self):
         return self.group_code
@@ -282,6 +318,11 @@ class TaskTemplate(models.Model):
     )
     next_due = models.DateTimeField()
     active = models.BooleanField(default=True)
+    recur_end = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Optional date after which no new occurrences are generated.",
+    )
     photo_proof_required = models.BooleanField(
         default=False,
         help_text="If True, the assignee must upload a photo when marking this task complete.",
@@ -351,17 +392,19 @@ class TaskOccurrence(models.Model):
     )
     deadline = models.DateTimeField()
     status_choices = [
+        ('suggested', 'Suggested'),
         ('pending', 'Pending'),
         ('in_progress', 'In Progress'),
         ('snoozed', 'Snoozed'),
         ('completed', 'Completed'),
         ('overdue', 'Overdue'),
         ('reassigned', 'Reassigned'),
+        ('cancelled', 'Cancelled'),  # terminal state when parent template is soft-deleted
     ]
     status = models.CharField(
         choices=status_choices,
         max_length=20,
-        default = 'pending'
+        default='suggested',
     )
     completed_at = models.DateTimeField(null=True, blank=True)
 
@@ -412,6 +455,18 @@ class TaskOccurrence(models.Model):
         null=True,
         blank=True,
         help_text="Optional photo proof of task completion.",
+    )
+
+    # Pre-assignment suggestion fields
+    suggestion_expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the pre-assignment suggestion notification expires (auto-assigns after this).",
+    )
+    suggestion_declined_ids = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of user IDs who declined this suggestion (used for fallback assignment).",
     )
 
     class Meta:
@@ -901,7 +956,7 @@ class TaskSwap(models.Model):
 
 
 class TaskProposal(models.Model):
-    """Captures a proposed chore awaiting group approval."""
+    """Captures a suggested chore awaiting moderator approval."""
 
     STATE_CHOICES = [
         ('pending', 'Pending'),
@@ -923,7 +978,7 @@ class TaskProposal(models.Model):
         null=True,
         blank=True,
         related_name='task_proposals',
-        help_text="User who created this proposal (may be null if deleted).",
+        help_text="User who submitted this suggestion (may be null if deleted).",
     )
 
     group = models.ForeignKey(
@@ -936,26 +991,50 @@ class TaskProposal(models.Model):
     task_template = models.ForeignKey(
         TaskTemplate,
         on_delete=models.SET_NULL,
-        null = True,
-        blank = True,
+        null=True,
+        blank=True,
         related_name='proposals',
-        help_text="The underlying task template being proposed - if the proposal isn't accepted - we'll keep this for history.",
+        help_text="The TaskTemplate created when this proposal was approved (null until approved).",
+    )
+
+    # ── Payload fields ──────────────────────────────────────────────────
+    proposed_payload = models.JSONField(
+        default=dict,
+        help_text=(
+            "Full task details as submitted by the proposer — frozen after creation. "
+            "Keys mirror TaskTemplate fields: name, category, difficulty, estimated_mins, "
+            "recurring_choice, recur_value, days_of_week, next_due, details."
+        ),
+    )
+
+    approved_payload = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Moderator-edited task details. Null means approved as-is. "
+            "When set, diff against proposed_payload is the audit log."
+        ),
+    )
+
+    # ── Decision metadata ───────────────────────────────────────────────
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='approved_proposals',
+        help_text="Moderator who approved or rejected this proposal.",
+    )
+
+    approval_note = models.TextField(
+        blank=True,
+        default='',
+        help_text="Moderator's note explaining edits or rejection reason.",
     )
 
     reason = models.TextField(
         blank=True,
-        help_text="Optional explanation for why this task should be added.",
-    )
-
-    voting_deadline = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="When proposal will expire if not decided before this deadline.",
-    )
-
-    required_support_ratio = models.FloatField(
-        default=0.5,
-        help_text="Minimum fraction of supporting votes to approve, once all members have voted.",
+        help_text="Proposer's explanation for why this task should be added.",
     )
 
     approved_at = models.DateTimeField(
@@ -971,12 +1050,26 @@ class TaskProposal(models.Model):
     def is_open(self) -> bool:
         return self.state == 'pending'
 
-    # Backwards-compatible alias if you already used in_open somewhere
-    def in_open(self) -> bool:
-        return self.is_open
+    @property
+    def effective_payload(self) -> dict:
+        """The payload that was (or would be) used to create the template."""
+        return self.approved_payload if self.approved_payload else self.proposed_payload
+
+    @property
+    def payload_diff(self) -> dict:
+        """Fields changed by the moderator: {field: {from: x, to: y}}. Empty if no edits."""
+        if not self.approved_payload:
+            return {}
+        diff = {}
+        for key, approved_val in self.approved_payload.items():
+            proposed_val = self.proposed_payload.get(key)
+            if proposed_val != approved_val:
+                diff[key] = {'from': proposed_val, 'to': approved_val}
+        return diff
 
     def __str__(self):
-        return f"Proposal for '{self.task_template.name}' in {self.group.name}"
+        name = self.proposed_payload.get('name', f'Proposal #{self.pk}')
+        return f"Proposal '{name}' in {self.group.name} [{self.state}]"
 
 
 class TaskVote(models.Model):
@@ -1093,7 +1186,11 @@ class Notification(models.Model):
         ('suggestion_pattern', 'Smart suggestion: pattern'),
         ('suggestion_availability', 'Smart suggestion: availability'),
         ('suggestion_preference', 'Smart suggestion: preference'),
-        ('suggestion_fairness', 'Smart suggestion: fairness'),
+        ('suggestion_streak', 'Smart suggestion: streak'),  # emitted by SmartSuggestionService
+        # suggestion_fairness intentionally omitted — backend method is not yet implemented
+        ('calendar_sync_complete', 'Calendar sync complete'),  # emitted by background sync tasks
+        # Legacy — declared in old schema but not currently emitted; kept for data compatibility
+        ('task_suggestion', 'Task pre-assignment suggestion'),
     ]
 
     recipient = models.ForeignKey(
@@ -1129,6 +1226,13 @@ class Notification(models.Model):
         blank=True,
         related_name='notifications',
     )
+    task_swap = models.ForeignKey(
+        'TaskSwap',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='notifications',
+    )
     message = models.ForeignKey(
         Message,
         on_delete=models.CASCADE,
@@ -1153,43 +1257,6 @@ class Notification(models.Model):
     def __str__(self):
         return f"Notification to {self.recipient} ({self.type})"
 
-
-class GroupCalendar(models.Model):
-    """Represents settings for the aggregate calendar for a group."""
-
-    group = models.OneToOneField(
-        Group,
-        on_delete=models.CASCADE,
-        related_name='calendar_settings',
-    )
-
-    timezone = models.CharField(
-        max_length=50,
-        default="UTC",
-        help_text="Timezone used when aggregating the group's calendar.",
-    )
-
-    show_member_calendars = models.BooleanField(
-        default=True,
-        help_text="If True, include members' personal calendars in the group view.",
-    )
-
-    show_group_tasks = models.BooleanField(
-        default=True,
-        help_text="If True, include task-derived events in the group calendar.",
-    )
-
-    color = models.CharField(
-        max_length=20,
-        null=True,
-        blank=True,
-        help_text="Optional default color for group events.",
-    )
-
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"Group calendar settings for {self.group.name}"
 
 class UserStats(models.Model):
     """Aggregated statistics for a user, updated periodically."""
@@ -1341,6 +1408,17 @@ class TaskAssignmentHistory(models.Model):
     was_swapped     = models.BooleanField(default=False)
     was_emergency   = models.BooleanField(default=False)
     was_marketplace = models.BooleanField(default=False)
+    score_breakdown = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            'Per-candidate pipeline scores at assignment time. '
+            'Keys: winner_id (str), candidates (list of dicts with '
+            'user_id, username, stage1_score, pref_multiplier, '
+            'affinity_multiplier, calendar_penalty, final_score). '
+            'Null for rows created outside the pipeline (swaps, emergency, marketplace).'
+        ),
+    )
 
     class Meta:
         ordering = ['-assigned_at']
@@ -1350,3 +1428,47 @@ class TaskAssignmentHistory(models.Model):
 
     def __str__(self):
         return f"TaskAssignmentHistory(user={self.user_id}, occurrence={self.task_occurrence_id})"
+
+
+class ChatbotSession(models.Model):
+    """Stores per-user chatbot conversation history and pending action state."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='chatbot_sessions',
+    )
+    # Messages passed to Ollama: [{"role": "user"|"assistant", "content": "..."}]
+    messages = models.JSONField(default=list)
+    # Pending multi-turn action: e.g. {"intent": "CANT_DO_TASK", "occurrence_id": 42}
+    pending_action = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_active = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-last_active']
+
+    def __str__(self):
+        return f"ChatbotSession(user={self.user_id}, messages={len(self.messages)})"
+
+
+class UserPushToken(models.Model):
+    """Stores Expo push tokens so the backend can deliver notifications when the app is backgrounded."""
+
+    PLATFORM_CHOICES = [('ios', 'iOS'), ('android', 'Android')]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='push_tokens',
+    )
+    token = models.CharField(max_length=200, unique=True)
+    platform = models.CharField(max_length=10, choices=PLATFORM_CHOICES, default='ios')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"PushToken(user={self.user_id}, platform={self.platform})"
