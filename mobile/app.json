@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "ChoreSync",
+    "slug": "choresync",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "choresync",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "backgroundColor": "#FDFBF7"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.choresync.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#FDFBF7"
+      },
+      "package": "com.choresync.app"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#FDFBF7",
+          "android": {
+            "backgroundColor": "#FDFBF7",
+            "drawable": {
+              "icon": "./assets/splash/splashscreen_logo.xml"
+            }
+          },
+          "ios": {
+            "backgroundColor": "#FDFBF7"
+          }
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#94433a"
+        }
+      ]
+    ],
+    "extra": {
+      "apiBaseUrl": "https://choresync.mahamadahir.com",
+      "eas": {
+        "projectId": "f439146f-e3fe-4c46-98ca-4c612f97f692"
+      }
+    },
+    "owner": "choresync-mahamad"
+  }
+}

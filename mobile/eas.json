@@ -1,0 +1,48 @@
+{
+  "cli": {
+    "version": ">= 18.4.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://choresync.mahamadahir.com",
+        "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "718861309094-f3f9b9cpfn02daobm1siph5ihmkuneim.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "718861309094-jl8cntb95e034lk2giji80vdfb1dhfah.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "718861309094-02gtpjd8pnjb5glljmhiermtcloduov6.apps.googleusercontent.com",
+        "EXPO_PUBLIC_MICROSOFT_CLIENT_ID": "07637169-b2bb-43e8-84d5-2854af3c34f3",
+        "EXPO_PUBLIC_MICROSOFT_TENANT_ID": "common"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://choresync.mahamadahir.com",
+        "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "718861309094-f3f9b9cpfn02daobm1siph5ihmkuneim.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "718861309094-jl8cntb95e034lk2giji80vdfb1dhfah.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "718861309094-02gtpjd8pnjb5glljmhiermtcloduov6.apps.googleusercontent.com",
+        "EXPO_PUBLIC_MICROSOFT_CLIENT_ID": "07637169-b2bb-43e8-84d5-2854af3c34f3",
+        "EXPO_PUBLIC_MICROSOFT_TENANT_ID": "common"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://choresync.mahamadahir.com",
+        "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "718861309094-f3f9b9cpfn02daobm1siph5ihmkuneim.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "718861309094-jl8cntb95e034lk2giji80vdfb1dhfah.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "718861309094-02gtpjd8pnjb5glljmhiermtcloduov6.apps.googleusercontent.com",
+        "EXPO_PUBLIC_MICROSOFT_CLIENT_ID": "07637169-b2bb-43e8-84d5-2854af3c34f3",
+        "EXPO_PUBLIC_MICROSOFT_TENANT_ID": "common"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
