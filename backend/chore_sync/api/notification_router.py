@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from chore_sync.api.views import CsrfExemptSessionAuthentication
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from chore_sync.services.notification_service import NotificationService
 
 _svc = NotificationService()
@@ -14,7 +15,7 @@ _svc = NotificationService()
 
 class NotificationListAPIView(APIView):
     """GET /api/notifications/ — return active (non-dismissed) notifications."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -26,7 +27,7 @@ class NotificationListAPIView(APIView):
 
 class NotificationHistoryAPIView(APIView):
     """GET /api/notifications/history/ — paginated full history."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -48,7 +49,7 @@ class NotificationHistoryAPIView(APIView):
 
 class NotificationReadAPIView(APIView):
     """POST /api/notifications/{pk}/read/ — mark a notification as read."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
@@ -64,7 +65,7 @@ class NotificationReadAPIView(APIView):
 
 class NotificationDismissAPIView(APIView):
     """POST /api/notifications/{pk}/dismiss/ — dismiss a notification."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
@@ -80,7 +81,7 @@ class NotificationDismissAPIView(APIView):
 
 class NotificationPreferenceAPIView(APIView):
     """GET/PATCH /api/users/me/notification-preferences/"""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     _BOOLEAN_FIELDS = [
@@ -149,6 +150,35 @@ def _serialize_prefs(p) -> dict:
     }
 
 
+class PushTokenAPIView(APIView):
+    """POST /api/push-token/ — register or refresh an Expo push token for the current user."""
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from chore_sync.models import UserPushToken
+        token = request.data.get('token', '').strip()
+        platform = request.data.get('platform', 'ios')
+        if not token:
+            return Response({'detail': 'token is required.'}, status=400)
+        if platform not in ('ios', 'android'):
+            platform = 'ios'
+        # Upsert: if token exists for another user, re-assign; otherwise create/update
+        UserPushToken.objects.update_or_create(
+            token=token,
+            defaults={'user_id': request.user.id, 'platform': platform},
+        )
+        return Response({'status': 'registered'})
+
+    def delete(self, request):
+        """DELETE /api/push-token/ — deregister the token (e.g. on logout)."""
+        from chore_sync.models import UserPushToken
+        token = request.data.get('token', '').strip()
+        if token:
+            UserPushToken.objects.filter(user=request.user, token=token).delete()
+        return Response(status=204)
+
+
 def _serialize(n) -> dict:
     return {
         'id': str(n.id),
@@ -160,6 +190,7 @@ def _serialize(n) -> dict:
         'created_at': n.created_at.isoformat(),
         'group_id': str(n.group_id) if n.group_id else None,
         'task_occurrence_id': n.task_occurrence_id,
+        'task_swap_id': n.task_swap_id,
         'task_proposal_id': n.task_proposal_id,
         'message_id': n.message_id,
         'action_url': n.action_url or '',

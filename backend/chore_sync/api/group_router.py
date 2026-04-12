@@ -13,7 +13,9 @@ from chore_sync.api.serializers import (
     InviteMemberSerializer,
 )
 from chore_sync.api.views import CsrfExemptSessionAuthentication
-from chore_sync.models import GroupMembership, UserStats
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from django.db.models import Count
+from chore_sync.models import GroupMembership, TaskOccurrence, UserStats
 from chore_sync.services.group_service import GroupOrchestrator
 from chore_sync.services.gamification_service import GamificationService
 
@@ -24,21 +26,44 @@ _svc = GroupOrchestrator()
 
 
 class GroupListCreateAPIView(APIView):
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        memberships = GroupMembership.objects.filter(
-            user=request.user
-        ).select_related('group')
+        memberships = list(
+            GroupMembership.objects.filter(user=request.user).select_related('group')
+        )
+        group_ids = [m.group_id for m in memberships]
+
+        # Member counts per group (single query)
+        member_counts = dict(
+            GroupMembership.objects.filter(group_id__in=group_ids)
+            .values('group_id')
+            .annotate(cnt=Count('id'))
+            .values_list('group_id', 'cnt')
+        )
+
+        # Open task counts per group — pending or in_progress (single query)
+        open_task_counts = dict(
+            TaskOccurrence.objects.filter(
+                template__group_id__in=group_ids,
+                status__in=['pending', 'in_progress'],
+            )
+            .values('template__group_id')
+            .annotate(cnt=Count('id'))
+            .values_list('template__group_id', 'cnt')
+        )
+
         data = [
             {
                 "id": str(m.group.id),
                 "name": m.group.name,
                 "group_code": m.group.group_code,
                 "role": m.role,
-                "fairness_algorithm": m.group.fairness_algorithm,
+                "my_role": m.role,
                 "photo_proof_required": m.group.photo_proof_required,
+                "member_count": member_counts.get(m.group_id, 0),
+                "open_task_count": open_task_counts.get(m.group_id, 0),
             }
             for m in memberships
         ]
@@ -53,7 +78,8 @@ class GroupListCreateAPIView(APIView):
                 owner=request.user,
                 name=serializer.validated_data['name'],
                 reassignment_rule=serializer.validated_data.get('reassignment_rule'),
-                fairness_algorithm=serializer.validated_data.get('fairness_algorithm'),
+                task_proposal_voting_required=serializer.validated_data.get('task_proposal_voting_required', False),
+                group_type=serializer.validated_data.get('group_type', 'custom'),
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -63,8 +89,25 @@ class GroupListCreateAPIView(APIView):
         )
 
 
+class GroupJoinByCodeAPIView(APIView):
+    """POST /api/groups/join/ — join a group using its invite code."""
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        code = request.data.get('code', '')
+        try:
+            group = _svc.join_by_code(user=request.user, code=code)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {'id': str(group.id), 'name': group.name, 'group_code': group.group_code},
+            status=status.HTTP_200_OK,
+        )
+
+
 class GroupDetailAPIView(APIView):
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
@@ -74,20 +117,23 @@ class GroupDetailAPIView(APIView):
         if membership is None:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         g = membership.group
+        member_count = GroupMembership.objects.filter(group=g).count()
         return Response({
             "id": str(g.id),
             "name": g.name,
             "group_code": g.group_code,
             "role": membership.role,
-            "fairness_algorithm": g.fairness_algorithm,
+            "my_role": membership.role,
+            "member_count": member_count,
             "reassignment_rule": g.reassignment_rule,
             "photo_proof_required": g.photo_proof_required,
             "task_proposal_voting_required": g.task_proposal_voting_required,
+            "group_type": g.group_type,
         })
 
 
 class GroupInviteAPIView(APIView):
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
@@ -109,7 +155,7 @@ class GroupInviteAPIView(APIView):
 
 
 class GroupMembersAPIView(APIView):
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
@@ -118,13 +164,20 @@ class GroupMembersAPIView(APIView):
         memberships = GroupMembership.objects.filter(
             group_id=pk
         ).select_related('user')
+        user_ids = [m.user_id for m in memberships]
+        stats_map = {
+            s.user_id: s
+            for s in UserStats.objects.filter(user_id__in=user_ids, household_id=pk)
+        }
         data = []
         for m in memberships:
-            stats = UserStats.objects.filter(user=m.user, household_id=pk).first()
+            stats = stats_map.get(m.user_id)
             data.append({
                 "user_id": str(m.user.id),
                 "email": m.user.email,
                 "username": m.user.username,
+                "first_name": m.user.first_name,
+                "last_name": m.user.last_name,
                 "role": m.role,
                 "joined_at": m.joined_at,
                 "stats": {
@@ -139,7 +192,7 @@ class GroupMembersAPIView(APIView):
 
 
 class GroupAssignmentMatrixAPIView(APIView):
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
@@ -153,7 +206,7 @@ class GroupAssignmentMatrixAPIView(APIView):
 
 
 class GroupSettingsAPIView(APIView):
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, pk):
@@ -174,7 +227,7 @@ class GroupSettingsAPIView(APIView):
 
         group = membership.group
         update_fields = []
-        for field in ('fairness_algorithm', 'photo_proof_required', 'task_proposal_voting_required'):
+        for field in ('name', 'photo_proof_required', 'task_proposal_voting_required'):
             if field in serializer.validated_data:
                 setattr(group, field, serializer.validated_data[field])
                 update_fields.append(field)
@@ -182,16 +235,17 @@ class GroupSettingsAPIView(APIView):
             group.save(update_fields=update_fields)
 
         return Response({
-            "fairness_algorithm": group.fairness_algorithm,
+            "name": group.name,
             "photo_proof_required": group.photo_proof_required,
             "task_proposal_voting_required": group.task_proposal_voting_required,
+            "group_type": group.group_type,
         })
 
 
 
 class GroupLeaderboardAPIView(APIView):
     """GET /api/groups/{pk}/leaderboard/"""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
@@ -207,7 +261,7 @@ class GroupLeaderboardAPIView(APIView):
 
 class GroupLeaveAPIView(APIView):
     """POST /api/groups/{pk}/leave/"""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):

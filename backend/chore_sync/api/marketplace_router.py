@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from chore_sync.api.views import CsrfExemptSessionAuthentication
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from chore_sync.models import MarketplaceListing
 from chore_sync.services.marketplace_service import MarketplaceService
 
@@ -19,7 +20,9 @@ def _serialize_listing(listing: MarketplaceListing) -> dict:
         "id": listing.id,
         "task_occurrence_id": occ.id,
         "task_name": occ.template.name,
+        "category": occ.template.category,
         "group_id": str(listing.group_id),
+        "group_name": listing.group.name,
         "listed_by_id": str(listing.listed_by_id),
         "listed_by_username": listing.listed_by.username,
         "bonus_points": listing.bonus_points,
@@ -31,7 +34,7 @@ def _serialize_listing(listing: MarketplaceListing) -> dict:
 
 class TaskListMarketplaceAPIView(APIView):
     """POST /api/tasks/<pk>/list-marketplace/ — list a task on the marketplace."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
@@ -51,7 +54,7 @@ class TaskListMarketplaceAPIView(APIView):
 
 class GroupMarketplaceListAPIView(APIView):
     """GET /api/groups/<pk>/marketplace/ — list active marketplace listings for a group."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
@@ -65,9 +68,24 @@ class GroupMarketplaceListAPIView(APIView):
         return Response([_serialize_listing(lst) for lst in listings])
 
 
+class MarketplaceCancelAPIView(APIView):
+    """DELETE /api/marketplace/<pk>/cancel/ — remove your own listing."""
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        try:
+            _svc.cancel_listing(user=request.user, listing_id=int(pk))
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except PermissionError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class MarketplaceClaimAPIView(APIView):
     """POST /api/marketplace/<pk>/claim/ — claim a listing."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):

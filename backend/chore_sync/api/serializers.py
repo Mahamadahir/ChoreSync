@@ -4,6 +4,8 @@ from rest_framework import serializers
 
 
 class SignupSerializer(serializers.Serializer):
+    first_name = serializers.CharField(min_length=1, max_length=150)
+    last_name = serializers.CharField(min_length=1, max_length=150)
     username = serializers.CharField(min_length=1, max_length=150)
     email = serializers.EmailField()
     password = serializers.CharField(min_length=8, write_only=True)
@@ -32,6 +34,8 @@ class ProfileSerializer(serializers.Serializer):
     username = serializers.CharField(required=False, allow_blank=True, max_length=150)
     email = serializers.EmailField(required=False)
     timezone = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    first_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    last_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
 
 
 class ForgotPasswordRequestSerializer(serializers.Serializer):
@@ -108,10 +112,11 @@ class CreateGroupSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
-    fairness_algorithm = serializers.ChoiceField(
-        choices=['time_based', 'count_based', 'difficulty_based', 'weighted'],
+    task_proposal_voting_required = serializers.BooleanField(required=False, default=False)
+    group_type = serializers.ChoiceField(
+        choices=['flatshare', 'family', 'work_team', 'custom'],
         required=False,
-        allow_null=True,
+        default='custom',
     )
 
 
@@ -121,9 +126,6 @@ class InviteMemberSerializer(serializers.Serializer):
 
 
 class GroupSettingsSerializer(serializers.Serializer):
-    fairness_algorithm = serializers.ChoiceField(
-        choices=['time_based', 'count_based', 'difficulty_based', 'weighted'],
-        required=False,
-    )
+    name = serializers.CharField(max_length=100, required=False)
     photo_proof_required = serializers.BooleanField(required=False)
     task_proposal_voting_required = serializers.BooleanField(required=False)

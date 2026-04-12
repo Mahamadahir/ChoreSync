@@ -1,14 +1,19 @@
 """DRF views for task occurrence endpoints."""
 from __future__ import annotations
 
+import logging
+
 from rest_framework import status
+
+logger = logging.getLogger(__name__)
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from chore_sync.api.views import CsrfExemptSessionAuthentication
-from chore_sync.models import GroupMembership, TaskOccurrence, TaskSwap, TaskTemplate
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from chore_sync.models import GroupMembership, TaskAssignmentHistory, TaskOccurrence, TaskSwap, TaskTemplate
 from chore_sync.services.task_lifecycle_service import TaskLifecycleService
 
 _svc = TaskLifecycleService()
@@ -17,10 +22,14 @@ _svc = TaskLifecycleService()
 def _serialize_occurrence(o: TaskOccurrence) -> dict:
     # Check if listed on marketplace (only when prefetched or via related manager)
     on_marketplace = False
+    marketplace_listing_id = None
     try:
-        on_marketplace = hasattr(o, 'marketplace_listing') and o.marketplace_listing is not None
+        listing = o.marketplace_listing if hasattr(o, 'marketplace_listing') else None
+        if listing is not None:
+            on_marketplace = True
+            marketplace_listing_id = listing.id
     except Exception:
-        pass
+        logger.exception("_serialize_occurrence: marketplace relation broken for occurrence_id=%s", o.id)
     return {
         "id": o.id,
         "template_id": o.template_id,
@@ -37,12 +46,21 @@ def _serialize_occurrence(o: TaskOccurrence) -> dict:
         "photo_proof_required": o.template.photo_proof_required,
         "photo_proof": o.photo_proof.url if o.photo_proof else None,
         "on_marketplace": on_marketplace,
+        "marketplace_listing_id": marketplace_listing_id,
+        "reassignment_reason": o.reassignment_reason,
+        "original_assignee_id": str(o.original_assignee_id) if o.original_assignee_id else None,
+        # Template detail fields (used by mobile task detail screen)
+        "template_details": o.template.details if hasattr(o, 'template') and o.template else None,
+        "estimated_mins": o.template.estimated_mins if hasattr(o, 'template') and o.template else None,
+        "difficulty": o.template.difficulty if hasattr(o, 'template') and o.template else None,
+        "assignee_first_name": o.assigned_to.first_name if o.assigned_to_id and hasattr(o, 'assigned_to') and o.assigned_to else None,
+        "assignee_last_name": o.assigned_to.last_name if o.assigned_to_id and hasattr(o, 'assigned_to') and o.assigned_to else None,
     }
 
 
 class UserTaskListAPIView(APIView):
     """GET /api/users/me/tasks/"""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -62,7 +80,7 @@ class UserTaskListAPIView(APIView):
 
 class GroupTaskListAPIView(APIView):
     """GET /api/groups/{pk}/tasks/"""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
@@ -78,7 +96,7 @@ class GroupTaskListAPIView(APIView):
 
 class GenerateOccurrencesAPIView(APIView):
     """POST /api/task-templates/{pk}/generate-occurrences/"""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
@@ -104,17 +122,23 @@ class GenerateOccurrencesAPIView(APIView):
 
 
 class TaskOccurrenceDetailAPIView(APIView):
-    """PATCH /api/tasks/{pk}/"""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    """GET/PATCH /api/tasks/{pk}/. Note: GET is used by both clients to load task detail."""
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def _get_occurrence_for_user(self, pk, user):
-        occ = TaskOccurrence.objects.select_related('template__group').filter(id=pk).first()
+        occ = TaskOccurrence.objects.select_related('template__group', 'assigned_to').filter(id=pk).first()
         if occ is None:
             return None, Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         if not GroupMembership.objects.filter(user=user, group=occ.template.group).exists():
             return None, Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         return occ, None
+
+    def get(self, request, pk):
+        occ, err = self._get_occurrence_for_user(pk, request.user)
+        if err:
+            return err
+        return Response(_serialize_occurrence(occ))
 
     def patch(self, request, pk):
         occ, err = self._get_occurrence_for_user(pk, request.user)
@@ -130,7 +154,7 @@ class TaskOccurrenceDetailAPIView(APIView):
 
 class TaskCompleteAPIView(APIView):
     """POST /api/tasks/{pk}/complete/"""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
@@ -178,7 +202,7 @@ def _serialize_swap(s: TaskSwap) -> dict:
 
 class TaskSnoozeAPIView(APIView):
     """POST /api/tasks/{pk}/snooze/"""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
@@ -204,7 +228,7 @@ class TaskSnoozeAPIView(APIView):
 
 class TaskSwapCreateAPIView(APIView):
     """POST /api/tasks/{pk}/swap/"""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
@@ -224,7 +248,7 @@ class TaskSwapCreateAPIView(APIView):
 
 class TaskSwapRespondAPIView(APIView):
     """POST /api/task-swaps/{pk}/respond/"""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
@@ -246,7 +270,7 @@ class TaskSwapRespondAPIView(APIView):
 
 class TaskEmergencyReassignAPIView(APIView):
     """POST /api/tasks/{pk}/emergency-reassign/"""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
@@ -265,7 +289,7 @@ class TaskEmergencyReassignAPIView(APIView):
 
 class TaskAcceptEmergencyAPIView(APIView):
     """POST /api/tasks/{pk}/accept-emergency/"""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
@@ -283,7 +307,7 @@ class TaskAcceptEmergencyAPIView(APIView):
 
 class PendingSwapsAPIView(APIView):
     """GET /api/users/me/pending-swaps/ — incoming swap requests directed at the current user."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -326,7 +350,7 @@ _MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
 
 class TaskPhotoProofAPIView(APIView):
     """POST /api/tasks/{pk}/upload-proof/"""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
@@ -369,3 +393,142 @@ class TaskPhotoProofAPIView(APIView):
         occurrence.save(update_fields=['photo_proof'])
 
         return Response({"photo_url": occurrence.photo_proof.url}, status=status.HTTP_200_OK)
+
+
+class TaskAcceptSuggestionAPIView(APIView):
+    """POST /api/tasks/{pk}/accept-suggestion/ — accept a pre-assignment suggestion."""
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            occurrence = _svc.accept_suggestion(
+                occurrence_id=pk,
+                actor_id=str(request.user.id),
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except PermissionError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        return Response(_serialize_occurrence(occurrence))
+
+
+class TaskDeclineSuggestionAPIView(APIView):
+    """POST /api/tasks/{pk}/decline-suggestion/ — decline a pre-assignment suggestion."""
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            occurrence = _svc.decline_suggestion(
+                occurrence_id=pk,
+                actor_id=str(request.user.id),
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except PermissionError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        return Response(_serialize_occurrence(occurrence))
+
+
+class TaskOccurrenceAssignmentBreakdownAPIView(APIView):
+    """GET /api/tasks/{pk}/assignment-breakdown/
+
+    Returns per-candidate scores from the pipeline run that produced the
+    current assignment. Asymmetric disclosure: everyone sees final_score bars;
+    only the requesting user sees their own component breakdown.
+
+    Response when breakdown_available=true:
+        {
+          "occurrence_id": 42,
+          "template_name": "Vacuum Living Room",
+          "assigned_at": "2026-04-08T10:30:00Z",
+          "winner_id": "uuid",
+          "breakdown_available": true,
+          "candidates": [
+            { "user_id": "...", "username": "alice", "is_winner": true,
+              "final_score": 28, "is_me": false },
+            { "user_id": "...", "username": "bob", "is_winner": false,
+              "final_score": 55, "is_me": true,
+              "components": {
+                "stage1_score": 42, "pref_multiplier": 0.8,
+                "affinity_multiplier": 1.0, "calendar_penalty": 5
+              }
+            }
+          ]
+        }
+
+    Scores are returned as integers (original ×100) for display purposes.
+    """
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        # Verify membership
+        occ = (
+            TaskOccurrence.objects
+            .select_related('template__group')
+            .filter(id=pk)
+            .first()
+        )
+        if occ is None:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not GroupMembership.objects.filter(
+            user=request.user, group=occ.template.group
+        ).exists():
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Fetch the pipeline-run history row (not swaps / emergency / marketplace)
+        history = (
+            TaskAssignmentHistory.objects
+            .filter(
+                task_occurrence=occ,
+                was_swapped=False,
+                was_emergency=False,
+                was_marketplace=False,
+            )
+            .order_by('assigned_at')
+            .first()
+        )
+
+        if history is None or history.score_breakdown is None:
+            return Response({
+                "occurrence_id": occ.id,
+                "template_name": occ.template.name,
+                "breakdown_available": False,
+                "candidates": [],
+            })
+
+        bd = history.score_breakdown
+        my_id = str(request.user.id)
+
+        candidates = []
+        for c in bd.get('candidates', []):
+            uid = c['user_id']
+            entry: dict = {
+                "user_id": uid,
+                "username": c['username'],
+                "is_winner": uid == bd['winner_id'],
+                "final_score": round(c['final_score'] * 100),
+                "is_me": uid == my_id,
+            }
+            if uid == my_id:
+                entry["components"] = {
+                    "stage1_score": round(c['stage1_score'] * 100),
+                    "pref_multiplier": c['pref_multiplier'],
+                    "affinity_multiplier": c['affinity_multiplier'],
+                    "calendar_penalty": round(c['calendar_penalty'] * 100),
+                }
+            candidates.append(entry)
+
+        # Sort: winner first, then by final_score ascending
+        candidates.sort(key=lambda x: (not x['is_winner'], x['final_score']))
+
+        return Response({
+            "occurrence_id": occ.id,
+            "template_name": occ.template.name,
+            "assigned_at": history.assigned_at.isoformat(),
+            "winner_id": bd['winner_id'],
+            "breakdown_available": True,
+            "candidates": candidates,
+        })

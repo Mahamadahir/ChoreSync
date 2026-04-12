@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from rest_framework import status, renderers
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import AllowAny
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import SessionAuthentication
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.utils.decorators import method_decorator
@@ -59,10 +61,16 @@ logger = logging.getLogger(__name__)
 
 
 class CsrfExemptSessionAuthentication(SessionAuthentication):
-    """Session auth without CSRF enforcement (for API endpoints already gated by other means)."""
+    """Session auth with CSRF enforcement re-enabled.
 
-    def enforce_csrf(self, request):
-        return  # skip CSRF checks for these API endpoints
+    DRF's APIView.as_view() marks all views as csrf_exempt at the Django middleware
+    level, so CSRF protection for session-authenticated requests relies entirely on
+    SessionAuthentication.enforce_csrf().  This class re-enables that check so that
+    cookie-based (Vue web) requests must supply a valid X-CSRFToken header.
+
+    JWT-authenticated (mobile) requests are unaffected — enforce_csrf() is only
+    called when session auth is the authenticating class for the request.
+    """
 
 
 class SSERenderer(renderers.BaseRenderer):
@@ -81,6 +89,8 @@ def user_dto_to_dict(dto: UserDTO) -> dict:
         "email": dto.email,
         "is_active": dto.is_active,
         "email_verified": getattr(dto, "email_verified", False),
+        "first_name": getattr(dto, "first_name", ""),
+        "last_name": getattr(dto, "last_name", ""),
     }
 
 
@@ -131,8 +141,11 @@ class LoginAPIView(APIView):
         login(request, user)  # issue session cookie
         return Response(
             {
-                # Return only minimal status flags; avoid exposing full user details
                 "email_verified": getattr(user_dto, "email_verified", False),
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "username": user.username,
+                "email": user.email,
                 "detail": "Login successful.",
             },
             status=status.HTTP_200_OK,
@@ -142,7 +155,7 @@ class LoginAPIView(APIView):
 @method_decorator(csrf_exempt, name="dispatch")
 class LogoutAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
 
     def post(self, request):
         logout(request)
@@ -242,7 +255,7 @@ class ProfileAPIView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
 
     def get(self, request):
         if not request.user.is_authenticated:
@@ -260,6 +273,9 @@ class ProfileAPIView(APIView):
                 **user_dto_to_dict(dto),
                 "username": user.username,
                 "timezone": getattr(user, "timezone", ""),
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "avatar_url": user.get_avatar_url(request),
             },
             status=status.HTTP_200_OK,
         )
@@ -277,6 +293,8 @@ class ProfileAPIView(APIView):
                 username=data.get("username"),
                 email=data.get("email"),
                 timezone=data.get("timezone"),
+                first_name=data.get("first_name"),
+                last_name=data.get("last_name"),
             )
         except (InvalidEmail, EmailAlreadyTaken, RegistrationError) as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -287,9 +305,42 @@ class ProfileAPIView(APIView):
                 **user_dto_to_dict(user_dto),
                 "username": user_dto.username,
                 "timezone": getattr(request.user, "timezone", ""),
+                "first_name": request.user.first_name,
+                "last_name": request.user.last_name,
+                "avatar_url": request.user.get_avatar_url(request),
             },
             status=status.HTTP_200_OK,
         )
+
+
+_AVATAR_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
+_AVATAR_ALLOWED_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic'}
+
+
+class AvatarUploadAPIView(APIView):
+    """POST /api/users/me/avatar/ — upload or replace profile photo."""
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        photo = request.FILES.get('avatar')
+        if photo is None:
+            return Response({'detail': 'avatar file is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if photo.size > _AVATAR_MAX_BYTES:
+            return Response({'detail': 'File too large. Maximum 5 MB.'}, status=status.HTTP_400_BAD_REQUEST)
+        if photo.content_type not in _AVATAR_ALLOWED_TYPES:
+            return Response(
+                {'detail': f"Unsupported type '{photo.content_type}'. Use JPEG, PNG, WebP, GIF, or HEIC."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        user = request.user
+        # Delete old file to avoid orphaned uploads
+        if user.avatar:
+            user.avatar.delete(save=False)
+        user.avatar = photo
+        user.save(update_fields=['avatar'])
+        return Response({'avatar_url': user.get_avatar_url(request)}, status=status.HTTP_200_OK)
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -349,7 +400,7 @@ class ResetPasswordAPIView(APIView):
 @method_decorator(csrf_exempt, name="dispatch")
 class ChangePasswordAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
 
     def post(self, request):
         if not request.user.is_authenticated:
@@ -391,6 +442,8 @@ class GoogleLoginAPIView(APIView):
                 "email": user_dto.email,
                 "email_verified": getattr(user_dto, "email_verified", False),
                 "is_active": user_dto.is_active,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
             },
             status=status.HTTP_200_OK,
         )
@@ -420,6 +473,8 @@ class MicrosoftLoginAPIView(APIView):
                 "email": user_dto.email,
                 "email_verified": getattr(user_dto, "email_verified", False),
                 "is_active": user_dto.is_active,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
             },
             status=status.HTTP_200_OK,
         )
@@ -427,7 +482,7 @@ class MicrosoftLoginAPIView(APIView):
 
 class EventsAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
 
     def get(self, request):
         if not request.user.is_authenticated:
@@ -518,13 +573,19 @@ class EventsAPIView(APIView):
                 )
             except Exception as exc:
                 logger.exception("Failed to push new event to Google", exc_info=exc)
+        elif calendar.provider == "microsoft" and getattr(calendar, "push_enabled", True):
+            try:
+                from chore_sync.services.outlook_calendar_service import OutlookCalendarService
+                OutlookCalendarService(request.user).push_created_event(ev)
+            except Exception as exc:
+                logger.exception("Failed to push new event to Outlook", exc_info=exc)
         return Response(out, status=status.HTTP_201_CREATED)
 
 
 @method_decorator(csrf_exempt, name="dispatch")
 class EventDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
 
     def patch(self, request, pk: int):
         if not request.user.is_authenticated:
@@ -566,6 +627,12 @@ class EventDetailAPIView(APIView):
                 )
             except Exception as exc:
                 logger.exception("Failed to push updated event to Google", exc_info=exc)
+        elif ev.calendar.provider == "microsoft" and getattr(ev.calendar, "push_enabled", True):
+            try:
+                from chore_sync.services.outlook_calendar_service import OutlookCalendarService
+                OutlookCalendarService(request.user).push_updated_event(ev)
+            except Exception as exc:
+                logger.exception("Failed to push updated event to Outlook", exc_info=exc)
         return Response(out, status=status.HTTP_200_OK)
 
     def delete(self, request, pk: int):
@@ -584,6 +651,12 @@ class EventDetailAPIView(APIView):
                     service.events().delete(calendarId=cal_id, eventId=ev.external_event_id).execute()
             except Exception as exc:
                 logger.warning("Failed to delete Google event %s: %s", ev.external_event_id, exc)
+        elif ev.calendar.provider == "microsoft" and ev.external_event_id:
+            try:
+                from chore_sync.services.outlook_calendar_service import OutlookCalendarService
+                OutlookCalendarService(request.user).push_deleted_event(ev)
+            except Exception as exc:
+                logger.warning("Failed to delete Outlook event %s: %s", ev.external_event_id, exc)
         ev.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -591,12 +664,21 @@ class EventDetailAPIView(APIView):
 @method_decorator(csrf_exempt, name="dispatch")
 class GoogleCalendarListAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
 
     def get(self, request):
         try:
+            from chore_sync.models import Calendar as CalendarModel
             svc = GoogleCalendarService(request.user)
             calendars = svc.list_calendars(min_access_role="reader")
+            # Annotate each entry with whether a synced Calendar row already exists.
+            synced_ids = set(
+                CalendarModel.objects.filter(user=request.user, provider="google")
+                .exclude(external_id=None)
+                .values_list("external_id", flat=True)
+            )
+            for cal in calendars:
+                cal["already_synced"] = cal.get("id") in synced_ids
             return Response(calendars, status=status.HTTP_200_OK)
         except HttpError as exc:
             if exc.resp is not None and exc.resp.status == 403:
@@ -613,7 +695,7 @@ class GoogleCalendarListAPIView(APIView):
 @method_decorator(csrf_exempt, name="dispatch")
 class GoogleCalendarSelectAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
 
     def post(self, request):
         serializer = GoogleCalendarSelectionSerializer(data=request.data, many=True)
@@ -767,17 +849,52 @@ class EventStreamAPIView(APIView):
             return resp
 
         user_id = django_user.id
+        # Last-Event-ID is sent automatically by the browser's EventSource on
+        # reconnect.  If it's a numeric notification ID we query the DB for any
+        # notifications the client missed and replay them before the live stream.
+        last_event_id = request.META.get("HTTP_LAST_EVENT_ID", "").strip()
         q = sse.subscribe(user_id)
 
         def event_stream():
             try:
+                # ── Replay phase ──────────────────────────────────────────
+                if last_event_id and last_event_id.isdigit():
+                    from chore_sync.models import Notification
+                    missed = (
+                        Notification.objects
+                        .filter(
+                            recipient_id=user_id,
+                            id__gt=int(last_event_id),
+                            dismissed=False,
+                        )
+                        .order_by("id")
+                    )
+                    for n in missed:
+                        payload = json.dumps({
+                            "type": "notification",
+                            "id": str(n.id),
+                            "notification_type": n.type,
+                            "title": n.title,
+                            "content": n.content,
+                            "read": n.read,
+                            "dismissed": n.dismissed,
+                            "created_at": n.created_at.isoformat(),
+                            "group_id": str(n.group_id) if n.group_id else None,
+                            "task_occurrence_id": n.task_occurrence_id,
+                            "task_swap_id": n.task_swap_id,
+                            "task_proposal_id": n.task_proposal_id,
+                            "action_url": n.action_url or "",
+                        })
+                        yield f"id: {n.id}\ndata: {payload}\n\n"
+
+                # ── Live stream ───────────────────────────────────────────
                 yield "event: ping\ndata: connected\n\n"
                 while True:
                     try:
-                        msg = q.get(timeout=3)
-                        if msg is None:
+                        ev = q.get(timeout=3)
+                        if ev is None:
                             continue
-                        yield f"data: {msg}\n\n"
+                        yield f"id: {ev.event_id}\ndata: {ev.payload}\n\n"
                     except queue.Empty:
                         yield "event: ping\ndata: keepalive\n\n"
                         continue
@@ -793,14 +910,28 @@ class EventStreamAPIView(APIView):
 @method_decorator(csrf_exempt, name="dispatch")
 class GoogleCalendarAuthURLAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
 
     def get(self, request):
         try:
+            from django.core import signing
             svc = GoogleCalendarService(request.user)
             url, code_verifier = svc.build_auth_url()
-            if code_verifier:
-                request.session["google_pkce_verifier"] = code_verifier
+            mobile = request.query_params.get("mobile") == "true"
+            if mobile:
+                # Embed verifier + user identity in a signed state so the callback
+                # can authenticate without a session cookie (mobile browser redirect).
+                state = signing.dumps(
+                    {"uid": str(request.user.id), "cv": code_verifier or "", "mobile": True},
+                    salt="google_oauth",
+                    compress=True,
+                )
+                # Append state to the auth URL
+                sep = "&" if "?" in url else "?"
+                url = f"{url}{sep}state={state}"
+            else:
+                if code_verifier:
+                    request.session["google_pkce_verifier"] = code_verifier
             return Response({"auth_url": url}, status=status.HTTP_200_OK)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -808,36 +939,73 @@ class GoogleCalendarAuthURLAPIView(APIView):
 
 @method_decorator(csrf_exempt, name="dispatch")
 class GoogleCalendarCallbackAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    """GET /api/calendar/google/callback/
+
+    AllowAny because Google redirects here from the browser — no session cookie or
+    JWT is guaranteed.  User identity comes from either:
+      • The signed `state` param (mobile flow, set by GoogleCalendarAuthURLAPIView)
+      • The Django session (web flow — PKCE verifier stored in session)
+    """
+    permission_classes = [AllowAny]
+    # Session auth must run so request.user is populated for the web flow.
+    # AllowAny means unauthenticated mobile requests still proceed.
     authentication_classes = [CsrfExemptSessionAuthentication]
 
     def get(self, request):
+        from django.core import signing
+        from django.core.signing import BadSignature
+        frontend_url = getattr(settings, "FRONTEND_APP_URL", "http://localhost:5173")
+        mobile_redirect_uri = getattr(settings, "MOBILE_CALENDAR_REDIRECT_URI", "choresync://calendar/connected")
+
         code = request.query_params.get("code")
         if not code:
-            return Response({"detail": "Missing code"}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            svc = GoogleCalendarService(request.user)
+            return redirect(f"{frontend_url}/home?google_sync=error")
+
+        state = request.query_params.get("state")
+        is_mobile = False
+        user = None
+        code_verifier = None
+
+        # Django-signed states always contain ":" — Google's own random state does not.
+        # Only attempt to unsign if it looks like our signed payload.
+        is_signed_state = state and ":" in state
+
+        if is_signed_state:
+            # Mobile flow: decode signed state
+            try:
+                data = signing.loads(state, salt="google_oauth", max_age=600)
+                uid = data["uid"]
+                code_verifier = data.get("cv") or None
+                is_mobile = bool(data.get("mobile", False))
+                User = get_user_model()
+                user = User.objects.get(pk=uid)
+            except (BadSignature, Exception) as exc:
+                logger.warning("Google callback: invalid signed state — %s", exc)
+                return redirect(f"{frontend_url}/home?google_sync=error")
+        else:
+            # Web flow: Google's own state param is ignored; user identity comes from session
+            if not request.user or not request.user.is_authenticated:
+                return redirect(f"{frontend_url}/home?google_sync=error")
+            user = request.user
             code_verifier = request.session.pop("google_pkce_verifier", None)
+
+        try:
+            svc = GoogleCalendarService(user)
             svc.exchange_code(code, code_verifier=code_verifier)
-            frontend_url = getattr(settings, "FRONTEND_APP_URL", "http://localhost:5173")
-            target = f"{frontend_url}?google_sync=success"
-            return redirect(target)
-        except ValueError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            if is_mobile:
+                return redirect(f"{mobile_redirect_uri}?provider=google")
+            return redirect(f"{frontend_url}/home?google_sync=success")
         except Exception as exc:
             logger.exception("Google callback failed", exc_info=exc)
-            frontend_url = getattr(settings, "FRONTEND_APP_URL", "http://localhost:5173")
-            target = f"{frontend_url}?google_sync=error"
-            try:
-                return redirect(target)
-            except Exception:
-                return Response({"detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            if is_mobile:
+                return redirect(f"{mobile_redirect_uri}?provider=google&error=1")
+            return redirect(f"{frontend_url}/home?google_sync=error")
 
 
 @method_decorator(csrf_exempt, name="dispatch")
 class GoogleCalendarSyncAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
 
     def post(self, request, pk=None, *args, **kwargs):
         try:
@@ -848,3 +1016,56 @@ class GoogleCalendarSyncAPIView(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             return Response({"detail": "Failed to sync Google events."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class CalendarStatusAPIView(APIView):
+    """GET /api/calendar/status/ — returns connection status for each provider.
+
+    Response: { "google": { "connected": bool }, "outlook": { "connected": bool } }
+    Checks ExternalCredential existence directly for provider keys actually used by
+    persisted credentials: "google" for Google Calendar, "microsoft" for Outlook.
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+
+    def get(self, request):
+        from chore_sync.models import ExternalCredential
+        # Only report calendar-connected when a credential with actual OAuth tokens exists
+        # (expires_at is set). SSO-only credentials (secret={"sub":...}, no expires_at)
+        # cannot be used to call the calendar APIs.
+        google_connected = ExternalCredential.objects.filter(
+            user=request.user, provider="google", expires_at__isnull=False,
+        ).exists()
+        outlook_connected = ExternalCredential.objects.filter(
+            user=request.user, provider="microsoft", expires_at__isnull=False,
+        ).exists()
+        return Response({
+            "google": {"connected": google_connected},
+            "outlook": {"connected": outlook_connected},
+        })
+
+
+class UserCalendarListAPIView(APIView):
+    """GET /api/calendars/ — list all Calendar rows belonging to the requesting user.
+
+    Used by the frontend to populate the calendar picker in the create-event form,
+    including calendars that have no events yet (e.g. freshly connected Google calendars).
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+
+    def get(self, request):
+        from chore_sync.models import Calendar
+        cals = Calendar.objects.filter(user=request.user).order_by("provider", "name")
+        return Response([
+            {
+                "id": c.id,
+                "name": c.name,
+                "provider": c.provider,
+                "color": c.color or "",
+                "push_enabled": c.push_enabled,
+                "is_task_writeback": c.is_task_writeback,
+                "include_in_availability": c.include_in_availability,
+            }
+            for c in cals
+        ])

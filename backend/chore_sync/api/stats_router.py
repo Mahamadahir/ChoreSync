@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from chore_sync.api.views import CsrfExemptSessionAuthentication
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from chore_sync.services.insights_service import InsightsService
 
 _svc = InsightsService()
@@ -14,7 +15,7 @@ _svc = InsightsService()
 
 class UserStatsAPIView(APIView):
     """GET /api/users/me/stats/ — stats across all households."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -24,7 +25,7 @@ class UserStatsAPIView(APIView):
 
 class UserBadgesAPIView(APIView):
     """GET /api/users/me/badges/ — all earned badges."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -34,7 +35,7 @@ class UserBadgesAPIView(APIView):
 
 class GroupStatsAPIView(APIView):
     """GET /api/groups/{pk}/stats/ — household-level aggregates."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):

@@ -13,6 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from chore_sync.api.views import CsrfExemptSessionAuthentication
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from chore_sync.models import Calendar, OutlookCalendarSync
 from chore_sync.services.outlook_calendar_service import OutlookCalendarService
 
@@ -20,35 +21,62 @@ logger = logging.getLogger(__name__)
 
 
 class OutlookCalendarAuthURLAPIView(APIView):
-    """GET /api/calendar/outlook/auth-url/ — returns Microsoft OAuth consent URL."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    """GET /api/calendar/outlook/auth-url/ — returns Microsoft OAuth consent URL.
+
+    Accepts ?mobile=true to embed a mobile=True flag in the signed state so the
+    callback can redirect back to the app instead of the web frontend.
+    """
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         try:
+            from django.core import signing
+            mobile = request.query_params.get("mobile") == "true"
             svc = OutlookCalendarService(request.user)
-            url, code_verifier = svc.build_auth_url()
-            request.session["outlook_pkce_verifier"] = code_verifier
-            return Response({"auth_url": url})
+            url = svc.build_auth_url(mobile=mobile)
+            logger.info("Outlook auth URL redirect_uri: %s", svc.redirect_uri)
+            return Response({"auth_url": url, "redirect_uri": svc.redirect_uri})
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
 @method_decorator(csrf_exempt, name="dispatch")
 class OutlookCalendarCallbackAPIView(APIView):
-    """GET /api/calendar/outlook/callback/ — receives Microsoft OAuth redirect."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
-    permission_classes = [IsAuthenticated]
+    """GET /api/calendar/outlook/callback/ — receives Microsoft OAuth redirect.
+
+    This endpoint is intentionally AllowAny: the browser is redirected here by
+    Microsoft so there is no guarantee the Django session cookie is present.
+    The user is identified via the signed `state` parameter embedded during
+    build_auth_url(), which cannot be forged and expires after 10 minutes.
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
 
     def get(self, request):
-        code = request.query_params.get("code")
-        if not code:
-            return Response({"detail": "Missing code"}, status=status.HTTP_400_BAD_REQUEST)
         frontend_url = getattr(settings, "FRONTEND_APP_URL", "http://localhost:5173")
+        mobile_redirect_uri = getattr(settings, "MOBILE_CALENDAR_REDIRECT_URI", "choresync://calendar/connected")
+        error_param = request.query_params.get("error")
+        if error_param:
+            logger.warning("Outlook OAuth error from Microsoft: %s — %s",
+                           error_param, request.query_params.get("error_description", ""))
+            return redirect(f"{frontend_url}/calendar/outlook/select?error=1")
+
+        code = request.query_params.get("code")
+        state = request.query_params.get("state")
+        if not code or not state:
+            return redirect(f"{frontend_url}/calendar/outlook/select?error=1")
+
         try:
-            svc = OutlookCalendarService(request.user)
-            code_verifier = request.session.pop("outlook_pkce_verifier", None)
+            from django.core.signing import BadSignature
+            from django.contrib.auth import get_user_model
+            user_id, code_verifier, is_mobile = OutlookCalendarService.unsign_state(state)
+            User = get_user_model()
+            user = User.objects.get(pk=user_id)
+            svc = OutlookCalendarService(user)
             svc.exchange_code(code, code_verifier=code_verifier)
+            if is_mobile:
+                return redirect(f"{mobile_redirect_uri}?provider=outlook")
             return redirect(f"{frontend_url}/calendar/outlook/select?connected=1")
         except Exception as exc:
             logger.exception("Outlook callback failed", exc_info=exc)
@@ -57,7 +85,7 @@ class OutlookCalendarCallbackAPIView(APIView):
 
 class OutlookCalendarListAPIView(APIView):
     """GET /api/calendar/outlook/list/ — list user's Outlook calendars."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -66,15 +94,16 @@ class OutlookCalendarListAPIView(APIView):
             calendars = svc.list_calendars()
             return Response(calendars)
         except ValueError as exc:
+            logger.warning("Outlook list calendars ValueError for user %s: %s", request.user.id, exc)
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
-            logger.exception("Failed to list Outlook calendars", exc_info=exc)
-            return Response({"detail": "Failed to list Outlook calendars."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.exception("Failed to list Outlook calendars for user %s", request.user.id, exc_info=exc)
+            return Response({"detail": f"Failed to list Outlook calendars: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class OutlookCalendarSelectAPIView(APIView):
     """POST /api/calendar/outlook/select/ — save selected Outlook calendars."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -158,7 +187,7 @@ class OutlookCalendarSelectAPIView(APIView):
 
 class OutlookCalendarSyncAPIView(APIView):
     """POST /api/calendar/outlook/sync/ — trigger an incremental sync."""
-    authentication_classes = [CsrfExemptSessionAuthentication]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
