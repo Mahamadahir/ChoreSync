@@ -1,22 +1,72 @@
+# ── Python ────────────────────────────────────────────────────────────────────
 venv/
+.venv/
+deploy/.venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
 db.sqlite3
+
+# ── Django ────────────────────────────────────────────────────────────────────
+backend/staticfiles/
+backend/mediafiles/
+backend/secrets.env
+backend/secrets.prod.env
+
+# ── Secrets / env files ───────────────────────────────────────────────────────
+secrets.env
+.env
+.env.local
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+mobile/.env
+mobile/.env.local
+
+# ── Frontend (Vue) ────────────────────────────────────────────────────────────
 frontend/node_modules/
 frontend/dist/
-coverage/
+frontend/coverage/
+
+# ── Mobile (React Native / Expo) ──────────────────────────────────────────────
+mobile/node_modules/
+mobile/.expo/
+mobile/android/build/
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/android/local.properties
+mobile/ios/Pods/
+mobile/ios/build/
+mobile/choreSync.apk
+mobile/*.apk
+mobile/*.ipa
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
+logs/
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
+.codex
+*.swp
+*.swo
+
+# ── LaTeX / doc artefacts ─────────────────────────────────────────────────────
 *.tex
-*.exe
-*aux
+*.aux
 *.pdf
 *.gz
 *.out
 *.toc
-secrets.env
-.env
-frontend/.env
-frontend/.env.local
+*aux
+
+# ── Misc build artefacts ──────────────────────────────────────────────────────
+*.exe
+out/
+coverage/
+
+# ── Scratch / local data ──────────────────────────────────────────────────────
+testing-data.json
+=5.3.0
