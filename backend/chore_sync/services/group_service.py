@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from django.db import transaction
 from django.conf import settings
 import secrets
-from chore_sync.models import Group, User, GroupMembership, Notification, GroupCalendar, UserStats, TaskOccurrence
+from chore_sync.models import Group, User, GroupMembership, Notification, UserStats, TaskOccurrence
 from chore_sync.services.auth_service import AccountService
 
 
@@ -30,19 +30,26 @@ class GroupOrchestrator:
         }
 
 
-    def create_group(self, *, owner: User, name: str, reassignment_rule: str | None = None, fairness_algorithm: str | None = None) -> Group:
+    def create_group(
+        self,
+        *,
+        owner: User,
+        name: str,
+        reassignment_rule: str | None = None,
+        task_proposal_voting_required: bool = False,
+        group_type: str = 'custom',
+    ) -> Group:
         """Provision a new group and default configuration.
 
         Inputs:
             owner: User creating the group (initial admin).
             name: Human-friendly group name.
             reassignment_rule: Initial fairness/rotation setting identifier.
-            fairness_algorithm: Algorithm for computing task fairness.
+            task_proposal_voting_required: Whether new task templates require a group vote.
         Output:
             Group DTO (id, slug, invite code) ready for UI consumption.
         """
         valid_rules = [c[0] for c in Group._meta.get_field('reassignment_rule').choices]
-        valid_algorithms = [c[0] for c in Group._meta.get_field('fairness_algorithm').choices]
         if name is None or len(name) == 0:
             raise ValueError("Group name cannot be empty.")
         if len(name) > 100:
@@ -50,13 +57,40 @@ class GroupOrchestrator:
 
         if reassignment_rule is not None and reassignment_rule not in valid_rules:
             raise ValueError(f"Invalid reassignment rule: {reassignment_rule}")
-        if fairness_algorithm is not None and fairness_algorithm not in valid_algorithms:
-            raise ValueError(f"Invalid fairness algorithm: {fairness_algorithm}")
 
         with transaction.atomic():
-            group = Group.objects.create(name=name, owner=owner, reassignment_rule=reassignment_rule, group_code=secrets.token_urlsafe(6).upper(), fairness_algorithm=fairness_algorithm)
+            group = Group.objects.create(
+                name=name,
+                owner=owner,
+                reassignment_rule=reassignment_rule,
+                group_code=secrets.token_urlsafe(6).upper(),
+                task_proposal_voting_required=task_proposal_voting_required,
+                group_type=group_type,
+            )
             GroupMembership.objects.create(user=owner, group=group, role='moderator')
-            GroupCalendar.objects.create(group=group)
+        return group
+
+    def join_by_code(self, *, user, code: str):
+        """Join a group using its invite code.
+
+        Inputs:
+            user: The requesting user.
+            code: The group_code string (case-insensitive).
+        Output:
+            The Group instance that was joined.
+        """
+        from chore_sync.models import Group
+        normalised = code.strip().upper()
+        if not normalised:
+            raise ValueError("Group code cannot be empty.")
+        group = Group.objects.filter(group_code=normalised).first()
+        if group is None:
+            raise ValueError("No group found with that code. Double-check and try again.")
+        if GroupMembership.objects.filter(user=user, group=group).exists():
+            raise ValueError("You are already a member of this group.")
+        # Flatshares: everyone who joins via code is a moderator (peer group).
+        role = 'moderator' if group.group_type == 'flatshare' else 'member'
+        GroupMembership.objects.create(user=user, group=group, role=role)
         return group
 
     def invite_member(self, *, requestor: User, group_id: str, email: str, role: str) -> None:
@@ -84,6 +118,10 @@ class GroupOrchestrator:
         if requestor_membership.role != 'moderator':
             raise ValueError("Requestor must be a moderator to invite others.")
 
+        # Flatshares are peer groups — all members are moderators regardless of what was passed.
+        if group.group_type == 'flatshare':
+            role = 'moderator'
+
         invitee = User.objects.filter(email=email).first()
 
         if invitee is not None:
@@ -91,13 +129,17 @@ class GroupOrchestrator:
                 raise ValueError("User is already a member of the group.")
             with transaction.atomic():
                 GroupMembership.objects.create(user=invitee, group=group, role=role)
-                Notification.objects.create(
-                    title="Group Invitation",
-                    type='group_invite',
-                    recipient=invitee,
-                    group=group,
-                    content=f"You have been invited to join the group '{group.name}' as a {role}.",
-                )
+            # Use the full notification pipeline so the invite gets realtime WS/SSE
+            # delivery and respects the invitee's notification preferences.
+            from chore_sync.services.notification_service import NotificationService
+            NotificationService().emit_notification(
+                recipient_id=str(invitee.id),
+                notification_type='group_invite',
+                title="Group Invitation",
+                content=f"You have been invited to join the group '{group.name}' as a {role}.",
+                group_id=str(group.id),
+                action_url=f"/groups/{group.id}",
+            )
             AccountService()._send_and_log_email(
                 to_address=invitee.email,
                 subject=f"You're invited to join {group.name} on ChoreSync!",
@@ -165,53 +207,105 @@ class GroupOrchestrator:
         return False
 
     def compute_assignment_matrix(self, *, group_id: str) -> dict:
-        """Build a fairness matrix used for automated task assignments.
+        """Build a unified fairness matrix used for automated task assignments.
+
+        Blends three independently-normalised workload signals:
+          - Task count  (40%) — who has completed the fewest tasks
+          - Time burden (35%) — total estimated minutes of assigned tasks
+          - Point load  (25%) — total points earned (reflects difficulty)
+
+        Each signal is normalised 0→1 across the current member pool before
+        blending, so members with very different task profiles are compared
+        fairly. Lower blended score = higher assignment priority.
 
         Inputs:
             group_id: Group whose workload distribution is being analyzed.
         Output:
-            Dict keyed by user_id (str) → float score. Lower score = higher assignment priority.
+            Dict keyed by user_id (str) → float score (0–1, lower = next in line).
         """
+        from django.db.models import Case, ExpressionWrapper, FloatField, Sum as _Sum, Value, When
+
         group = Group.objects.filter(id=group_id).first()
         if group is None:
             raise ValueError("Group not found.")
 
-        members = group.members.select_related('user').all()
-        if not members.exists():
+        members = list(group.members.select_related('user').all())
+        if not members:
             raise ValueError(f"Group '{group.name}' has no members to assign tasks to")
 
-        raw_matrix = {}
+        # Gather raw signals for every member in a single pass
+        tasks_raw: dict[str, float] = {}
+        time_raw: dict[str, float] = {}
+        points_raw: dict[str, float] = {}
+
+        # Difficulty-weighted time burden — harder tasks contribute more to a
+        # member's time load, making them less likely to be assigned the next task.
+        # Weights: easy(1)×0.8, (2)×0.9, medium(3)×1.0, hard(4)×1.25, expert(5)×1.6
+        _difficulty_weight = ExpressionWrapper(
+            Case(
+                When(template__difficulty=1, then=Value(0.8)),
+                When(template__difficulty=2, then=Value(0.9)),
+                When(template__difficulty=3, then=Value(1.0)),
+                When(template__difficulty=4, then=Value(1.25)),
+                When(template__difficulty=5, then=Value(1.6)),
+                default=Value(1.0),
+                output_field=FloatField(),
+            ),
+            output_field=FloatField(),
+        )
+        _weighted_mins = ExpressionWrapper(
+            Case(
+                When(template__estimated_mins__isnull=False, then=ExpressionWrapper(
+                    Case(
+                        When(template__difficulty=1, then=Value(0.8)),
+                        When(template__difficulty=2, then=Value(0.9)),
+                        When(template__difficulty=3, then=Value(1.0)),
+                        When(template__difficulty=4, then=Value(1.25)),
+                        When(template__difficulty=5, then=Value(1.6)),
+                        default=Value(1.0),
+                        output_field=FloatField(),
+                    ) * Case(
+                        When(template__estimated_mins__isnull=False, then='template__estimated_mins'),
+                        default=Value(30.0),
+                        output_field=FloatField(),
+                    ),
+                    output_field=FloatField(),
+                )),
+                default=Value(30.0),
+                output_field=FloatField(),
+            ),
+            output_field=FloatField(),
+        )
+
+        # Bulk difficulty-weighted time query to avoid N+1
+        time_by_user = dict(
+            TaskOccurrence.objects.filter(
+                template__group=group,
+                status__in=['completed', 'pending', 'snoozed'],
+            )
+            .values('assigned_to_id')
+            .annotate(total=_Sum(_weighted_mins))
+            .values_list('assigned_to_id', 'total')
+        )
 
         for membership in members:
             user = membership.user
+            uid = str(user.id)
             stats = UserStats.objects.filter(user=user, household=group).first()
+            tasks_raw[uid] = float(stats.total_tasks_completed if stats else 0)
+            time_raw[uid] = float(time_by_user.get(user.id) or 0)
+            points_raw[uid] = float(stats.total_points if stats else 0)
 
-            if group.fairness_algorithm == 'count_based':
-                score = stats.total_tasks_completed if stats else 0
+        # Normalise each signal independently (0–1 within the group)
+        tasks_norm = GroupOrchestrator._normalise(tasks_raw)
+        time_norm = GroupOrchestrator._normalise(time_raw)
+        points_norm = GroupOrchestrator._normalise(points_raw)
 
-            elif group.fairness_algorithm == 'time_based':
-                from django.db.models import Sum as _Sum
-                total = TaskOccurrence.objects.filter(
-                    assigned_to=user,
-                    template__group=group,
-                    status__in=['completed', 'pending', 'snoozed'],
-                ).aggregate(total=_Sum('template__estimated_time_to_complete'))['total']
-                score = total or 0
-
-            elif group.fairness_algorithm == 'difficulty_based':
-                score = stats.total_points if stats else 0
-
-            elif group.fairness_algorithm == 'weighted':
-                tasks = stats.total_tasks_completed if stats else 0
-                points = stats.total_points if stats else 0
-                score = (tasks * 0.6) + (points * 0.4)
-
-            else:
-                score = stats.total_tasks_completed if stats else 0
-
-            raw_matrix[str(user.id)] = score
-        normalised_matrix = GroupOrchestrator._normalise(raw_matrix)
-        return normalised_matrix
+        # Blend and return — already in 0–1 range, no second normalise needed
+        return {
+            uid: tasks_norm[uid] * 0.40 + time_norm[uid] * 0.35 + points_norm[uid] * 0.25
+            for uid in tasks_norm
+        }
 
     def generate_invite_code(self,group : Group ,*, length: int = 6) -> None:
         """Produce a human-friendly invite code for group onboarding.

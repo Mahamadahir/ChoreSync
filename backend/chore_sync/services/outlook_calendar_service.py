@@ -42,9 +42,21 @@ class OutlookCalendarService:
         code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
         return code_verifier, code_challenge
 
-    def build_auth_url(self) -> tuple[str, str]:
-        """Return (auth_url, code_verifier). Caller must persist code_verifier."""
+    def build_auth_url(self, mobile: bool = False) -> str:
+        """Return auth_url with user_id + PKCE verifier embedded in a signed state param.
+
+        The state param carries everything the callback needs so it does not depend
+        on the browser session being present (cross-site redirects can drop cookies).
+        Pass mobile=True to have the callback redirect to the app URI instead of the web frontend.
+        """
+        from django.core import signing
         code_verifier, code_challenge = self._pkce_pair()
+        # Sign {user_id, verifier, mobile} so it can't be forged; 10-minute expiry
+        state = signing.dumps(
+            {"uid": str(self.user.id), "cv": code_verifier, "mobile": mobile},
+            salt="outlook_oauth",
+            compress=True,
+        )
         params = {
             "client_id": self.client_id,
             "response_type": "code",
@@ -53,10 +65,20 @@ class OutlookCalendarService:
             "scope": " ".join(GRAPH_SCOPES),
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
+            "state": state,
             "prompt": "consent",
         }
         base = f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/authorize"
-        return f"{base}?{urlencode(params)}", code_verifier
+        return f"{base}?{urlencode(params)}"
+
+    @staticmethod
+    def unsign_state(state: str) -> tuple[str, str, bool]:
+        """Verify and decode the signed state param. Returns (user_id, code_verifier, is_mobile).
+        Raises django.core.signing.BadSignature on tamper or expiry (10 min).
+        """
+        from django.core import signing
+        data = signing.loads(state, salt="outlook_oauth", max_age=600)
+        return data["uid"], data["cv"], bool(data.get("mobile", False))
 
     def exchange_code(self, code: str, code_verifier: str | None = None) -> ExternalCredential:
         """Exchange the auth code for tokens and persist them."""
@@ -71,9 +93,19 @@ class OutlookCalendarService:
         }
         if code_verifier:
             data["code_verifier"] = code_verifier
+        logger.info("exchange_code: posting to token endpoint for user=%s", self.user.id)
         resp = requests.post(token_url, data=data, timeout=15)
+        if not resp.ok:
+            logger.error("exchange_code: token exchange failed %s — %s", resp.status_code, resp.text[:500])
         resp.raise_for_status()
         tokens = resp.json()
+        logger.info(
+            "exchange_code: token exchange OK — has_access_token=%s has_refresh_token=%s expires_in=%s scopes=%s",
+            bool(tokens.get("access_token")),
+            bool(tokens.get("refresh_token")),
+            tokens.get("expires_in"),
+            tokens.get("scope", ""),
+        )
 
         # Fetch user email from Graph
         account_email = None
@@ -85,15 +117,22 @@ class OutlookCalendarService:
             )
             if me_resp.ok:
                 account_email = me_resp.json().get("mail") or me_resp.json().get("userPrincipalName")
-        except Exception:
-            pass
+                logger.info("exchange_code: Graph /me account_email=%s", account_email)
+            else:
+                logger.warning("exchange_code: Graph /me failed %s", me_resp.status_code)
+        except Exception as e:
+            logger.warning("exchange_code: Graph /me exception: %s", e)
 
         expires_in = tokens.get("expires_in", 3600)
         expires_at = timezone.now() + __import__("datetime").timedelta(seconds=expires_in)
 
-        cred, _ = ExternalCredential.objects.update_or_create(
+        # Use the full unique_together key (user, provider, account_email) so we
+        # correctly find/update the SSO credential when account_email matches, or
+        # create a calendar-specific credential when it doesn't (or email is None).
+        cred, created = ExternalCredential.objects.update_or_create(
             user=self.user,
             provider="microsoft",
+            account_email=account_email,
             defaults={
                 "secret": {
                     "access_token": tokens["access_token"],
@@ -101,9 +140,15 @@ class OutlookCalendarService:
                     "expires_at": expires_at.isoformat(),
                     "scope": tokens.get("scope", ""),
                 },
-                "account_email": account_email,
                 "expires_at": expires_at,
             },
+        )
+        logger.info(
+            "exchange_code: credential %s (id=%s) — expires_at=%s has_access_token=%s",
+            "created" if created else "updated",
+            cred.id,
+            cred.expires_at,
+            bool((cred.secret or {}).get("access_token")),
         )
 
         # Ensure a Calendar row exists for this credential
@@ -122,8 +167,14 @@ class OutlookCalendarService:
 
     def _get_access_token(self) -> str:
         """Return a valid access token, refreshing if needed."""
+        # Filter to credentials that have an expires_at — SSO-only credentials
+        # (secret={"sub": ...}) never have expires_at and cannot be used for API calls.
         cred = (
-            ExternalCredential.objects.filter(user=self.user, provider="microsoft")
+            ExternalCredential.objects.filter(
+                user=self.user,
+                provider="microsoft",
+                expires_at__isnull=False,
+            )
             .order_by("-last_refreshed_at")
             .first()
         )
@@ -131,6 +182,14 @@ class OutlookCalendarService:
             raise ValueError("Microsoft credentials not found. Connect Outlook first.")
 
         data = cred.secret or {}
+        logger.debug(
+            "_get_access_token: user=%s cred.id=%s account_email=%s "
+            "has_access_token=%s has_refresh_token=%s has_expires_at=%s",
+            self.user.id, cred.id, cred.account_email,
+            bool(data.get("access_token")),
+            bool(data.get("refresh_token")),
+            bool(data.get("expires_at")),
+        )
         # Check expiry (with 60s buffer)
         expires_at_str = data.get("expires_at")
         if expires_at_str:
@@ -139,14 +198,24 @@ class OutlookCalendarService:
                 if exp.tzinfo is None:
                     exp = exp.replace(tzinfo=dt_timezone.utc)
                 remaining = (exp - timezone.now()).total_seconds()
+                logger.debug("_get_access_token: token remaining=%ss", int(remaining))
                 if remaining > 60:
                     return data["access_token"]
-            except (ValueError, KeyError):
-                pass
+            except (ValueError, KeyError) as e:
+                logger.warning("_get_access_token: failed to parse/return token: %s", e)
 
-        # Refresh the token
+        # Token is expired (or no expires_at) — try to refresh
         refresh_token = data.get("refresh_token")
         if not refresh_token:
+            # If we somehow still have a non-expired access_token, use it rather than failing.
+            # This handles the edge case where Microsoft didn't return a refresh_token.
+            access_token = data.get("access_token")
+            if access_token:
+                logger.warning(
+                    "_get_access_token: no refresh token for user=%s — using existing access token",
+                    self.user.id,
+                )
+                return access_token
             raise ValueError("Microsoft refresh token missing. Please reconnect Outlook.")
 
         token_url = f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/token"
@@ -260,7 +329,7 @@ class OutlookCalendarService:
             ext_id = item["id"]
 
             if removed:
-                Event.objects.filter(calendar=calendar, external_id=ext_id).update(
+                Event.objects.filter(calendar=calendar, external_event_id=ext_id).update(
                     source="external"
                 )
                 continue
@@ -272,7 +341,7 @@ class OutlookCalendarService:
 
             Event.objects.update_or_create(
                 calendar=calendar,
-                external_id=ext_id,
+                external_event_id=ext_id,
                 defaults={
                     "title": item.get("subject", "(no title)"),
                     "description": item.get("bodyPreview", ""),
@@ -281,7 +350,6 @@ class OutlookCalendarService:
                     "is_all_day": item.get("isAllDay", False),
                     "blocks_availability": not item.get("showAs", "busy") == "free",
                     "source": "external",
-                    "user": self.user,
                 },
             )
 
@@ -364,15 +432,15 @@ class OutlookCalendarService:
         )
         resp.raise_for_status()
         data = resp.json()
-        event.external_id = data["id"]
-        event.save(update_fields=["external_id"])
+        event.external_event_id = data["id"]
+        event.save(update_fields=["external_event_id"])
 
     def push_updated_event(self, event: Event) -> None:
-        if not event.external_id or not event.calendar or event.calendar.provider != "microsoft":
+        if not event.external_event_id or not event.calendar or event.calendar.provider != "microsoft":
             return
         cal_id = event.calendar.external_id or "primary"
         resp = requests.patch(
-            f"{GRAPH_BASE}/me/calendars/{cal_id}/events/{event.external_id}",
+            f"{GRAPH_BASE}/me/calendars/{cal_id}/events/{event.external_event_id}",
             json=self._event_to_graph(event),
             headers=self._headers(),
             timeout=15,
@@ -380,11 +448,11 @@ class OutlookCalendarService:
         resp.raise_for_status()
 
     def push_deleted_event(self, event: Event) -> None:
-        if not event.external_id or not event.calendar or event.calendar.provider != "microsoft":
+        if not event.external_event_id or not event.calendar or event.calendar.provider != "microsoft":
             return
         cal_id = event.calendar.external_id or "primary"
         requests.delete(
-            f"{GRAPH_BASE}/me/calendars/{cal_id}/events/{event.external_id}",
+            f"{GRAPH_BASE}/me/calendars/{cal_id}/events/{event.external_event_id}",
             headers=self._headers(),
             timeout=15,
         )

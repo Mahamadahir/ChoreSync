@@ -36,7 +36,7 @@ class InternalCalendarProvider(CalendarProvider):
         ev = Event.objects.create(
             calendar=cal,
             title=f"[Task] {task_occurrence.template.name}",
-            description=task_occurrence.template.description or "",
+            description=task_occurrence.template.details or "",
             start=deadline - datetime.timedelta(hours=1),
             end=deadline,
             source="task",
@@ -55,7 +55,7 @@ class InternalCalendarProvider(CalendarProvider):
         if not ev:
             return
         ev.title = f"[Task] {task_occurrence.template.name}"
-        ev.description = task_occurrence.template.description or ""
+        ev.description = task_occurrence.template.details or ""
         ev.start = task_occurrence.deadline - datetime.timedelta(hours=1)
         ev.end = task_occurrence.deadline
         ev.save(update_fields=["title", "description", "start", "end"])

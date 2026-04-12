@@ -274,6 +274,86 @@ class SmartSuggestionService:
     #  Type 4 — Fairness rebalancing
     # ------------------------------------------------------------------ #
 
+    # ------------------------------------------------------------------ #
+    #  Type 5 — Streak-based pre-assignment
+    # ------------------------------------------------------------------ #
+
+    # Minimum hours remaining on deadline before we skip the streak suggestion
+    # and just auto-assign immediately.
+    _STREAK_MIN_HOURS = 3
+    # How many consecutive completions by the same user qualify as a streak.
+    _STREAK_LENGTH = 3
+    # Fraction of deadline window to hold the occurrence as 'suggested'.
+    _STREAK_WINDOW_RATIO = 0.33
+    # Hard caps (hours) on the computed wait window.
+    _STREAK_WINDOW_MIN_HOURS = 1
+    _STREAK_WINDOW_MAX_HOURS = 24
+
+    @staticmethod
+    def compute_streak_window_minutes(deadline) -> int | None:
+        """Return how many minutes to hold the streak suggestion open.
+
+        Returns None if the deadline is too close to bother (< _STREAK_MIN_HOURS).
+        """
+        from chore_sync.services.smart_suggestion_service import SmartSuggestionService
+        hours_remaining = (deadline - timezone.now()).total_seconds() / 3600
+        if hours_remaining < SmartSuggestionService._STREAK_MIN_HOURS:
+            return None
+        raw = hours_remaining * SmartSuggestionService._STREAK_WINDOW_RATIO
+        clamped = max(
+            SmartSuggestionService._STREAK_WINDOW_MIN_HOURS,
+            min(raw, SmartSuggestionService._STREAK_WINDOW_MAX_HOURS),
+        )
+        return int(clamped * 60)
+
+    def suggest_streak_assignment(self, occurrence) -> bool:
+        """Check whether the last N completions of occurrence.template were by
+        the same user. If so, suggest the occurrence to that user with a
+        deadline-proportional window instead of the normal 10-minute window.
+
+        Returns True if a streak suggestion was emitted (caller should NOT
+        call assign_occurrence for this occurrence).
+        Returns False if no streak found (caller should proceed normally).
+        """
+        from chore_sync.models import TaskAssignmentHistory
+        from chore_sync.services.task_lifecycle_service import TaskLifecycleService
+
+        template = occurrence.template
+
+        # Query the last N completed assignments for this template.
+        recent = (
+            TaskAssignmentHistory.objects
+            .filter(task_template=template, completed=True)
+            .order_by('-completed_at')
+            .select_related('user')
+            [:self._STREAK_LENGTH]
+        )
+
+        if len(recent) < self._STREAK_LENGTH:
+            return False
+
+        # All must be the same user.
+        user_ids = {str(h.user_id) for h in recent}
+        if len(user_ids) != 1:
+            return False
+
+        streak_user = recent[0].user
+
+        # Compute the deadline-proportional window.
+        window_minutes = self.compute_streak_window_minutes(occurrence.deadline)
+        if window_minutes is None:
+            # Deadline too close — skip streak nudge, let normal pipeline run.
+            return False
+
+        # Assign the occurrence to the streak user with the custom window.
+        TaskLifecycleService()._assign_with_streak_window(
+            occurrence=occurrence,
+            winner=streak_user,
+            window_minutes=window_minutes,
+            streak_length=self._STREAK_LENGTH,
+        )
+        return True
+
     def _suggest_fairness(self, group, members) -> int:
         """Suggest an extra task to members significantly below the group average.
 

@@ -117,6 +117,16 @@ class MarketplaceService:
         )
         return occurrence
 
+    def cancel_listing(self, *, user, listing_id: int) -> None:
+        listing = MarketplaceListing.objects.select_related(
+            'task_occurrence__template', 'listed_by'
+        ).filter(id=listing_id).first()
+        if listing is None:
+            raise ValueError("Listing not found.")
+        if str(listing.listed_by_id) != str(user.id):
+            raise PermissionError("You can only cancel your own listings.")
+        listing.delete()
+
     def list_active(self, *, group_id: str, actor_id: str) -> list:
         if not GroupMembership.objects.filter(user_id=actor_id, group_id=group_id).exists():
             raise PermissionError("Not a member of this group.")

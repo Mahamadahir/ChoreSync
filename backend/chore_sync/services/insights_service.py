@@ -4,12 +4,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 
-from django.db.models import Count
+from django.db.models import Count, OuterRef, Subquery
 from django.db.models.functions import TruncWeek
 from django.utils import timezone
 
 from chore_sync.models import (
-    GroupMembership, TaskOccurrence, UserBadge, UserStats,
+    GroupMembership, TaskAssignmentHistory, TaskOccurrence, TaskPreference,
+    UserBadge, UserStats,
 )
 
 
@@ -126,6 +127,10 @@ class InsightsService:
             reverse=True,
         )
 
+        preference_compliance = self._get_preference_compliance(
+            group_id=group_id, memberships=memberships
+        )
+
         return {
             'resolved_tasks': resolved,
             'completed_tasks': completed,
@@ -136,7 +141,74 @@ class InsightsService:
                 'count': most_completed['count'],
             } if most_completed else None,
             'fairness_distribution': fairness_distribution,
+            'preference_compliance': preference_compliance,
         }
+
+    def _get_preference_compliance(
+        self, *, group_id: str, memberships
+    ) -> list[dict]:
+        """Return per-member preference compliance stats.
+
+        For each member: how many of their assignments matched their stated
+        preference (prefer/neutral/avoid/unset). The headline metric is
+        avoid_pct — the fraction of assignments where the user got a task
+        they explicitly marked as 'avoid'.
+
+        Marketplace, swap, and emergency rows are excluded because the user
+        voluntarily changed the assignment, so the original preference signal
+        shouldn't count against compliance.
+        """
+        from django.db.models import CharField
+
+        pref_subq = TaskPreference.objects.filter(
+            user_id=OuterRef('user_id'),
+            task_template_id=OuterRef('task_template_id'),
+        ).values('preference')[:1]
+
+        rows = (
+            TaskAssignmentHistory.objects
+            .filter(
+                task_template__group_id=group_id,
+                was_swapped=False,
+                was_emergency=False,
+                was_marketplace=False,
+            )
+            .annotate(preference=Subquery(pref_subq, output_field=CharField()))
+            .values('user_id', 'preference')
+            .annotate(count=Count('id'))
+        )
+
+        # Aggregate per user
+        from collections import defaultdict
+        buckets: dict[str, dict[str, int]] = defaultdict(lambda: {
+            'prefer': 0, 'neutral': 0, 'avoid': 0, 'unset': 0,
+        })
+        for row in rows:
+            uid = str(row['user_id'])
+            pref = row['preference'] or 'unset'
+            buckets[uid][pref] = buckets[uid].get(pref, 0) + row['count']
+
+        # Build result, zero-filling members with no history
+        result = []
+        for m in memberships:
+            uid = str(m.user_id)
+            b = buckets.get(uid, {'prefer': 0, 'neutral': 0, 'avoid': 0, 'unset': 0})
+            total = sum(b.values())
+            result.append({
+                'user_id': uid,
+                'username': m.user.username,
+                'total_assignments': total,
+                'prefer_count': b['prefer'],
+                'neutral_count': b['neutral'],
+                'avoid_count': b['avoid'],
+                'unset_count': b['unset'],
+                'avoid_pct': round(b['avoid'] / total, 3) if total > 0 else 0.0,
+                'prefer_pct': round(b['prefer'] / total, 3) if total > 0 else 0.0,
+            })
+
+        # Sort by avoid_pct descending (worst compliance first)
+        result.sort(key=lambda x: x['avoid_pct'], reverse=True)
+        return result
 
 
 # ------------------------------------------------------------------ #
@@ -199,6 +271,7 @@ def _serialize_badge(ub: UserBadge) -> dict:
         'badge_id': ub.badge_id,
         'name': ub.badge.name,
         'description': ub.badge.description,
+        'emoji': ub.badge.emoji,
         'icon_url': ub.badge.icon_url,
         'points_value': ub.badge.points_value,
         'household_id': str(ub.household_id),

@@ -110,18 +110,6 @@ class GoogleCalendarService:
             account_email=account_email,
             defaults={"secret": secret_payload},
         )
-        from chore_sync.models import GoogleCalendarSync
-        cal, _ = Calendar.objects.update_or_create(
-            user=self.user,
-            provider="google",
-            external_id="primary",
-            defaults={
-                "name": "Google Calendar (Primary)",
-                "include_in_availability": True,
-                "timezone": decoded_info.get("timezone", "UTC"),
-            },
-        )
-        GoogleCalendarSync.objects.get_or_create(calendar=cal)
         return cred
 
     def _load_credentials(self) -> Optional[Credentials]:
@@ -232,6 +220,13 @@ class GoogleCalendarService:
                 break
             items = events_result.get("items", [])
             for item in items:
+                event_id = item.get("id")
+                if not event_id:
+                    continue
+                # Cancelled/deleted events from Google — remove from local DB
+                if item.get("status") == "cancelled":
+                    Event.objects.filter(external_event_id=event_id, calendar=cal).delete()
+                    continue
                 start = item.get("start", {}).get("dateTime") or item.get("start", {}).get("date")
                 end = item.get("end", {}).get("dateTime") or item.get("end", {}).get("date")
                 if not start or not end:
@@ -246,7 +241,7 @@ class GoogleCalendarService:
                         updated_dt = datetime.datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
                     except Exception:
                         updated_dt = None
-                existing = Event.objects.filter(external_event_id=item.get("id"), calendar=cal).order_by("id")
+                existing = Event.objects.filter(external_event_id=event_id, calendar=cal).order_by("id")
                 ev = existing.first()
                 if ev:
                     existing.exclude(pk=ev.pk).delete()
@@ -267,7 +262,7 @@ class GoogleCalendarService:
                     ev.save()
                 else:
                     Event.objects.create(
-                        external_event_id=item.get("id"),
+                        external_event_id=event_id,
                         calendar=cal,
                         title=item.get("summary", "(no title)"),
                         description=item.get("description", "") or "",

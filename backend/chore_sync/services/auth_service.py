@@ -19,6 +19,10 @@ from google.oauth2 import id_token as google_id_token
 import jwt
 from jwt import PyJWKClient
 
+# Module-level cached JWKS clients — avoids a live HTTPS round-trip to Microsoft on every login.
+# PyJWKClient caches keys internally; creating one per request discards that cache each time.
+_ms_jwks_clients: dict[str, PyJWKClient] = {}
+
 from ..domain_errors import (
     UsernameAlreadyTaken,
     EmailAlreadyTaken,
@@ -114,7 +118,7 @@ class AccountService:
             is_task_writeback=True,
         )
 
-    def register_user(self, *, username: str, email: str, password: str, timezone: str | None = None) -> UserDTO:
+    def register_user(self, *, username: str, email: str, password: str, first_name: str = '', last_name: str = '', timezone: str | None = None) -> UserDTO:
         """
         Orchestrates full registration:
         - validate username/email/password
@@ -138,10 +142,15 @@ class AccountService:
                     email=email_norm,
                     password=password,
                     is_active=False,         # activate only after email verification
+                    first_name=first_name.strip(),
+                    last_name=last_name.strip(),
                 )
+                update_fields = []
                 if timezone:
                     setattr(user, "timezone", timezone.strip())
-                    user.save(update_fields=["timezone"])
+                    update_fields.append("timezone")
+                if update_fields:
+                    user.save(update_fields=update_fields)
                 self._create_internal_calendar(user)
 
         except IntegrityError as exc:
@@ -330,7 +339,7 @@ class AccountService:
             email_verified=user.email_verified,
         )
 
-    def update_profile(self, user: User, *, username: str | None = None, email: str | None = None, timezone: str | None = None) -> UserDTO:
+    def update_profile(self, user: User, *, username: str | None = None, email: str | None = None, timezone: str | None = None, first_name: str | None = None, last_name: str | None = None) -> UserDTO:
         """
         Update basic profile fields. Username uniqueness is enforced; email changes force re-verification.
         """
@@ -355,6 +364,14 @@ class AccountService:
         if timezone is not None and hasattr(user, "timezone"):
             setattr(user, "timezone", timezone)
             dirty_fields.append("timezone")
+
+        if first_name is not None:
+            user.first_name = first_name
+            dirty_fields.append("first_name")
+
+        if last_name is not None:
+            user.last_name = last_name
+            dirty_fields.append("last_name")
 
         if dirty_fields:
             user.save(update_fields=dirty_fields)
@@ -390,14 +407,20 @@ class AccountService:
         )
         return user, dto
 
-    def sign_in_with_google(self, *, id_token: str) -> tuple[User, UserDTO]:
+    def sign_in_with_google(self, *, id_token: str, extra_audiences: list[str] | None = None) -> tuple[User, UserDTO]:
         client_id = getattr(settings, "GOOGLE_OAUTH_CLIENT_ID", None)
         if not client_id:
             raise RegistrationError("Google Sign-In is not configured.")
-        try:
-            payload = google_id_token.verify_oauth2_token(id_token, google_requests.Request(), client_id)
-        except Exception as exc:
-            raise InvalidCredentials("Invalid Google token.") from exc
+        audiences = [client_id] + (extra_audiences or [])
+        payload = None
+        for audience in audiences:
+            try:
+                payload = google_id_token.verify_oauth2_token(id_token, google_requests.Request(), audience)
+                break
+            except Exception:
+                continue
+        if payload is None:
+            raise InvalidCredentials("Invalid Google token.")
 
         email = payload.get("email")
         email_verified = payload.get("email_verified", False)
@@ -408,6 +431,9 @@ class AccountService:
             raise InactiveAccount("Google has not verified this email.")
 
         email_norm = self._normalize_email(email)
+        given_name = payload.get("given_name", "")
+        family_name = payload.get("family_name", "")
+        picture = payload.get("picture", "")
         user = None
         created = False
         try:
@@ -423,6 +449,9 @@ class AccountService:
                     is_active=True,
                     email_verified=True,
                     timezone="UTC",
+                    first_name=given_name,
+                    last_name=family_name,
+                    avatar_url=picture,
                 )
                 self._create_internal_calendar(user)
             created = True
@@ -431,6 +460,18 @@ class AccountService:
             user.is_active = True
             user.email_verified = True
             user.save(update_fields=["is_active", "email_verified"])
+
+        # Update name and avatar if we got them from Google and they're not already set
+        dirty = []
+        if given_name and not user.first_name:
+            user.first_name = given_name
+            user.last_name = family_name
+            dirty += ["first_name", "last_name"]
+        if picture and not user.avatar and not user.avatar_url:
+            user.avatar_url = picture
+            dirty.append("avatar_url")
+        if dirty:
+            user.save(update_fields=dirty)
 
         # Upsert external credential record
         if sub:
@@ -458,7 +499,9 @@ class AccountService:
         jwks_url = f"https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys"
         issuer = f"https://login.microsoftonline.com/{tenant}/v2.0"
         try:
-            jwk_client = PyJWKClient(jwks_url)
+            if jwks_url not in _ms_jwks_clients:
+                _ms_jwks_clients[jwks_url] = PyJWKClient(jwks_url, cache_keys=True)
+            jwk_client = _ms_jwks_clients[jwks_url]
             signing_key = jwk_client.get_signing_key_from_jwt(id_token)
             payload = jwt.decode(
                 id_token,
@@ -476,6 +519,9 @@ class AccountService:
             raise InvalidEmail("Microsoft account is missing an email.")
 
         email_norm = self._normalize_email(email)
+        given_name = payload.get("given_name", "")
+        family_name = payload.get("family_name", "")
+        picture = payload.get("picture", "")
         user = None
         try:
             user = User.objects.get(email=email_norm)
@@ -490,6 +536,9 @@ class AccountService:
                     is_active=True,
                     email_verified=True,
                     timezone="UTC",
+                    first_name=given_name,
+                    last_name=family_name,
+                    avatar_url=picture,
                 )
                 self._create_internal_calendar(user)
 
@@ -497,6 +546,18 @@ class AccountService:
             user.is_active = True
             user.email_verified = True
             user.save(update_fields=["is_active", "email_verified"])
+
+        # Update name and avatar if we got them from Microsoft and they're not already set
+        dirty = []
+        if given_name and not user.first_name:
+            user.first_name = given_name
+            user.last_name = family_name
+            dirty += ["first_name", "last_name"]
+        if picture and not user.avatar and not user.avatar_url:
+            user.avatar_url = picture
+            dirty.append("avatar_url")
+        if dirty:
+            user.save(update_fields=dirty)
 
         if sub:
             ExternalCredential.objects.update_or_create(

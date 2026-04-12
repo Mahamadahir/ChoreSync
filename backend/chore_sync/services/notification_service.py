@@ -1,8 +1,11 @@
 """Notification orchestration services for ChoreSync."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import ClassVar
+
+logger = logging.getLogger(__name__)
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -28,6 +31,7 @@ class NotificationService:
         content: str,
         group_id: str | None = None,
         task_occurrence_id: int | None = None,
+        task_swap_id: int | None = None,
         task_proposal_id: int | None = None,
         message_id: int | None = None,
         action_url: str = "",
@@ -40,9 +44,9 @@ class NotificationService:
             title: Short display title.
             content: Full notification body.
             group_id / task_occurrence_id / ...: Optional FK references for deep-linking.
-            action_url: Frontend route path (e.g. '/tasks/42') that the notification
-                        should navigate to when clicked. Leave empty for non-actionable
-                        notifications.
+            action_url: Optional web fallback path. Do not treat this as the canonical
+                        notification target; clients must resolve navigation from the
+                        structured FK fields (task_occurrence_id, group_id, etc.).
         Output:
             Created Notification instance.
         """
@@ -56,6 +60,7 @@ class NotificationService:
             content=content,
             group_id=group_id,
             task_occurrence_id=task_occurrence_id,
+            task_swap_id=task_swap_id,
             task_proposal_id=task_proposal_id,
             message_id=message_id,
             action_url=action_url,
@@ -64,25 +69,114 @@ class NotificationService:
             recipient_id=recipient_id,
             notification_id=str(notification.id),
         )
+        # Also publish to SSE for web listeners that choose to react to notification
+        # events. CalendarView reloads events on any SSE message; this is not a
+        # canonical mobile delivery path (mobile uses WebSocket or polls REST).
+        # Using notification.id as the SSE event_id lets reconnecting clients
+        # replay missed notifications via Last-Event-ID.
+        # Best-effort Expo push for backgrounded devices (non-blocking thread)
+        import threading
+        threading.Thread(
+            target=self._send_expo_push,
+            args=(recipient_id, notification),
+            daemon=True,
+        ).start()
+
+        try:
+            from chore_sync import sse as _sse
+            _sse.publish(
+                int(recipient_id),
+                {
+                    "type": "notification",
+                    "id": str(notification.id),
+                    "notification_type": notification.type,
+                    "title": notification.title,
+                    "content": notification.content,
+                    "read": notification.read,
+                    "dismissed": notification.dismissed,
+                    "created_at": notification.created_at.isoformat(),
+                    "group_id": str(notification.group_id) if notification.group_id else None,
+                    "task_occurrence_id": notification.task_occurrence_id,
+                    "task_swap_id": notification.task_swap_id,
+                    "task_proposal_id": notification.task_proposal_id,
+                    "action_url": notification.action_url or "",
+                },
+                event_id=str(notification.id),
+            )
+        except Exception:
+            pass  # SSE publish is best-effort; WebSocket path already succeeded
         return notification
 
-    def fan_out_realtime(self, *, recipient_id: str, notification_id: str) -> None:
-        """Push a notification to the user's WebSocket channel group.
+    def _send_expo_push(self, recipient_id: str, notification: Notification) -> None:
+        """Send an Expo push notification to all registered tokens for the user.
 
-        Uses Django Channels layer — works with InMemoryChannelLayer (dev)
-        or RedisChannelLayer (production).
+        Called in a daemon thread from emit_notification so it never blocks
+        the main request/task path. Failures are silently logged.
         """
+        try:
+            from chore_sync.models import UserPushToken
+            tokens = list(
+                UserPushToken.objects.filter(user_id=recipient_id)
+                .values_list('token', flat=True)
+            )
+            if not tokens:
+                return
+
+            import requests as _req
+            messages = [
+                {
+                    'to': token,
+                    'title': notification.title,
+                    'body': notification.content,
+                    'sound': 'default',
+                    'data': {
+                        'id': notification.id,
+                        'type': notification.type,
+                        'group_id': str(notification.group_id) if notification.group_id else None,
+                        'task_occurrence_id': notification.task_occurrence_id,
+                        'task_swap_id': notification.task_swap_id,
+                        'task_proposal_id': notification.task_proposal_id,
+                        'action_url': notification.action_url or '',
+                    },
+                }
+                for token in tokens
+            ]
+            _req.post(
+                'https://exp.host/--/api/v2/push/send',
+                json=messages,
+                headers={
+                    'Accept': 'application/json',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'Content-Type': 'application/json',
+                },
+                timeout=5,
+            )
+        except Exception:
+            logger.warning(
+                "_send_expo_push: failed for recipient_id=%s notification_id=%s",
+                recipient_id, notification.id, exc_info=True,
+            )
+
+    def fan_out_realtime(self, *, recipient_id: str, notification_id: str) -> None:
+        """Push a notification to the user's WebSocket channel group."""
         layer = get_channel_layer()
         if layer is None:
-            return  # no channel layer configured — skip silently
+            logger.warning("fan_out_realtime: no channel layer configured — notification %s not delivered", notification_id)
+            return
 
-        async_to_sync(layer.group_send)(
-            f'user_{recipient_id}',
-            {
-                'type': 'notification_message',
-                'notification_id': notification_id,
-            },
-        )
+        layer_type = type(layer).__name__
+        logger.debug("fan_out_realtime: layer=%s recipient=%s notification=%s", layer_type, recipient_id, notification_id)
+        try:
+            async_to_sync(layer.group_send)(
+                f'user_{recipient_id}',
+                {
+                    'type': 'notification_message',
+                    'notification_id': notification_id,
+                },
+            )
+            logger.debug("fan_out_realtime: group_send OK → user_%s", recipient_id)
+        except Exception:
+            logger.exception("fan_out_realtime: group_send FAILED for notification %s", notification_id)
 
     # ------------------------------------------------------------------ #
     #  Preference enforcement
@@ -95,15 +189,15 @@ class NotificationService:
         'task_swap':            'task_swap',
         'swap_accepted':        'task_swap',
         'swap_rejected':        'task_swap',
-        'emergency_reassign':   'emergency_reassign',
+        'emergency_reassignment': 'emergency_reassign',  # type emitted by task_lifecycle_service
+        'emergency_reassign':   'emergency_reassign',   # legacy key kept for safety
         'emergency_accepted':   'emergency_reassign',
         'badge_earned':         'badge_earned',
         'marketplace_claim':    'marketplace_activity',
-        'marketplace_listed':   'marketplace_activity',
         'suggestion_pattern':   'smart_suggestions',
         'suggestion_availability': 'smart_suggestions',
         'suggestion_preference':'smart_suggestions',
-        'suggestion_fairness':  'smart_suggestions',
+        'suggestion_streak':    'smart_suggestions',
     }
 
     def _allowed(self, *, recipient_id: str, notification_type: str) -> bool:
@@ -140,7 +234,11 @@ class NotificationService:
                 if in_quiet:
                     return False
             except Exception:
-                pass  # never block a notification due to tz errors
+                logger.warning(
+                    "_should_send: quiet-hours timezone check failed for recipient_id=%s",
+                    recipient_id,
+                    exc_info=True,
+                )
 
         return True
 
@@ -191,7 +289,7 @@ class NotificationService:
     # ------------------------------------------------------------------ #
 
     def list_active_notifications(self, *, recipient_id: str) -> list[Notification]:
-        """Return unread, non-dismissed notifications ordered by most recent."""
+        """Return non-dismissed notifications (read and unread) ordered by most recent."""
         return list(
             Notification.objects.filter(
                 recipient_id=recipient_id,

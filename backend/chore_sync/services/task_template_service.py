@@ -28,8 +28,14 @@ class TaskTemplateService:
         group = Group.objects.filter(id=group_id).first()
         if group is None:
             raise ValueError("Group not found.")
-        if not group.members.filter(user=creator).exists():
+        membership = group.members.filter(user=creator).first()
+        if membership is None:
             raise ValueError("Creator is not a member of this group.")
+        if group.task_proposal_voting_required and membership.role != 'moderator':
+            raise PermissionError(
+                "Only moderators can create tasks directly in this group. "
+                "Submit a suggestion instead."
+            )
 
         payload.pop('created_at', None)
         payload.pop('updated_at', None)
@@ -81,8 +87,9 @@ class TaskTemplateService:
         return template
 
     def delete_template(self, *, template_id: str, actor_id: str) -> None:
-        """Soft-delete a template and cancel its pending occurrences.
+        """Soft-delete a template and transition pending occurrences to 'cancelled'.
 
+        'cancelled' is a declared terminal status in TaskOccurrence.status_choices.
         Inputs:
             template_id: Template being removed.
             actor_id: User performing the action (must be a group member).
