@@ -12,6 +12,9 @@ export const notificationService = {
   updatePrefs: (payload: object) =>
     api.patch('/api/users/me/notification-preferences/', payload),
 
+  listSince: (sinceId: string) =>
+    api.get('/api/notifications/', { params: { since_id: sinceId } }),
+
   // Expo push token registration
   registerPushToken: (token: string, platform: string) =>
     api.post('/api/push-token/', { token, platform }),

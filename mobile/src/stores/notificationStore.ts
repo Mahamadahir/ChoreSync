@@ -30,6 +30,7 @@ interface NotificationState {
   markRead: (id: string | number) => void;
   markUnread: (id: string | number) => void;
   dismiss: (id: string | number) => void;
+  mergeNotifications: (incoming: Notification[]) => void;
   groupBadge: (groupId: string) => number;
   tabBadge: (groupId: string, tab: string) => number;
 }
@@ -81,6 +82,15 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   dismiss: (id) => {
     const sid = String(id);
     const updated = get().notifications.filter((n) => String(n.id) !== sid);
+    set({ notifications: updated, ...computeDerived(updated) });
+  },
+
+  mergeNotifications: (incoming) => {
+    const existing = get().notifications;
+    const existingIds = new Set(existing.map((n) => String(n.id)));
+    const novel = incoming.filter((n) => !existingIds.has(String(n.id)));
+    if (novel.length === 0) return;
+    const updated = [...novel, ...existing];
     set({ notifications: updated, ...computeDerived(updated) });
   },
 

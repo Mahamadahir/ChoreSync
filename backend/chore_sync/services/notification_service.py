@@ -297,6 +297,16 @@ class NotificationService:
             ).order_by('-created_at')
         )
 
+    def list_notifications_since(self, *, recipient_id: str, since_id: int) -> list[Notification]:
+        """Return non-dismissed notifications with id > since_id, ordered by most recent."""
+        return list(
+            Notification.objects.filter(
+                recipient_id=recipient_id,
+                id__gt=since_id,
+                dismissed=False,
+            ).order_by('-created_at')
+        )
+
     def list_all_notifications(
         self, *, recipient_id: str, limit: int = 50, offset: int = 0
     ) -> list[Notification]:

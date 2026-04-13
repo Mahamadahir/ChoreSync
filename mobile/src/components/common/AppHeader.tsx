@@ -4,6 +4,8 @@ import { useNavigation } from '@react-navigation/native';
 import { useAuthStore } from '../../stores/authStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { notificationService } from '../../services/notificationService';
+import { tokenStorage } from '../../services/tokenStorage';
+import type { Notification } from '../../types/notification';
 import { Palette as C } from '../../theme';
 
 interface Props {
@@ -31,8 +33,14 @@ export default function AppHeader({ centerExtra }: Props) {
     notificationService
       .list()
       .then((res) => {
-        const data = Array.isArray(res.data) ? res.data : (res.data?.results ?? []);
+        const data: Notification[] = Array.isArray(res.data)
+          ? res.data
+          : (res.data?.results ?? []);
         setNotifications(data);
+        if (data.length > 0) {
+          const maxId = String(Math.max(...data.map((n) => Number(n.id))));
+          tokenStorage.saveLastNotifId(maxId);
+        }
       })
       .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps

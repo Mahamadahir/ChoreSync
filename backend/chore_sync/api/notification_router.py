@@ -19,9 +19,16 @@ class NotificationListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        notifications = _svc.list_active_notifications(
-            recipient_id=str(request.user.id)
-        )
+        since_id = request.query_params.get('since_id')
+        if since_id and since_id.isdigit():
+            notifications = _svc.list_notifications_since(
+                recipient_id=str(request.user.id),
+                since_id=int(since_id),
+            )
+        else:
+            notifications = _svc.list_active_notifications(
+                recipient_id=str(request.user.id)
+            )
         return Response([_serialize(n) for n in notifications])
 
 
