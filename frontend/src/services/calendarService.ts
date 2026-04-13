@@ -47,12 +47,16 @@ export const calendarService = {
     name: string;
     include_in_availability: boolean;
     writable: boolean;
+    is_task_writeback: boolean;
     color?: string | null;
     timezone?: string | null;
   }>) {
-    return api.post<{ detail: string; selected: string[] }>('/api/calendar/outlook/select/', payload);
+    return api.post<{ detail: string; selected: string[]; syncing?: string[] }>('/api/calendar/outlook/select/', payload);
   },
   syncOutlook() {
     return api.post<{ detail: string }>('/api/calendar/outlook/sync/');
+  },
+  getStatus() {
+    return api.get<{ google: { connected: boolean }; outlook: { connected: boolean } }>('/api/calendar/status/');
   },
 };

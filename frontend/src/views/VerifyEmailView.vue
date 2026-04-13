@@ -1,5 +1,5 @@
 <template>
-  <q-page class="q-pa-lg flex flex-center">
+  <div class="q-pa-lg flex flex-center">
     <q-card class="q-pa-lg" style="max-width: 520px; width: 100%;">
       <div class="text-h5 q-mb-xs">Verify your email</div>
       <div class="text-body2 text-grey-7 q-mb-md">
@@ -24,7 +24,7 @@
         </router-link>
       </q-banner>
     </q-card>
-  </q-page>
+  </div>
 </template>
 
 <script setup lang="ts">

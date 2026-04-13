@@ -1,131 +1,209 @@
 <template>
-  <q-page padding>
-    <div class="text-h5 text-weight-bold q-mb-md">My Tasks</div>
-
-    <!-- Filters -->
-    <div class="row q-gutter-sm q-mb-md">
-      <q-btn-toggle
-        v-model="statusFilter"
-        :options="filterOptions"
-        unelevated
-        rounded
-        color="grey-3"
-        text-color="grey-8"
-        toggle-color="primary"
-        @update:model-value="loadTasks"
-      />
+  <div class="cs-page">
+    <div class="cs-page-header">
+      <div class="cs-page-title">My Tasks</div>
     </div>
 
-    <q-banner v-if="error" class="bg-negative text-white q-mb-md" rounded>
-      {{ error }}
-    </q-banner>
-
-    <div v-if="loading" class="row justify-center q-pa-xl">
-      <q-spinner size="40px" color="primary" />
+    <!-- Filter tabs -->
+    <div class="cs-filter-tabs">
+      <button
+        v-for="opt in filterOptions"
+        :key="opt.value"
+        :class="['cs-filter-tab', { 'cs-filter-tab--active': statusFilter === opt.value }]"
+        @click="setFilter(opt.value)"
+      >
+        {{ opt.label }}
+      </button>
     </div>
 
-    <div v-else-if="tasks.length === 0" class="text-center q-pa-xl text-grey-6">
-      <q-icon name="task_alt" size="64px" />
-      <div class="text-h6 q-mt-md">No tasks here</div>
-      <div class="q-mt-sm">You're all caught up!</div>
+    <!-- Error -->
+    <div v-if="error" class="cs-error-msg" style="margin-bottom:16px">{{ error }}</div>
+
+    <!-- Loading skeleton -->
+    <div v-if="loading" style="display:flex;flex-direction:column;gap:12px">
+      <div v-for="i in 4" :key="i" class="cs-skeleton" style="height:72px;border-radius:var(--cs-radius-md)" />
     </div>
 
-    <q-list v-else separator bordered class="rounded-borders">
-      <q-item v-for="task in tasks" :key="task.id" class="q-py-md">
-        <q-item-section>
-          <q-item-label class="text-weight-medium">{{ task.template_name }}</q-item-label>
-          <q-item-label caption>
-            {{ task.group_name }} ·
-            Due {{ formatDeadline(task.deadline) }}
-          </q-item-label>
-          <div class="row q-gutter-xs q-mt-xs">
-            <q-badge :color="statusColor(task.status)" :label="task.status" />
-            <q-badge v-if="task.points_earned" color="amber-7" :label="`${task.points_earned} pts`" />
-            <q-badge v-if="task.snooze_count" color="grey-6" :label="`Snoozed ×${task.snooze_count}`" />
+    <!-- Empty state -->
+    <div v-else-if="tasks.length === 0" class="cs-empty">
+      <span class="material-symbols-outlined">task_alt</span>
+      <div class="cs-empty-title">No tasks here</div>
+      <div class="cs-empty-sub">You're all caught up!</div>
+    </div>
+
+    <!-- Two-panel layout -->
+    <div v-else class="cs-tasks-layout">
+      <!-- Left: task list -->
+      <div class="cs-tasks-list cs-card" style="padding:0;overflow:hidden">
+        <div
+          v-for="task in tasks"
+          :key="task.id"
+          :class="['cs-task-item', { 'cs-task-item--active': selectedTask?.id === task.id }]"
+          @click="selectedTask = task"
+        >
+          <div class="cs-task-body">
+            <div class="cs-task-name">{{ task.template_name }}</div>
+            <div class="cs-task-meta">
+              <span>{{ task.group_name }}</span>
+              <span>·</span>
+              <span>Due {{ formatDeadline(task.deadline) }}</span>
+            </div>
+            <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+              <span :class="['cs-chip', statusChipClass(task.status)]">{{ task.status }}</span>
+              <span v-if="task.snooze_count" class="cs-chip cs-chip--snoozed">Snoozed ×{{ task.snooze_count }}</span>
+              <span v-if="task.on_marketplace" class="cs-chip" style="background:var(--cs-tertiary-container);color:var(--cs-tertiary)">Marketplace</span>
+            </div>
           </div>
-        </q-item-section>
+          <span class="material-symbols-outlined" style="color:var(--cs-outline);font-size:18px">chevron_right</span>
+        </div>
+      </div>
 
-        <q-item-section side>
-          <div class="row q-gutter-xs">
-            <!-- Complete -->
-            <q-btn
-              v-if="task.status === 'pending' || task.status === 'snoozed'"
-              round flat
-              icon="check_circle"
-              color="positive"
-              size="sm"
-              @click="completeTask(task.id)"
-            >
-              <q-tooltip>Mark complete</q-tooltip>
-            </q-btn>
-
-            <!-- Snooze -->
-            <q-btn
-              v-if="task.status === 'pending'"
-              round flat
-              icon="snooze"
-              color="warning"
-              size="sm"
-              @click="openSnooze(task)"
-            >
-              <q-tooltip>Snooze</q-tooltip>
-            </q-btn>
-
-            <!-- Swap -->
-            <q-btn
-              v-if="task.status === 'pending' || task.status === 'snoozed'"
-              round flat
-              icon="swap_horiz"
-              color="info"
-              size="sm"
-              @click="openSwap(task)"
-            >
-              <q-tooltip>Request swap</q-tooltip>
-            </q-btn>
-
-            <!-- Emergency reassign -->
-            <q-btn
-              v-if="task.status === 'pending'"
-              round flat
-              icon="emergency"
-              color="negative"
-              size="sm"
-              @click="emergencyReassign(task.id)"
-            >
-              <q-tooltip>Emergency reassign</q-tooltip>
-            </q-btn>
-
-            <!-- List on Marketplace -->
-            <q-btn
-              v-if="(task.status === 'pending' || task.status === 'snoozed') && !task.on_marketplace"
-              round flat
-              icon="storefront"
-              color="deep-purple"
-              size="sm"
-              @click="openListMarketplace(task)"
-            >
-              <q-tooltip>List on marketplace</q-tooltip>
-            </q-btn>
-            <q-badge v-if="task.on_marketplace" color="deep-purple" label="On marketplace" />
+      <!-- Right: task detail -->
+      <div class="cs-task-detail cs-card" v-if="selectedTask">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px">
+          <div>
+            <div style="font-size:18px;font-weight:700;color:var(--cs-on-surface);margin-bottom:4px">
+              {{ selectedTask.template_name }}
+            </div>
+            <div style="font-size:13px;color:var(--cs-muted)">{{ selectedTask.group_name }}</div>
           </div>
-        </q-item-section>
-      </q-item>
-    </q-list>
+          <span :class="['cs-chip', statusChipClass(selectedTask.status)]">{{ selectedTask.status }}</span>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
+          <div class="cs-card" style="padding:14px;background:var(--cs-surface)">
+            <div class="cs-section-title" style="margin-bottom:4px">Due</div>
+            <div style="font-size:14px;font-weight:600">{{ formatDeadline(selectedTask.deadline) }}</div>
+          </div>
+          <div v-if="selectedTask.points_earned" class="cs-card" style="padding:14px;background:var(--cs-surface)">
+            <div class="cs-section-title" style="margin-bottom:4px">Points</div>
+            <div style="font-size:14px;font-weight:600;color:var(--cs-tertiary)">⭐ {{ selectedTask.points_earned }}</div>
+          </div>
+        </div>
+
+        <!-- Primary action -->
+        <button
+          v-if="selectedTask.status === 'pending' || selectedTask.status === 'snoozed'"
+          class="cs-btn-primary"
+          style="width:100%;justify-content:center;padding:14px;margin-bottom:12px"
+          @click="completeTask(selectedTask.id)"
+        >
+          <span class="material-symbols-outlined">check_circle</span>
+          Mark Complete
+        </button>
+        <button
+          v-if="selectedTask.status === 'completed'"
+          class="cs-btn-outline"
+          style="width:100%;justify-content:center;padding:14px;margin-bottom:12px;border-color:var(--cs-warning,#f59e0b);color:var(--cs-warning,#f59e0b)"
+          @click="uncompleteTask(selectedTask.id)"
+        >
+          <span class="material-symbols-outlined">undo</span>
+          Reopen Task
+        </button>
+
+        <!-- Secondary actions -->
+        <div
+          v-if="selectedTask.status === 'pending' || selectedTask.status === 'snoozed'"
+          style="display:grid;grid-template-columns:1fr 1fr;gap:8px"
+        >
+          <button class="cs-btn-outline" style="justify-content:center" @click="openSnooze(selectedTask)">
+            <span class="material-symbols-outlined" style="font-size:18px">snooze</span>
+            Snooze
+          </button>
+          <button class="cs-btn-outline" style="justify-content:center" @click="openSwap(selectedTask)">
+            <span class="material-symbols-outlined" style="font-size:18px">swap_horiz</span>
+            Swap
+          </button>
+          <button
+            v-if="selectedTask.status === 'pending'"
+            class="cs-btn-outline"
+            style="justify-content:center;border-color:var(--cs-error);color:var(--cs-error)"
+            @click="openEmergencyConfirm"
+          >
+            <span class="material-symbols-outlined" style="font-size:18px">emergency</span>
+            Emergency
+          </button>
+          <button
+            v-if="!selectedTask.on_marketplace"
+            class="cs-btn-outline"
+            style="justify-content:center"
+            @click="openListMarketplace(selectedTask)"
+          >
+            <span class="material-symbols-outlined" style="font-size:18px">storefront</span>
+            Marketplace
+          </button>
+          <button
+            v-if="selectedTask.on_marketplace"
+            class="cs-btn-outline"
+            style="justify-content:center;border-color:var(--cs-error);color:var(--cs-error)"
+            :disabled="cancellingMarketplace"
+            @click="cancelMarketplace(selectedTask.id)"
+          >
+            <span class="material-symbols-outlined" style="font-size:18px">remove_shopping_cart</span>
+            {{ cancellingMarketplace ? 'Removing…' : 'Remove Listing' }}
+          </button>
+        </div>
+      </div>
+
+      <div v-else class="cs-task-detail cs-empty" style="border:1px solid var(--cs-outline-variant);border-radius:var(--cs-radius-lg)">
+        <span class="material-symbols-outlined">touch_app</span>
+        <div class="cs-empty-sub">Select a task to see details</div>
+      </div>
+    </div>
+
+    <!-- Incoming swaps section -->
+    <template v-if="incomingSwaps.length > 0">
+      <div class="cs-section-title" style="margin-top:32px;margin-bottom:12px">Incoming Swap Requests</div>
+      <div class="cs-card" style="padding:0;overflow:hidden;max-width:720px">
+        <div
+          v-for="swap in incomingSwaps"
+          :key="swap.id"
+          style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:16px 20px;border-bottom:1px solid var(--cs-outline-variant)"
+        >
+          <div>
+            <div style="font-size:14px;font-weight:600;margin-bottom:3px">{{ swap.task_name ?? `Task #${swap.task_id}` }}</div>
+            <div style="font-size:12px;color:var(--cs-muted)">
+              {{ swap.group_name }} · From {{ swap.from_username ?? swap.from_user_id }}
+              <span style="margin-left:4px;padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px"
+                :style="swap.swap_type === 'open_request' ? 'background:#dbeafe;color:#1d4ed8' : 'background:var(--cs-primary-container);color:var(--cs-primary)'">
+                {{ swap.swap_type === 'open_request' ? 'Open' : 'Direct' }}
+              </span>
+            </div>
+            <div v-if="swap.reason" style="font-size:12px;color:var(--cs-on-surface-variant);margin-top:4px">{{ swap.reason }}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <button
+              class="cs-btn-primary"
+              style="padding:7px 14px;font-size:13px;gap:4px"
+              :disabled="swapRespondLoading[swap.id] === 'accept'"
+              @click="respondSwap(swap.id, true)"
+            >
+              <span class="material-symbols-outlined" style="font-size:16px">check</span>
+              Accept
+            </button>
+            <button
+              class="cs-btn-outline"
+              style="padding:7px 14px;font-size:13px;gap:4px;border-color:var(--cs-error);color:var(--cs-error)"
+              :disabled="swapRespondLoading[swap.id] === 'reject'"
+              @click="respondSwap(swap.id, false)"
+            >
+              <span class="material-symbols-outlined" style="font-size:16px">close</span>
+              Decline
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
 
     <!-- Snooze dialog -->
     <q-dialog v-model="snoozeDialog.show">
-      <q-card style="min-width: 320px">
+      <q-card style="min-width:340px;background:var(--cs-surface-low)">
         <q-card-section>
-          <div class="text-h6">Snooze task</div>
-          <div class="text-caption text-grey-6">{{ snoozeDialog.task?.template_name }}</div>
+          <div style="font-size:16px;font-weight:700">Snooze Task</div>
+          <div style="font-size:13px;color:var(--cs-muted)">{{ snoozeDialog.task?.template_name }}</div>
         </q-card-section>
         <q-card-section>
-          <q-input
-            v-model="snoozeDialog.until"
-            type="datetime-local"
-            label="Snooze until"
-            outlined
-          />
+          <q-input v-model="snoozeDialog.until" type="datetime-local" label="Snooze until" outlined />
         </q-card-section>
         <q-card-actions align="right">
           <q-btn flat label="Cancel" v-close-popup />
@@ -136,34 +214,46 @@
 
     <!-- Swap dialog -->
     <q-dialog v-model="swapDialog.show">
-      <q-card style="min-width: 340px">
+      <q-card style="min-width:360px;background:var(--cs-surface-low)">
         <q-card-section>
-          <div class="text-h6">Request swap</div>
-          <div class="text-caption text-grey-6">{{ swapDialog.task?.template_name }}</div>
+          <div style="font-size:16px;font-weight:700">Request Swap</div>
+          <div style="font-size:13px;color:var(--cs-muted)">{{ swapDialog.task?.template_name }}</div>
         </q-card-section>
         <q-card-section class="q-gutter-sm">
-          <q-input
-            v-model="swapDialog.targetUserId"
-            label="Target user ID (leave blank to broadcast)"
-            outlined
-          />
+          <q-input v-model="swapDialog.targetUserId" label="Target user ID (leave blank to broadcast)" outlined />
           <q-input v-model="swapDialog.reason" label="Reason (optional)" outlined />
         </q-card-section>
         <q-card-actions align="right">
           <q-btn flat label="Cancel" v-close-popup />
-          <q-btn color="info" label="Request" :loading="swapDialog.loading" @click="submitSwap" />
+          <q-btn color="primary" label="Send Request" :loading="swapDialog.loading" @click="submitSwap" />
         </q-card-actions>
       </q-card>
     </q-dialog>
 
-    <!-- List on Marketplace dialog -->
-    <q-dialog v-model="listMarketplaceDialog.show">
-      <q-card style="min-width: 340px">
+    <!-- Emergency confirm dialog -->
+    <q-dialog v-model="emergencyDialog">
+      <q-card style="min-width:340px;background:var(--cs-surface-low)">
         <q-card-section>
-          <div class="text-h6">List on Marketplace</div>
-          <div class="text-caption text-grey-6">{{ listMarketplaceDialog.task?.template_name }}</div>
+          <div style="font-size:16px;font-weight:700">Emergency Reassign</div>
+          <div style="font-size:13px;color:var(--cs-muted);margin-top:6px">
+            This will immediately reassign the task to another member. Are you sure?
+          </div>
         </q-card-section>
-        <q-card-section class="q-gutter-sm">
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" v-close-popup />
+          <q-btn color="negative" label="Reassign" @click="submitEmergency" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Marketplace listing dialog -->
+    <q-dialog v-model="listMarketplaceDialog.show">
+      <q-card style="min-width:360px;background:var(--cs-surface-low)">
+        <q-card-section>
+          <div style="font-size:16px;font-weight:700">List on Marketplace</div>
+          <div style="font-size:13px;color:var(--cs-muted)">{{ listMarketplaceDialog.task?.template_name }}</div>
+        </q-card-section>
+        <q-card-section>
           <q-input
             v-model.number="listMarketplaceDialog.bonusPoints"
             type="number"
@@ -175,47 +265,11 @@
         </q-card-section>
         <q-card-actions align="right">
           <q-btn flat label="Cancel" v-close-popup />
-          <q-btn color="deep-purple" label="List task" :loading="listMarketplaceDialog.loading" @click="submitListMarketplace" />
+          <q-btn color="primary" label="List Task" :loading="listMarketplaceDialog.loading" @click="submitListMarketplace" />
         </q-card-actions>
       </q-card>
     </q-dialog>
-
-    <!-- Incoming Swap Requests section -->
-    <template v-if="incomingSwaps.length > 0">
-      <div class="text-h6 text-weight-bold q-mt-xl q-mb-sm">Incoming Swap Requests</div>
-      <q-list separator bordered class="rounded-borders">
-        <q-item v-for="swap in incomingSwaps" :key="swap.id" class="q-py-md">
-          <q-item-section>
-            <q-item-label class="text-weight-medium">{{ swap.task_name ?? `Task #${swap.task_id}` }}</q-item-label>
-            <q-item-label caption>
-              {{ swap.group_name }} ·
-              From {{ swap.from_username ?? swap.from_user_id }} ·
-              <span :class="swap.swap_type === 'open_request' ? 'text-blue-6' : 'text-purple'">
-                {{ swap.swap_type === 'open_request' ? 'Open request' : 'Direct to you' }}
-              </span>
-            </q-item-label>
-            <div v-if="swap.reason" class="text-caption text-grey-6 q-mt-xs">{{ swap.reason }}</div>
-          </q-item-section>
-          <q-item-section side>
-            <div class="row q-gutter-xs">
-              <q-btn
-                round flat icon="check" color="positive" size="sm"
-                :loading="swapRespondLoading[swap.id] === 'accept'"
-                @click="respondSwap(swap.id, true)">
-                <q-tooltip>Accept swap</q-tooltip>
-              </q-btn>
-              <q-btn
-                round flat icon="close" color="negative" size="sm"
-                :loading="swapRespondLoading[swap.id] === 'reject'"
-                @click="respondSwap(swap.id, false)">
-                <q-tooltip>Decline swap</q-tooltip>
-              </q-btn>
-            </div>
-          </q-item-section>
-        </q-item>
-      </q-list>
-    </template>
-  </q-page>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -233,6 +287,7 @@ type Task = {
   snooze_count: number;
   swap_id: number | null;
   on_marketplace?: boolean;
+  marketplace_listing_id?: number | null;
 };
 
 type IncomingSwap = {
@@ -249,31 +304,31 @@ type IncomingSwap = {
 };
 
 const tasks = ref<Task[]>([]);
+const selectedTask = ref<Task | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const statusFilter = ref('');
+const emergencyDialog = ref(false);
 
 const filterOptions = [
-  { label: 'All', value: '' },
-  { label: 'Pending', value: 'pending' },
-  { label: 'In Progress', value: 'in_progress' },
-  { label: 'Snoozed', value: 'snoozed' },
+  { label: 'All',     value: '' },
+  { label: 'Active',  value: 'pending' },
+  { label: 'Done',    value: 'completed' },
   { label: 'Overdue', value: 'overdue' },
-  { label: 'Reassigned', value: 'reassigned' },
-  { label: 'Completed', value: 'completed' },
 ];
 
-const snoozeDialog = ref<{ show: boolean; task: Task | null; until: string; loading: boolean }>({
-  show: false, task: null, until: '', loading: false,
-});
-const swapDialog = ref<{ show: boolean; task: Task | null; targetUserId: string; reason: string; loading: boolean }>({
-  show: false, task: null, targetUserId: '', reason: '', loading: false,
-});
-const listMarketplaceDialog = ref<{ show: boolean; task: Task | null; bonusPoints: number; loading: boolean }>({
-  show: false, task: null, bonusPoints: 0, loading: false,
-});
+const snoozeDialog = ref({ show: false, task: null as Task | null, until: '', loading: false });
+const swapDialog = ref({ show: false, task: null as Task | null, targetUserId: '', reason: '', loading: false });
+const listMarketplaceDialog = ref({ show: false, task: null as Task | null, bonusPoints: 0, loading: false });
+const cancellingMarketplace = ref(false);
 const incomingSwaps = ref<IncomingSwap[]>([]);
 const swapRespondLoading = ref<Record<number, 'accept' | 'reject' | null>>({});
+
+function setFilter(val: string) {
+  statusFilter.value = val;
+  selectedTask.value = null;
+  loadTasks();
+}
 
 async function loadTasks() {
   loading.value = true;
@@ -293,17 +348,26 @@ async function loadIncomingSwaps() {
   try {
     const res = await taskApi.pendingSwaps();
     incomingSwaps.value = res.data;
-  } catch {
-    // Non-critical; ignore errors silently
-  }
+  } catch {}
 }
 
 async function completeTask(id: number) {
   try {
-    await taskApi.complete(id);
+    await taskApi.complete(id, true);
+    selectedTask.value = null;
     await loadTasks();
   } catch (e: any) {
     error.value = e?.response?.data?.detail ?? 'Failed to complete task.';
+  }
+}
+
+async function uncompleteTask(id: number) {
+  try {
+    await taskApi.complete(id, false);
+    selectedTask.value = null;
+    await loadTasks();
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail ?? 'Failed to reopen task.';
   }
 }
 
@@ -348,9 +412,16 @@ async function submitSwap() {
   }
 }
 
-async function emergencyReassign(id: number) {
+function openEmergencyConfirm() {
+  emergencyDialog.value = true;
+}
+
+async function submitEmergency() {
+  if (!selectedTask.value) return;
+  emergencyDialog.value = false;
   try {
-    await taskApi.emergencyReassign(id, {});
+    await taskApi.emergencyReassign(selectedTask.value.id, {});
+    selectedTask.value = null;
     await loadTasks();
   } catch (e: any) {
     error.value = e?.response?.data?.detail ?? 'Failed to emergency reassign.';
@@ -389,17 +460,34 @@ async function submitListMarketplace() {
   }
 }
 
+async function cancelMarketplace(taskId: number) {
+  const task = tasks.value.find(t => t.id === taskId);
+  if (!task?.marketplace_listing_id) return;
+  cancellingMarketplace.value = true;
+  try {
+    await marketplaceApi.cancel(task.marketplace_listing_id);
+    await loadTasks();
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail ?? 'Failed to remove listing.';
+  } finally {
+    cancellingMarketplace.value = false;
+  }
+}
+
 function formatDeadline(iso: string) {
   const d = new Date(iso);
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-function statusColor(status: string) {
+function statusChipClass(status: string) {
   const map: Record<string, string> = {
-    pending: 'blue-6', in_progress: 'blue-8', snoozed: 'orange',
-    overdue: 'negative', reassigned: 'purple', completed: 'positive',
+    pending: 'cs-chip--pending',
+    snoozed: 'cs-chip--snoozed',
+    overdue: 'cs-chip--overdue',
+    completed: 'cs-chip--done',
+    suggested: 'cs-chip--pending',
   };
-  return map[status] ?? 'grey';
+  return map[status] ?? 'cs-chip--snoozed';
 }
 
 onMounted(() => {
@@ -407,3 +495,18 @@ onMounted(() => {
   loadIncomingSwaps();
 });
 </script>
+
+<style scoped>
+.cs-tasks-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+.cs-tasks-list { max-height: calc(100vh - 240px); overflow-y: auto; }
+.cs-task-detail { position: sticky; top: 20px; }
+
+@media (max-width: 900px) {
+  .cs-tasks-layout { grid-template-columns: 1fr; }
+}
+</style>

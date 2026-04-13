@@ -2,6 +2,11 @@
  * Connects to the Django Channels WebSocket endpoint and dispatches
  * incoming messages to registered handlers.
  *
+ * Replay-aware reconnection:
+ *   - Tracks the ID of the last received notification in localStorage.
+ *   - On every (re)connect, appends ?since={id} to the WS URL so the server
+ *     replays any notifications the client missed during the gap.
+ *
  * Usage:
  *   const svc = new NotificationSocketService();
  *   svc.onNotification((n) => console.log(n));
@@ -9,6 +14,8 @@
  *   // later:
  *   svc.disconnect();
  */
+
+const LAST_NOTIF_KEY = 'cs_last_notification_id';
 
 type NotificationPayload = {
   id: string;
@@ -20,9 +27,14 @@ type NotificationPayload = {
   created_at: string;
   group_id: string | null;
   task_occurrence_id: number | null;
+  task_swap_id: number | null;
+  task_proposal_id: number | null;
+  message_id: number | null;
+  action_url: string;
 };
 
 type ChatPayload = {
+  id: number;
   group_id: string;
   sender_id: string;
   username: string;
@@ -30,8 +42,16 @@ type ChatPayload = {
   sent_at: string;
 };
 
+type ReceiptsPayload = {
+  message_ids: number[];
+  user_id: string;
+  username: string;
+  seen_at: string;
+};
+
 type NotificationHandler = (payload: NotificationPayload) => void;
 type ChatHandler = (payload: ChatPayload) => void;
+type ReceiptsHandler = (payload: ReceiptsPayload) => void;
 
 /** Module-level singleton used by the function-style API below. */
 let _singleton: NotificationSocketService | null = null;
@@ -56,10 +76,16 @@ export class NotificationSocketService {
   private socket: WebSocket | null = null;
   private notificationHandlers: NotificationHandler[] = [];
   private chatHandlers: ChatHandler[] = [];
+  private receiptsHandlers: ReceiptsHandler[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private shouldReconnect = true;
 
+  get isConnected(): boolean {
+    return this.socket?.readyState === WebSocket.OPEN;
+  }
+
   connect() {
+    if (this.socket && this.socket.readyState === WebSocket.CONNECTING) return; // already opening
     this.shouldReconnect = true;
     this._open();
   }
@@ -82,6 +108,14 @@ export class NotificationSocketService {
     this.chatHandlers.push(handler);
   }
 
+  onReceiptsUpdate(handler: ReceiptsHandler) {
+    this.receiptsHandlers.push(handler);
+  }
+
+  sendMarkRead(groupId: string, messageIds: number[]) {
+    this._send({ type: 'mark_read', group_id: groupId, message_ids: messageIds });
+  }
+
   sendPing() {
     this._send({ type: 'ping' });
   }
@@ -94,19 +128,33 @@ export class NotificationSocketService {
   //  Private
   // ---------------------------------------------------------------- //
 
+  private _buildUrl(): string {
+    const lastId = localStorage.getItem(LAST_NOTIF_KEY);
+    const base = `${WS_BASE}/ws/chores/`;
+    return lastId ? `${base}?since=${lastId}` : base;
+  }
+
   private _open() {
-    this.socket = new WebSocket(`${WS_BASE}/ws/chores/`);
+    this.socket = new WebSocket(this._buildUrl());
 
     this.socket.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'notification') {
-          this.notificationHandlers.forEach((h) => h(data.notification));
+          const n: NotificationPayload = data.notification;
+          // Persist the highest seen notification ID for replay on next reconnect
+          const stored = localStorage.getItem(LAST_NOTIF_KEY);
+          if (!stored || parseInt(n.id, 10) > parseInt(stored, 10)) {
+            localStorage.setItem(LAST_NOTIF_KEY, n.id);
+          }
+          this.notificationHandlers.forEach((h) => h(n));
         } else if (data.type === 'chat_message') {
           this.chatHandlers.forEach((h) => h(data));
+        } else if (data.type === 'receipts_update') {
+          this.receiptsHandlers.forEach((h) => h(data));
         }
-      } catch {
-        // ignore malformed frames
+      } catch (e) {
+        console.error('NotificationSocketService: malformed WebSocket frame', event.data, e);
       }
     };
 

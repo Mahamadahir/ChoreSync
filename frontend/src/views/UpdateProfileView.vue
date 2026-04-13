@@ -1,228 +1,304 @@
 <template>
-  <div class="q-pa-lg flex flex-center">
-    <q-card class="q-pa-lg" style="max-width: 720px; width: 100%;">
-      <div class="text-h5 q-mb-xs">Account & Profile</div>
-      <div class="text-body2 text-grey-7 q-mb-md">
-        Update your contact info or change your password. Changes are saved via your authenticated session.
-      </div>
+  <div class="cs-page" style="max-width:900px">
+    <div class="cs-page-title">Profile & Settings</div>
 
-      <q-form @submit="handleSave" class="q-gutter-md">
-        <div class="row q-col-gutter-md">
-          <div class="col-12 col-md-6">
-            <q-input v-model="username" label="Username" outlined dense />
-          </div>
-          <div class="col-12 col-md-6">
-            <q-input v-model="email" type="email" label="Email" outlined dense />
-          </div>
-          <div class="col-12">
-            <q-select
-              v-model="timezone"
-              :options="filteredTimezones"
-              option-label="label"
-              option-value="value"
-              label="Timezone (UTC offset)"
-              outlined
-              dense
-              clearable
-              use-input
-              fill-input
-              input-debounce="0"
-              @filter="filterTimezones"
-              hint="Select by UTC offset; common cities shown for context"
-            />
-          </div>
-        </div>
-
-        <q-separator />
-
-        <div class="text-subtitle1">Change Password</div>
-        <div class="row q-col-gutter-md">
-          <div class="col-12 col-md-6">
-            <q-input
-              v-model="newPassword"
-              :type="showNewPassword ? 'text' : 'password'"
-              label="New password"
-              outlined
-              dense
-              autocomplete="new-password"
-              @update:model-value="computeStrength"
-              stack-label
-            >
-              <template #append>
-                <q-icon
-                  :name="showNewPassword ? 'visibility_off' : 'visibility'"
-                  class="cursor-pointer"
-                  @click="showNewPassword = !showNewPassword"
-                />
-              </template>
-            </q-input>
-          </div>
-          <div class="col-12 col-md-6">
-            <q-input
-              v-model="confirmPassword"
-              :type="showConfirmPassword ? 'text' : 'password'"
-              label="Confirm new password"
-              outlined
-              dense
-              autocomplete="new-password"
-              stack-label
-            >
-              <template #append>
-                <q-icon
-                  :name="showConfirmPassword ? 'visibility_off' : 'visibility'"
-                  class="cursor-pointer"
-                  @click="showConfirmPassword = !showConfirmPassword"
-                />
-              </template>
-            </q-input>
-          </div>
-          <div class="col-12">
-            <q-linear-progress
-              :value="strengthValue"
-              :color="strengthColor"
-              track-color="grey-4"
-              size="12px"
-              class="q-mt-sm"
-            />
-            <div class="text-caption text-grey-7 q-mt-xs">{{ strengthLabel }}</div>
-          </div>
-        </div>
-
-        <q-btn type="submit" label="Save changes" color="primary" class="full-width" :loading="saving" />
-      </q-form>
-
-      <q-banner v-if="message" class="q-mt-md" type="positive" dense>{{ message }}</q-banner>
-      <q-banner v-if="error" class="q-mt-md" type="warning" dense>{{ error }}</q-banner>
-
-      <!-- ── Stats ── -->
-      <q-separator class="q-my-lg" />
-      <div class="text-subtitle1 q-mb-sm">Your Stats</div>
-      <div v-if="stats" class="row q-col-gutter-md q-mb-md">
-        <div class="col-6 col-sm-3">
-          <q-card flat bordered class="text-center q-pa-sm">
-            <div class="text-h5 text-primary">{{ stats.total_tasks_completed }}</div>
-            <div class="text-caption text-grey-6">Tasks done</div>
-          </q-card>
-        </div>
-        <div class="col-6 col-sm-3">
-          <q-card flat bordered class="text-center q-pa-sm">
-            <div class="text-h5 text-amber-8">{{ stats.total_points }}</div>
-            <div class="text-caption text-grey-6">Points</div>
-          </q-card>
-        </div>
-        <div class="col-6 col-sm-3">
-          <q-card flat bordered class="text-center q-pa-sm">
-            <div class="text-h5 text-positive">{{ stats.current_streak_days }}</div>
-            <div class="text-caption text-grey-6">Day streak</div>
-          </q-card>
-        </div>
-        <div class="col-6 col-sm-3">
-          <q-card flat bordered class="text-center q-pa-sm">
-            <div class="text-h5 text-info">{{ Math.round((stats.on_time_completion_rate ?? 0) * 100) }}%</div>
-            <div class="text-caption text-grey-6">On-time rate</div>
-          </q-card>
-        </div>
-      </div>
-      <div v-else-if="statsLoading" class="row justify-center q-pa-md">
-        <q-spinner color="primary" size="32px" />
-      </div>
-      <div v-else class="text-caption text-grey-6 q-mb-md">No stats yet — complete some tasks to see your progress.</div>
-
-      <!-- ── Charts ── -->
-      <template v-if="statsRaw.length > 0">
-        <q-separator class="q-my-lg" />
-        <div class="text-subtitle1 q-mb-sm">Progress Charts</div>
-        <div class="row q-col-gutter-md q-mb-md">
-          <div class="col-12 col-md-6">
-            <q-card flat bordered class="q-pa-md">
-              <TasksOverTimeChart :data="weeklyCompletions" />
-            </q-card>
-          </div>
-          <div class="col-12 col-md-6">
-            <q-card flat bordered class="q-pa-md">
-              <CategoryBreakdownChart :data="categoryBreakdown" />
-            </q-card>
-          </div>
-        </div>
-      </template>
-
-      <!-- ── Badges ── -->
-      <q-separator class="q-my-lg" />
-      <div class="text-subtitle1 q-mb-sm">Badges</div>
-      <div v-if="badges.length === 0 && !badgesLoading" class="text-caption text-grey-6 q-mb-md">
-        No badges earned yet.
-      </div>
-      <div v-else class="row q-gutter-sm q-mb-md">
-        <q-chip
-          v-for="b in badges"
-          :key="b.id"
-          icon="emoji_events"
-          color="amber-7"
-          text-color="white"
-          :label="b.badge_name"
+    <!-- Avatar -->
+    <div class="cs-card" style="margin-bottom:20px;display:flex;align-items:center;gap:24px">
+      <div style="position:relative;flex-shrink:0">
+        <div
+          style="width:96px;height:96px;border-radius:50%;overflow:hidden;
+                 background:var(--cs-surface-container-high);
+                 display:flex;align-items:center;justify-content:center;
+                 border:3px solid var(--cs-surface-container-highest)"
         >
-          <q-tooltip>{{ b.badge_description }} · Earned {{ formatDate(b.awarded_at) }}</q-tooltip>
-        </q-chip>
+          <img
+            v-if="profileAvatarUrl"
+            :src="profileAvatarUrl"
+            alt="Avatar"
+            style="width:100%;height:100%;object-fit:cover"
+          />
+          <span
+            v-else
+            style="font-size:32px;font-weight:700;color:var(--cs-primary);letter-spacing:1px"
+          >{{ authStore.initials }}</span>
+        </div>
+        <label
+          style="position:absolute;bottom:0;right:0;width:28px;height:28px;border-radius:50%;
+                 background:var(--cs-primary);display:flex;align-items:center;justify-content:center;
+                 cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.2)"
+          title="Upload photo"
+        >
+          <span v-if="uploadingAvatar" class="material-symbols-outlined" style="font-size:14px;color:#fff;animation:spin 1s linear infinite">progress_activity</span>
+          <span v-else class="material-symbols-outlined" style="font-size:14px;color:#fff">edit</span>
+          <input type="file" accept="image/*" style="display:none" @change="uploadAvatar" :disabled="uploadingAvatar" />
+        </label>
       </div>
+      <div>
+        <div style="font-size:18px;font-weight:700;color:var(--cs-on-surface)">{{ authStore.fullName || authStore.username }}</div>
+        <div style="font-size:13px;color:var(--cs-muted);margin-top:2px">{{ authStore.email }}</div>
+        <div v-if="avatarUploadMsg" style="font-size:12px;color:var(--cs-secondary);margin-top:6px">{{ avatarUploadMsg }}</div>
+        <div v-if="avatarUploadError" style="font-size:12px;color:var(--cs-error);margin-top:6px">{{ avatarUploadError }}</div>
+      </div>
+    </div>
 
-      <!-- ── Notification Settings ── -->
-      <q-separator class="q-my-lg" />
-      <div class="text-subtitle1 q-mb-xs">Notification Settings</div>
-      <div class="text-body2 text-grey-7 q-mb-md">Choose which notifications you receive.</div>
+    <!-- Profile form -->
+    <div class="cs-card" style="margin-bottom:20px">
+      <div class="cs-card-title">Account details</div>
+      <div class="cs-card-sub">Update your name, username, email or timezone</div>
 
-      <div v-if="prefsLoading" class="row justify-center q-pa-md">
+      <form @submit.prevent="handleSave">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+          <div class="cs-form-field" style="margin:0">
+            <label class="cs-form-label">First Name</label>
+            <input v-model="firstName" class="cs-form-input" type="text" />
+          </div>
+          <div class="cs-form-field" style="margin:0">
+            <label class="cs-form-label">Last Name</label>
+            <input v-model="lastName" class="cs-form-input" type="text" />
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+          <div class="cs-form-field" style="margin:0">
+            <label class="cs-form-label">Username</label>
+            <input v-model="username" class="cs-form-input" type="text" />
+          </div>
+          <div class="cs-form-field" style="margin:0">
+            <label class="cs-form-label">Email</label>
+            <input v-model="email" class="cs-form-input" type="email" />
+          </div>
+        </div>
+        <div class="cs-form-field">
+          <label class="cs-form-label">Timezone</label>
+          <q-select
+            v-model="timezone"
+            :options="filteredTimezones"
+            option-label="label"
+            option-value="value"
+            outlined
+            dense
+            clearable
+            use-input
+            fill-input
+            input-debounce="0"
+            @filter="filterTimezones"
+            emit-value
+            map-options
+          />
+        </div>
+
+        <div style="border-top:1px solid var(--cs-outline-variant);padding-top:16px;margin-bottom:16px">
+          <div style="font-size:14px;font-weight:700;margin-bottom:12px">Change Password</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div class="cs-form-field" style="margin:0">
+              <label class="cs-form-label">New Password</label>
+              <div class="cs-input-wrap">
+                <input
+                  v-model="newPassword"
+                  :type="showNewPassword ? 'text' : 'password'"
+                  class="cs-form-input"
+                  autocomplete="new-password"
+                  @input="computeStrength"
+                />
+                <button type="button" class="cs-input-icon-btn" @click="showNewPassword = !showNewPassword">
+                  <span class="material-symbols-outlined" style="font-size:18px">{{ showNewPassword ? 'visibility_off' : 'visibility' }}</span>
+                </button>
+              </div>
+              <div class="cs-strength-bar">
+                <div class="cs-strength-fill" :style="`width:${strengthValue * 100}%;background:${strengthColorHex}`" />
+              </div>
+              <div class="cs-strength-label">{{ strengthLabel }}</div>
+            </div>
+            <div class="cs-form-field" style="margin:0">
+              <label class="cs-form-label">Confirm Password</label>
+              <div class="cs-input-wrap">
+                <input
+                  v-model="confirmPassword"
+                  :type="showConfirmPassword ? 'text' : 'password'"
+                  class="cs-form-input"
+                  autocomplete="new-password"
+                />
+                <button type="button" class="cs-input-icon-btn" @click="showConfirmPassword = !showConfirmPassword">
+                  <span class="material-symbols-outlined" style="font-size:18px">{{ showConfirmPassword ? 'visibility_off' : 'visibility' }}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <button type="submit" class="cs-btn-primary" style="padding:12px 28px" :disabled="saving">
+          {{ saving ? 'Saving…' : 'Save changes' }}
+        </button>
+      </form>
+
+      <div v-if="message" style="margin-top:12px;padding:10px 14px;background:var(--cs-secondary-container);color:var(--cs-secondary);border-radius:var(--cs-radius-sm);font-size:13px">
+        {{ message }}
+      </div>
+      <div v-if="error" class="cs-error-msg" style="margin-top:12px">{{ error }}</div>
+    </div>
+
+    <!-- Stats -->
+    <div class="cs-card" style="margin-bottom:20px">
+      <div class="cs-card-title">Your Stats</div>
+      <div v-if="statsLoading" style="height:80px;display:flex;align-items:center;justify-content:center">
         <q-spinner color="primary" size="32px" />
+      </div>
+      <div v-else-if="stats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+        <div class="cs-stat-card">
+          <div class="cs-stat-value">{{ stats.total_tasks_completed }}</div>
+          <div class="cs-stat-label">Tasks done</div>
+        </div>
+        <div class="cs-stat-card">
+          <div class="cs-stat-value" style="color:var(--cs-tertiary)">{{ stats.total_points }}</div>
+          <div class="cs-stat-label">Points</div>
+        </div>
+        <div class="cs-stat-card">
+          <div class="cs-stat-value" style="color:var(--cs-secondary)">{{ stats.current_streak_days }}</div>
+          <div class="cs-stat-label">Day streak</div>
+        </div>
+        <div class="cs-stat-card">
+          <div class="cs-stat-value">{{ Math.round((stats.on_time_completion_rate ?? 0) * 100) }}%</div>
+          <div class="cs-stat-label">On-time rate</div>
+        </div>
+      </div>
+      <div v-else style="font-size:13px;color:var(--cs-muted)">No stats yet — complete some tasks first.</div>
+    </div>
+
+    <!-- Charts -->
+    <div v-if="statsRaw.length > 0" class="cs-card" style="margin-bottom:20px">
+      <div class="cs-card-title">Progress Charts</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px">
+        <div class="cs-card" style="background:var(--cs-surface)">
+          <TasksOverTimeChart :data="weeklyCompletions" />
+        </div>
+        <div class="cs-card" style="background:var(--cs-surface)">
+          <CategoryBreakdownChart :data="categoryBreakdown" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Badges -->
+    <div class="cs-card" style="margin-bottom:20px">
+      <div class="cs-card-title">Badges</div>
+      <div v-if="badges.length === 0" style="font-size:13px;color:var(--cs-muted);margin-top:8px">No badges earned yet.</div>
+      <div v-else style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">
+        <div
+          v-for="b in badges"
+          :key="b.badge_id"
+          class="cs-chip"
+          style="background:var(--cs-tertiary-container);color:var(--cs-tertiary);gap:4px;font-size:12px;cursor:pointer"
+          @click="openBadge(b)"
+        >
+          <span v-if="b.emoji" style="font-size:14px">{{ b.emoji }}</span>
+          <span v-else class="material-symbols-outlined" style="font-size:14px;font-variation-settings:'FILL' 1">emoji_events</span>
+          {{ b.name }}
+        </div>
+      </div>
+    </div>
+
+    <!-- Badge detail dialog -->
+    <q-dialog v-model="badgeDialogOpen">
+      <q-card style="min-width:320px;max-width:400px;padding:24px;border-radius:16px">
+        <div style="text-align:center;margin-bottom:16px">
+          <div v-if="selectedBadge?.emoji" style="font-size:52px;line-height:1.1;margin-bottom:8px">{{ selectedBadge.emoji }}</div>
+          <span v-else class="material-symbols-outlined" style="font-size:52px;color:var(--cs-tertiary);font-variation-settings:'FILL' 1">emoji_events</span>
+          <div style="font-size:18px;font-weight:700;margin-top:8px">{{ selectedBadge?.name }}</div>
+          <div
+            style="display:inline-block;background:var(--cs-tertiary-container);color:var(--cs-tertiary);
+                   padding:2px 12px;border-radius:12px;font-size:12px;font-weight:600;margin-top:8px"
+          >
+            +{{ selectedBadge?.points_value }} pts
+          </div>
+        </div>
+        <div style="font-size:14px;color:var(--cs-muted);text-align:center;margin-bottom:20px;line-height:1.5">
+          {{ selectedBadge?.description }}
+        </div>
+        <div style="font-size:12px;color:var(--cs-outline);text-align:center;margin-bottom:20px">
+          Earned {{ selectedBadge ? formatDateTime(selectedBadge.awarded_at) : '' }}
+          <span v-if="selectedBadge?.household_name" style="display:block;margin-top:2px">
+            in {{ selectedBadge.household_name }}
+          </span>
+        </div>
+        <div style="display:flex;justify-content:center">
+          <button class="cs-btn cs-btn-secondary" @click="badgeDialogOpen = false">Close</button>
+        </div>
+      </q-card>
+    </q-dialog>
+
+    <!-- Notification preferences -->
+    <div class="cs-card" style="margin-bottom:20px">
+      <div class="cs-card-title">Notification Settings</div>
+      <div class="cs-card-sub">Choose which notifications you receive</div>
+
+      <div v-if="prefsLoading" style="height:60px;display:flex;align-items:center;justify-content:center">
+        <q-spinner color="primary" size="28px" />
       </div>
       <template v-else-if="prefs">
-        <div class="column q-gutter-sm q-mb-md">
-          <q-toggle v-model="prefs.deadline_reminders"   label="Deadline reminders"    @update:model-value="savePrefs" />
-          <q-toggle v-model="prefs.task_assigned"        label="Task assigned to me"   @update:model-value="savePrefs" />
-          <q-toggle v-model="prefs.task_swap"            label="Swap requests"         @update:model-value="savePrefs" />
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 20px;margin-bottom:16px">
+          <q-toggle v-model="prefs.deadline_reminders"   label="Deadline reminders"     @update:model-value="savePrefs" />
+          <q-toggle v-model="prefs.task_assigned"        label="Task assigned to me"    @update:model-value="savePrefs" />
+          <q-toggle v-model="prefs.task_swap"            label="Swap requests"          @update:model-value="savePrefs" />
           <q-toggle v-model="prefs.emergency_reassign"   label="Emergency reassignments" @update:model-value="savePrefs" />
-          <q-toggle v-model="prefs.badge_earned"         label="Badge earned"          @update:model-value="savePrefs" />
-          <q-toggle v-model="prefs.marketplace_activity" label="Marketplace activity"  @update:model-value="savePrefs" />
-          <q-toggle v-model="prefs.smart_suggestions"    label="Smart suggestions"     @update:model-value="savePrefs" />
+          <q-toggle v-model="prefs.badge_earned"         label="Badge earned"           @update:model-value="savePrefs" />
+          <q-toggle v-model="prefs.marketplace_activity" label="Marketplace activity"   @update:model-value="savePrefs" />
+          <q-toggle v-model="prefs.smart_suggestions"    label="Smart suggestions"      @update:model-value="savePrefs" />
         </div>
 
-        <q-separator class="q-mb-md" />
-        <div class="text-subtitle2 q-mb-sm">Quiet Hours</div>
-        <q-toggle v-model="prefs.quiet_hours_enabled" label="Enable quiet hours (suppress notifications during set window)" @update:model-value="savePrefs" class="q-mb-sm" />
-        <div v-if="prefs.quiet_hours_enabled" class="row q-col-gutter-md q-mb-md">
-          <div class="col-6">
-            <q-input
-              v-model="prefs.quiet_start"
-              label="Start (HH:MM)"
-              outlined dense
-              mask="##:##"
-              hint="e.g. 22:00"
-              @blur="savePrefs"
-            />
-          </div>
-          <div class="col-6">
-            <q-input
-              v-model="prefs.quiet_end"
-              label="End (HH:MM)"
-              outlined dense
-              mask="##:##"
-              hint="e.g. 08:00"
-              @blur="savePrefs"
-            />
+        <div style="border-top:1px solid var(--cs-outline-variant);padding-top:14px">
+          <div style="font-size:14px;font-weight:700;margin-bottom:8px">Quiet Hours</div>
+          <q-toggle v-model="prefs.quiet_hours_enabled" label="Suppress notifications during quiet window" @update:model-value="savePrefs" />
+          <div v-if="prefs.quiet_hours_enabled" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;max-width:360px">
+            <q-input v-model="prefs.quiet_start" label="Start (HH:MM)" outlined dense mask="##:##" hint="e.g. 22:00" @blur="savePrefs" />
+            <q-input v-model="prefs.quiet_end"   label="End (HH:MM)"   outlined dense mask="##:##" hint="e.g. 08:00" @blur="savePrefs" />
           </div>
         </div>
-        <div v-if="prefsSaveMsg" class="text-caption text-positive q-mb-sm">{{ prefsSaveMsg }}</div>
+        <div v-if="prefsSaveMsg" style="font-size:12px;color:var(--cs-secondary);margin-top:8px">{{ prefsSaveMsg }}</div>
       </template>
-    </q-card>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { authService } from '../services/authService';
-import { statsApi, notificationApi } from '../services/api';
+import { statsApi, notificationApi, api } from '../services/api';
+import { useAuthStore } from '../stores/auth';
 import { evaluatePassword } from '../utils/passwordStrength';
 import TasksOverTimeChart from '../components/charts/TasksOverTimeChart.vue';
 import CategoryBreakdownChart from '../components/charts/CategoryBreakdownChart.vue';
 
+const authStore = useAuthStore();
+const profileAvatarUrl = ref<string | null>(authStore.avatarUrl);
+const uploadingAvatar = ref(false);
+const avatarUploadMsg = ref('');
+const avatarUploadError = ref('');
+
+async function uploadAvatar(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  uploadingAvatar.value = true;
+  avatarUploadMsg.value = '';
+  avatarUploadError.value = '';
+  try {
+    const form = new FormData();
+    form.append('avatar', file);
+    const res = await api.post('/api/users/me/avatar/', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    profileAvatarUrl.value = res.data.avatar_url;
+    authStore.setAvatarUrl(res.data.avatar_url);
+    avatarUploadMsg.value = 'Photo updated.';
+    setTimeout(() => { avatarUploadMsg.value = ''; }, 3000);
+  } catch {
+    avatarUploadError.value = 'Upload failed. Please try again.';
+    setTimeout(() => { avatarUploadError.value = ''; }, 4000);
+  } finally {
+    uploadingAvatar.value = false;
+    (event.target as HTMLInputElement).value = '';
+  }
+}
+
+const firstName = ref('');
+const lastName = ref('');
 const username = ref('');
 const email = ref('');
 const timezone = ref('');
@@ -236,18 +312,18 @@ const timezoneOptions = ref<TzOption[]>([]);
 const filteredTimezones = ref<TzOption[]>([]);
 const strengthValue = ref(0);
 const strengthLabel = ref('Password strength');
-const strengthColor = ref('grey');
+const strengthColorHex = ref('#d5c6c0');
 const showNewPassword = ref(false);
 const showConfirmPassword = ref(false);
-
 const stats = ref<any>(null);
 const statsLoading = ref(false);
 const statsRaw = ref<any[]>([]);
 const badges = ref<any[]>([]);
 const badgesLoading = ref(false);
+const badgeDialogOpen = ref(false);
+const selectedBadge = ref<any>(null);
 
 const weeklyCompletions = computed<{ week: string; count: number }[]>(() => {
-  // Merge weekly_completions across all households, summing counts per week
   const map = new Map<string, number>();
   for (const s of statsRaw.value) {
     for (const wc of (s.weekly_completions || [])) {
@@ -283,7 +359,7 @@ async function loadStats() {
     } else if (data && !Array.isArray(data)) {
       stats.value = data;
     }
-  } catch { /* no stats yet */ } finally {
+  } catch {} finally {
     statsLoading.value = false;
   }
 }
@@ -293,7 +369,7 @@ async function loadBadges() {
   try {
     const res = await statsApi.myBadges();
     badges.value = res.data;
-  } catch { /* no badges yet */ } finally {
+  } catch {} finally {
     badgesLoading.value = false;
   }
 }
@@ -302,16 +378,16 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function detectBrowserTimeZoneOffset(): string | null {
-  try {
-    const mins = new Date().getTimezoneOffset(); // minutes behind UTC
-    const offsetHours = -mins / 60;
-    const sign = offsetHours >= 0 ? '+' : '-';
-    const padded = Math.abs(offsetHours).toString().padStart(2, '0');
-    return `UTC${sign}${padded}`;
-  } catch {
-    return null;
-  }
+function formatDateTime(iso: string) {
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function openBadge(b: any) {
+  selectedBadge.value = b;
+  badgeDialogOpen.value = true;
 }
 
 function loadTimezones() {
@@ -352,23 +428,26 @@ function loadTimezones() {
 
 function filterTimezones(val: string, update: (cb: () => void) => void) {
   update(() => {
-    if (!val) {
-      filteredTimezones.value = timezoneOptions.value;
-      return;
-    }
+    if (!val) { filteredTimezones.value = timezoneOptions.value; return; }
     const needle = val.toLowerCase();
-    filteredTimezones.value = timezoneOptions.value.filter((z) => z.label.toLowerCase().includes(needle));
+    filteredTimezones.value = timezoneOptions.value.filter(z => z.label.toLowerCase().includes(needle));
   });
 }
 
 async function loadProfile() {
   try {
     const resp = await authService.getProfile();
+    firstName.value = resp.data.first_name || '';
+    lastName.value = resp.data.last_name || '';
     username.value = resp.data.username || '';
     email.value = resp.data.email || '';
-    timezone.value = resp.data.timezone || detectBrowserTimeZoneOffset() || '';
+    timezone.value = resp.data.timezone || '';
+    if (resp.data.avatar_url) {
+      profileAvatarUrl.value = resp.data.avatar_url;
+      authStore.setAvatarUrl(resp.data.avatar_url);
+    }
   } catch (err: any) {
-    error.value = err?.response?.data?.detail || 'Unable to load profile. Please log in again.';
+    error.value = err?.response?.data?.detail || 'Unable to load profile.';
   }
 }
 
@@ -378,17 +457,19 @@ async function handleSave() {
   saving.value = true;
   try {
     const resp = await authService.updateProfile({
+      first_name: firstName.value,
+      last_name: lastName.value,
       username: username.value,
       email: email.value,
       timezone: timezone.value,
     });
     message.value = 'Profile saved.';
+    firstName.value = resp.data.first_name ?? firstName.value;
+    lastName.value = resp.data.last_name ?? lastName.value;
     email.value = resp.data.email || email.value;
     username.value = resp.data.username || username.value;
-
-    if (newPassword.value || confirmPassword.value) {
-      await handlePasswordChange();
-    }
+    authStore.setName(resp.data.first_name ?? '', resp.data.last_name ?? '');
+    if (newPassword.value || confirmPassword.value) await handlePasswordChange();
   } catch (err: any) {
     error.value = err?.response?.data?.detail || 'Unable to save profile.';
   } finally {
@@ -397,26 +478,18 @@ async function handleSave() {
 }
 
 async function handlePasswordChange() {
-  if (newPassword.value !== confirmPassword.value) {
-    error.value = 'New passwords do not match.';
-    return;
-  }
+  if (newPassword.value !== confirmPassword.value) { error.value = 'New passwords do not match.'; return; }
   try {
-    await authService.changePassword({
-      current_password: '', // current password omitted per request
-      new_password: newPassword.value,
-      confirm_password: confirmPassword.value,
-    });
+    await authService.changePassword({ current_password: '', new_password: newPassword.value, confirm_password: confirmPassword.value });
     message.value = 'Password updated.';
     newPassword.value = '';
     confirmPassword.value = '';
-    computeStrength('');
+    computeStrength();
   } catch (err: any) {
     error.value = err?.response?.data?.detail || 'Unable to change password.';
   }
 }
 
-// ── Notification Preferences ──
 const prefs = ref<any>(null);
 const prefsLoading = ref(false);
 const prefsSaveMsg = ref('');
@@ -424,12 +497,7 @@ let prefsSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function loadPrefs() {
   prefsLoading.value = true;
-  try {
-    const res = await notificationApi.getPrefs();
-    prefs.value = res.data;
-  } catch { /* ignore */ } finally {
-    prefsLoading.value = false;
-  }
+  try { const res = await notificationApi.getPrefs(); prefs.value = res.data; } catch {} finally { prefsLoading.value = false; }
 }
 
 async function savePrefs() {
@@ -439,7 +507,7 @@ async function savePrefs() {
     prefsSaveMsg.value = 'Saved.';
     if (prefsSaveTimer) clearTimeout(prefsSaveTimer);
     prefsSaveTimer = setTimeout(() => { prefsSaveMsg.value = ''; }, 2000);
-  } catch { /* ignore */ }
+  } catch {}
 }
 
 onMounted(() => {
@@ -450,10 +518,11 @@ onMounted(() => {
   loadPrefs();
 });
 
-function computeStrength(value: string) {
-  const { score, label, color } = evaluatePassword(value || newPassword.value);
+function computeStrength() {
+  const { score, label, color } = evaluatePassword(newPassword.value);
   strengthValue.value = score;
   strengthLabel.value = label;
-  strengthColor.value = color;
+  const colorMap: Record<string, string> = { negative: '#ba1a1a', warning: '#e8a020', positive: '#496640', grey: '#d5c6c0' };
+  strengthColorHex.value = colorMap[color] ?? '#d5c6c0';
 }
 </script>

@@ -11,6 +11,7 @@ export type CalendarEvent = {
   calendar_id: number;
   calendar_name: string;
   calendar_color?: string | null;
+  description?: string | null;
 };
 
 export const eventService = {

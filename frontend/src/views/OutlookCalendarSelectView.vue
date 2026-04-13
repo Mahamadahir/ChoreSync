@@ -1,5 +1,5 @@
 <template>
-  <q-page class="q-pa-lg flex flex-center">
+  <div class="q-pa-lg flex flex-center">
     <q-card class="q-pa-lg" style="max-width: 900px; width: 100%;">
       <div class="row items-center q-mb-md">
         <div class="col">
@@ -119,7 +119,7 @@
         </q-form>
       </div>
     </q-card>
-  </q-page>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -178,8 +178,11 @@ async function loadCalendars() {
       writable: item.can_edit,
       is_task_writeback: item.is_default,
     }));
-  } catch (err) {
-    errorMessage.value = 'Failed to load Outlook calendars. Please reconnect and try again.';
+  } catch (err: any) {
+    const detail = err?.response?.data?.detail;
+    errorMessage.value = detail
+      ? `Failed to load calendars: ${detail}`
+      : 'Failed to load Outlook calendars. Please reconnect and try again.';
   } finally {
     loading.value = false;
   }

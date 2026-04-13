@@ -1,5 +1,5 @@
 <template>
-  <q-page class="q-pa-lg flex flex-center">
+  <div class="q-pa-lg flex flex-center">
     <q-card class="q-pa-lg" style="max-width: 900px; width: 100%;">
       <div class="row items-center q-mb-md">
         <div class="col">
@@ -70,6 +70,7 @@
                       <div class="text-subtitle1">
                         {{ cal.name }}
                         <q-badge v-if="cal.primary" color="primary" class="q-ml-xs">Primary</q-badge>
+                        <q-badge v-if="cal.alreadySynced" color="positive" class="q-ml-xs">Syncing</q-badge>
                       </div>
                       <div class="text-caption text-grey-7">
                         Access: {{ cal.accessRole }} • Timezone: {{ cal.timezone || '—' }}
@@ -122,7 +123,7 @@
         </q-form>
       </div>
     </q-card>
-  </q-page>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -141,6 +142,7 @@ type CalendarItem = {
   selected: boolean;
   includeAvailability: boolean;
   writable: boolean;
+  alreadySynced: boolean;
 };
 
 const calendars = ref<CalendarItem[]>([]);
@@ -163,7 +165,7 @@ async function loadCalendars() {
   errorMessage.value = null;
   try {
     const resp = await calendarService.listGoogleCalendars();
-    calendars.value = resp.data.map((item) => ({
+    calendars.value = resp.data.map((item: any) => ({
       id: item.id,
       name: item.summary || '(untitled)',
       accessRole: item.accessRole,
@@ -171,9 +173,10 @@ async function loadCalendars() {
       color: item.color || '',
       writableSuggested: item.writable,
       timezone: item.timeZone || '',
-      selected: !!item.primary || item.writable, // default to syncing primary or writable calendars
+      selected: !!item.primary || item.writable || !!item.already_synced,
       includeAvailability: true,
       writable: item.writable,
+      alreadySynced: !!item.already_synced,
     }));
   } catch (err) {
     errorMessage.value = 'Failed to load Google calendars. Please reconnect and try again.';
@@ -198,17 +201,10 @@ async function handleSave() {
         timezone: c.timezone || null,
       }));
     await calendarService.selectGoogleCalendars(payload);
-    let syncDetail = '';
-    try {
-      const syncResp = await calendarService.syncGoogle();
-      syncDetail = syncResp.data?.detail || '';
-    } catch (err) {
-      syncDetail = 'Saved selection, but sync failed. Try manual sync.';
-    }
-    successMessage.value = syncDetail || 'Saved selection and synced calendars.';
+    // Redirect to calendar page — Celery will sync in background and notify when done.
+    router.push({ name: 'calendar', query: { sync: 'started' } });
   } catch (err: any) {
     errorMessage.value = err?.response?.data?.detail || 'Failed to save selection. Please try again.';
-  } finally {
     saving.value = false;
   }
 }

@@ -1,129 +1,294 @@
 <template>
-  <q-layout view="hHh lpR fFf">
-    <q-header elevated class="bg-primary text-white">
-      <q-toolbar>
-        <q-toolbar-title>
-          <router-link to="/home" class="text-white" style="text-decoration:none">ChoreSync</router-link>
-        </q-toolbar-title>
-        <template v-if="authStore.isAuthenticated">
-          <q-btn flat dense to="/groups">Groups</q-btn>
-          <q-btn flat dense to="/tasks">My Tasks</q-btn>
-          <q-btn flat dense to="/calendar">Calendar</q-btn>
-          <q-btn flat dense to="/profile">Profile</q-btn>
-        </template>
-        <template v-else>
-          <q-btn flat dense to="/signup">Sign Up</q-btn>
-          <q-btn flat dense to="/login">Log In</q-btn>
-        </template>
-        <q-space />
+  <!-- Guest layout (login, signup, etc.) -->
+  <div v-if="!authStore.isAuthenticated" class="cs-guest-bg">
+    <router-view />
+  </div>
 
-        <!-- Dark mode toggle -->
-        <q-btn flat dense round :icon="$q.dark.isActive ? 'light_mode' : 'dark_mode'" @click="toggleDark">
-          <q-tooltip>{{ $q.dark.isActive ? 'Light mode' : 'Dark mode' }}</q-tooltip>
-        </q-btn>
+  <!-- Authenticated shell: sidebar + topbar + content -->
+  <div v-else class="cs-app-shell">
 
-        <!-- Notification bell -->
-        <template v-if="authStore.isAuthenticated">
-          <q-btn flat dense round icon="notifications" @click="notifDrawer = true">
-            <q-badge v-if="unreadCount > 0" color="red" :label="unreadCount" floating />
-          </q-btn>
-        </template>
-
-        <q-btn v-if="authStore.isAuthenticated" flat dense icon="logout" label="Log Out" @click="handleLogout" />
-      </q-toolbar>
-    </q-header>
-
-    <!-- Notification drawer -->
-    <q-drawer v-model="notifDrawer" side="right" bordered :width="340">
-      <q-toolbar class="bg-primary text-white">
-        <q-toolbar-title>Notifications</q-toolbar-title>
-        <q-btn flat round dense icon="close" @click="notifDrawer = false" />
-      </q-toolbar>
-      <div v-if="notifications.length === 0" class="text-center text-grey-6 q-pa-xl">
-        <q-icon name="notifications_none" size="48px" />
-        <div class="q-mt-sm">No notifications</div>
+    <!-- ── Sidebar ─────────────────────────────────────────── -->
+    <nav class="cs-sidebar">
+      <!-- Brand -->
+      <div class="cs-sidebar-brand">
+        <span class="material-symbols-outlined">home_work</span>
+        <div>
+          <div class="cs-brand-name">ChoreSync</div>
+          <div class="cs-brand-sub">Household Harmony</div>
+        </div>
       </div>
-      <q-list separator>
-        <q-item
+
+      <!-- Nav items -->
+      <div class="cs-nav-items">
+        <router-link
+          v-for="item in navItems"
+          :key="item.to"
+          :to="item.to"
+          custom
+          v-slot="{ isActive, navigate }"
+        >
+          <button
+            @click="navigate"
+            :class="['cs-nav-item', { 'cs-nav-item--active': isActive }]"
+          >
+            <span class="material-symbols-outlined">{{ item.icon }}</span>
+            <span class="cs-nav-label">{{ item.label }}</span>
+            <span v-if="item.badge && item.badge > 0" class="cs-nav-badge">{{ item.badge }}</span>
+          </button>
+        </router-link>
+      </div>
+
+      <!-- New task -->
+      <button class="cs-new-task-btn" @click="$router.push({ name: 'tasks' })">
+        <span class="material-symbols-outlined">add_task</span>
+        New Task
+      </button>
+
+      <!-- User footer -->
+      <div class="cs-sidebar-footer">
+        <div class="cs-user-avatar">{{ userInitials }}</div>
+        <div class="cs-user-info" style="flex:1;min-width:0">
+          <div class="cs-user-name">{{ authStore.username || 'User' }}</div>
+          <div class="cs-user-email">{{ authStore.email || '' }}</div>
+        </div>
+        <button class="cs-icon-btn" @click="handleLogout" title="Log out">
+          <span class="material-symbols-outlined">logout</span>
+        </button>
+      </div>
+    </nav>
+
+    <!-- ── Top bar ─────────────────────────────────────────── -->
+    <header class="cs-topbar">
+      <div class="cs-topbar-title">{{ currentPageTitle }}</div>
+      <div class="cs-topbar-actions">
+        <div class="cs-search-box">
+          <span class="material-symbols-outlined">search</span>
+          <input type="text" placeholder="Search tasks…" v-model="searchQuery" />
+        </div>
+        <button
+          class="cs-icon-btn"
+          style="position:relative"
+          @click="notifPanelOpen = !notifPanelOpen"
+          title="Notifications"
+        >
+          <span class="material-symbols-outlined">notifications</span>
+          <span v-if="unreadCount > 0" class="cs-notif-dot">{{ unreadCount }}</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- ── Main content ────────────────────────────────────── -->
+    <main class="cs-content">
+      <router-view />
+    </main>
+
+    <!-- ── Streak suggestion popup ───────────────────────────── -->
+    <SuggestionPopup ref="suggestionPopupRef" />
+
+    <!-- ── Notification backdrop ───────────────────────────── -->
+    <div
+      v-if="notifPanelOpen"
+      class="cs-notif-backdrop"
+      @click="notifPanelOpen = false"
+    />
+
+    <!-- ── Notification panel ──────────────────────────────── -->
+    <aside class="cs-notif-panel" :class="{ 'cs-notif-panel--open': notifPanelOpen }">
+      <div class="cs-notif-header">
+        <div class="cs-notif-title">Notifications</div>
+        <div style="display:flex;align-items:center;gap:4px">
+          <button
+            class="cs-icon-btn"
+            @click="notifPanelOpen = false; $router.push({ name: 'profile' })"
+            title="Notification preferences"
+          >
+            <span class="material-symbols-outlined">settings</span>
+          </button>
+          <button class="cs-icon-btn" @click="notifPanelOpen = false">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+      </div>
+
+      <div v-if="notifications.length === 0" class="cs-empty-notifs">
+        <span class="material-symbols-outlined cs-empty-icon">notifications_none</span>
+        <div>All caught up!</div>
+      </div>
+
+      <div v-else class="cs-notif-list">
+        <div
           v-for="n in notifications"
           :key="n.id"
-          :class="{ 'bg-blue-1': !n.read, 'cursor-pointer': !!n.action_url }"
+          :class="['cs-notif-item', { 'cs-notif-item--unread': !n.read }]"
           @click="handleNotificationClick(n)"
         >
-          <q-item-section>
-            <q-item-label class="text-weight-medium">{{ n.title }}</q-item-label>
-            <q-item-label caption>{{ n.content }}</q-item-label>
-            <q-item-label caption class="text-grey-5">{{ formatDate(n.created_at) }}</q-item-label>
-          </q-item-section>
-          <q-item-section side>
-            <div class="column q-gutter-xs">
-              <q-btn v-if="!n.read" flat round dense icon="mark_email_read" size="xs" color="primary"
-                @click="markRead(n.id)"><q-tooltip>Mark read</q-tooltip></q-btn>
-              <q-btn flat round dense icon="close" size="xs" color="grey"
-                @click="dismiss(n.id)"><q-tooltip>Dismiss</q-tooltip></q-btn>
-            </div>
-          </q-item-section>
-        </q-item>
-      </q-list>
-    </q-drawer>
+          <div class="cs-notif-body">
+            <div class="cs-notif-item-title">{{ n.title }}</div>
+            <div class="cs-notif-item-content">{{ n.content }}</div>
+            <div class="cs-notif-item-time">{{ formatDate(n.created_at) }}</div>
+          </div>
+          <div class="cs-notif-item-actions">
+            <button
+              v-if="!n.read"
+              class="cs-icon-btn-sm"
+              @click.stop="markRead(n.id)"
+              title="Mark read"
+            >
+              <span class="material-symbols-outlined">mark_email_read</span>
+            </button>
+            <button
+              class="cs-icon-btn-sm"
+              @click.stop="dismiss(n.id)"
+              title="Dismiss"
+            >
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </aside>
 
-    <q-page-container>
-      <router-view />
-    </q-page-container>
-  </q-layout>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { useQuasar } from 'quasar';
-import { useRouter } from 'vue-router';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { authService } from './services/authService';
 import { useAuthStore } from './stores/auth';
+import { useNotificationStore } from './stores/notifications';
 import { notificationApi } from './services/api';
 import { NotificationSocketService } from './services/NotificationSocketService';
+import SuggestionPopup from './components/SuggestionPopup.vue';
 
-const $q = useQuasar();
 const authStore = useAuthStore();
+const notifStore = useNotificationStore();
 const router = useRouter();
-const notifDrawer = ref(false);
+const route = useRoute();
 
-function toggleDark() {
-  $q.dark.toggle();
-  localStorage.setItem('choresync-dark', String($q.dark.isActive));
-}
-const notifications = ref<any[]>([]);
+const notifPanelOpen = ref(false);
+const searchQuery = ref('');
 const socketSvc = new NotificationSocketService();
+const suggestionPopupRef = ref<InstanceType<typeof SuggestionPopup> | null>(null);
 
-const unreadCount = computed(() => notifications.value.filter(n => !n.read).length);
+const notifications = computed(() => notifStore.notifications);
+const unreadCount = computed(() => notifStore.unreadCount);
+const tasksBadge = computed(() => notifStore.tasksBadge);
+const groupsBadge = computed(() => notifStore.groupsBadge);
+
+const userInitials = computed(() => {
+  const name = authStore.username || authStore.email || 'U';
+  return name.slice(0, 2).toUpperCase();
+});
+
+const pageTitles: Record<string, string> = {
+  home: 'Dashboard',
+  tasks: 'My Tasks',
+  groups: 'My Groups',
+  'group-detail': 'Group',
+  profile: 'Profile & Settings',
+  calendar: 'Calendar',
+  'google-calendar-select': 'Calendar Setup',
+  'outlook-calendar-select': 'Calendar Setup',
+  'assistant': 'AI Assistant',
+};
+
+const currentPageTitle = computed(() => {
+  const name = route.name as string;
+  return pageTitles[name] ?? 'ChoreSync';
+});
+
+const navItems = computed(() => [
+  { to: '/home',      icon: 'home',             label: 'Dashboard', badge: 0 },
+  { to: '/tasks',     icon: 'checklist',        label: 'My Tasks',  badge: tasksBadge.value },
+  { to: '/groups',    icon: 'group',            label: 'Groups',    badge: groupsBadge.value },
+  { to: '/calendar',  icon: 'calendar_month',   label: 'Calendar',  badge: 0 },
+  { to: '/assistant', icon: 'smart_toy',        label: 'Assistant', badge: 0 },
+  { to: '/profile',   icon: 'manage_accounts',  label: 'Profile',   badge: 0 },
+]);
 
 async function loadNotifications() {
   if (!authStore.isAuthenticated) return;
   try {
     const res = await notificationApi.list();
-    notifications.value = res.data;
+    notifStore.setNotifications(res.data);
   } catch {}
 }
 
 async function markRead(id: number) {
   try {
     await notificationApi.markRead(id);
-    const n = notifications.value.find(n => n.id === id);
-    if (n) n.read = true;
+    notifStore.markRead(id);
   } catch {}
 }
 
 async function dismiss(id: number) {
   try {
     await notificationApi.dismiss(id);
-    notifications.value = notifications.value.filter(n => n.id !== id);
+    notifStore.remove(id);
   } catch {}
 }
 
 async function handleNotificationClick(n: any) {
   if (!n.read) await markRead(n.id);
-  if (n.action_url) {
-    notifDrawer.value = false;
-    router.push(n.action_url);
+  notifPanelOpen.value = false;
+
+  // Translate backend action_url values to defined Vue routes.
+  // The backend emits paths like /tasks/<id>, /groups/<id>?tab=chat — some
+  // of which have no direct Vue route. Resolve to the nearest navigable destination.
+  try {
+    const url = n.action_url || '';
+
+    // /tasks/<id> → tasks list (no dedicated task detail route in Vue)
+    const taskMatch = url.match(/^\/tasks\/(\d+)$/);
+    if (taskMatch) {
+      await router.push({ name: 'tasks' });
+      return;
+    }
+
+    // /groups/<id>?tab=<tab> → group detail with optional tab query
+    const groupMatch = url.match(/^\/groups\/([^?]+)/);
+    if (groupMatch) {
+      const tabMatch = url.match(/[?&]tab=([^&]+)/);
+      await router.push({
+        name: 'group-detail',
+        params: { id: groupMatch[1] },
+        ...(tabMatch ? { query: { tab: tabMatch[1] } } : {}),
+      });
+      return;
+    }
+
+    // group_invite / any notification with only group_id and no action_url
+    if (!url && n.group_id) {
+      await router.push({ name: 'group-detail', params: { id: n.group_id } });
+      return;
+    }
+
+    // task_proposal — use group_id + proposals tab if available
+    if (n.type === 'task_proposal' && n.group_id) {
+      await router.push({ name: 'group-detail', params: { id: n.group_id }, query: { tab: 'discover' } });
+      return;
+    }
+
+    // badge_earned → profile (user stats / achievements)
+    if (n.type === 'badge_earned') {
+      await router.push({ name: 'profile' });
+      return;
+    }
+
+    // calendar_sync_complete → calendar tab
+    if (n.type === 'calendar_sync_complete' || url === '/calendar') {
+      await router.push({ name: 'calendar' });
+      return;
+    }
+
+    // Fallback: push the raw url if it has a value
+    if (url) {
+      await router.push(url);
+    }
+  } catch {
+    // Navigation failures (deleted entity, stale route) are silently ignored
+    // to avoid surfacing a confusing error for an otherwise-read notification.
   }
 }
 
@@ -131,20 +296,47 @@ async function handleLogout() {
   socketSvc.disconnect();
   try { await authService.logout(); } catch {}
   authStore.clear();
-  window.history.pushState({}, '', '/login');
-  window.dispatchEvent(new PopStateEvent('popstate'));
+  notifStore.setNotifications([]);
+  router.push({ name: 'login' });
 }
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
 }
 
+// Register handlers once — these survive reconnects
+socketSvc.onNotification((n) => {
+  notifStore.prepend(n);
+  if (n.type === 'suggestion_streak' && suggestionPopupRef.value) {
+    const parsed = suggestionPopupRef.value.parseNotification(n);
+    if (parsed) suggestionPopupRef.value.push(parsed);
+  }
+});
+
+// Connect/disconnect the socket whenever auth state changes.
+// This handles: initial page load (auth may be async), login, and logout.
+watch(
+  () => authStore.isAuthenticated,
+  (authed) => {
+    if (authed) {
+      loadNotifications();
+      socketSvc.connect();
+    } else {
+      socketSvc.disconnect();
+      notifStore.setNotifications([]);
+    }
+  },
+  { immediate: true },
+);
+
 onMounted(() => {
-  loadNotifications();
-  socketSvc.onNotification((n) => {
-    notifications.value.unshift(n);
-  });
-  if (authStore.isAuthenticated) socketSvc.connect();
+  // Fallback: if auth was already true before the watcher ran (e.g. SSR hydration edge-case)
+  if (authStore.isAuthenticated && !socketSvc.isConnected) {
+    loadNotifications();
+    socketSvc.connect();
+  }
 });
 onUnmounted(() => socketSvc.disconnect());
 </script>

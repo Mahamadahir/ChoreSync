@@ -1,31 +1,54 @@
 <template>
-  <div class="q-pa-lg flex flex-center">
-    <q-card class="q-pa-lg" style="max-width: 480px; width: 100%;">
-      <div class="text-h5 q-mb-sm">Forgot Password</div>
-      <div class="text-body2 text-grey-7 q-mb-md">
-        Enter your email for a reset link (active accounts only).
+  <div class="cs-auth-wrap">
+    <div class="cs-auth-card">
+      <div class="cs-auth-logo">
+        <span class="material-symbols-outlined">home_work</span>
+        <span class="cs-auth-logo-text">ChoreSync</span>
       </div>
-      <q-form class="q-gutter-md" @submit="handleSubmit">
-        <q-input
-          v-model="email"
-          label="Email"
-          type="email"
-          outlined
-          dense
-          :disable="isSubmitting"
-          required
-        />
-        <q-btn
+
+      <div class="cs-auth-title">Reset your password</div>
+      <div class="cs-auth-sub" style="margin-bottom:24px">Enter your email and we'll send a reset link.</div>
+
+      <form @submit.prevent="handleSubmit">
+        <div class="cs-form-field">
+          <label class="cs-form-label">Email</label>
+          <input
+            v-model="email"
+            type="email"
+            class="cs-form-input"
+            placeholder="you@example.com"
+            :disabled="isSubmitting"
+            required
+            autocomplete="email"
+          />
+        </div>
+        <button
           type="submit"
-          label="Send reset link"
-          color="primary"
-          class="full-width"
-          :loading="isSubmitting"
-        />
-      </q-form>
-      <q-banner v-if="message" class="q-mt-md" type="positive" dense>{{ message }}</q-banner>
-      <q-banner v-if="error" class="q-mt-md" type="warning" dense>{{ error }}</q-banner>
-    </q-card>
+          class="cs-btn-primary"
+          style="width:100%;justify-content:center;padding:14px;border-radius:50px;margin-top:8px;font-size:15px"
+          :disabled="isSubmitting"
+        >
+          {{ isSubmitting ? 'Sending…' : 'Send reset link' }}
+        </button>
+      </form>
+
+      <div
+        v-if="message"
+        style="margin-top:16px;padding:12px 14px;background:var(--cs-primary-container);color:var(--cs-primary);border-radius:var(--cs-radius-md);font-size:13px"
+      >
+        {{ message }}
+      </div>
+      <div
+        v-if="errorMsg"
+        style="margin-top:16px;padding:12px 14px;background:var(--cs-error-container);color:var(--cs-error);border-radius:var(--cs-radius-md);font-size:13px"
+      >
+        {{ errorMsg }}
+      </div>
+
+      <div style="text-align:center;margin-top:24px;font-size:13px;color:var(--cs-muted)">
+        <router-link to="/login" style="color:var(--cs-primary);text-decoration:none;font-weight:600">Back to sign in</router-link>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -35,18 +58,18 @@ import { authService } from '../services/authService';
 
 const email = ref('');
 const message = ref('');
-const error = ref('');
+const errorMsg = ref('');
 const isSubmitting = ref(false);
 
 async function handleSubmit() {
   message.value = '';
-  error.value = '';
+  errorMsg.value = '';
   isSubmitting.value = true;
   try {
     await authService.forgotPassword(email.value);
     message.value = 'If this account exists, a reset link was sent.';
   } catch (err: any) {
-    error.value = err?.response?.data?.detail || 'Unable to process request.';
+    errorMsg.value = err?.response?.data?.detail || 'Unable to process request.';
   } finally {
     isSubmitting.value = false;
   }

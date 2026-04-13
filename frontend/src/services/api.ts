@@ -10,12 +10,31 @@ export const api = axios.create({
   withCredentials: true,
 });
 
+// Attach the Django CSRF token on every state-mutating request.
+// Django sets the `csrftoken` cookie on login (via rotate_token); we read it
+// here and forward it as X-CSRFToken so SessionAuthentication.enforce_csrf()
+// passes for cookie-authenticated Vue web requests.
+function getCsrfToken(): string {
+  const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+api.interceptors.request.use((config) => {
+  if (['post', 'put', 'patch', 'delete'].includes((config.method ?? '').toLowerCase())) {
+    const token = getCsrfToken();
+    if (token) {
+      config.headers['X-CSRFToken'] = token;
+    }
+  }
+  return config;
+});
+
 // ------------------------------------------------------------------ //
 //  Groups
 // ------------------------------------------------------------------ //
 export const groupApi = {
   list: () => api.get('/api/groups/'),
-  create: (payload: { name: string; reassignment_rule?: string; fairness_algorithm?: string }) =>
+  create: (payload: { name: string; reassignment_rule?: string; task_proposal_voting_required?: boolean; group_type?: string }) =>
     api.post('/api/groups/', payload),
   get: (id: string) => api.get(`/api/groups/${id}/`),
   members: (id: string) => api.get(`/api/groups/${id}/members/`),
@@ -24,9 +43,15 @@ export const groupApi = {
   settings: (id: string, payload: object) => api.patch(`/api/groups/${id}/settings/`, payload),
   leaderboard: (id: string) => api.get(`/api/groups/${id}/leaderboard/`),
   stats: (id: string) => api.get(`/api/groups/${id}/stats/`),
+  assignmentMatrix: (id: string) => api.get(`/api/groups/${id}/assignment-matrix/`),
   proposals: (id: string) => api.get(`/api/groups/${id}/proposals/`),
-  createProposal: (id: string, payload: { task_template_id: number; reason?: string }) =>
+  createProposal: (id: string, payload: { payload: Record<string, unknown>; reason?: string }) =>
     api.post(`/api/groups/${id}/proposals/`, payload),
+  approveProposal: (id: number, body: { edited_payload?: Record<string, unknown> | null; approval_note?: string }) =>
+    api.post(`/api/proposals/${id}/approve/`, body),
+  rejectProposal: (id: number, body: { note?: string }) =>
+    api.post(`/api/proposals/${id}/reject/`, body),
+
 };
 
 // ------------------------------------------------------------------ //
@@ -38,8 +63,8 @@ export const taskApi = {
   groupTasks: (groupId: string, params?: { status?: string }) =>
     api.get(`/api/groups/${groupId}/tasks/`, { params }),
   get: (id: number) => api.get(`/api/tasks/${id}/`),
-  complete: (id: number, payload?: { photo_proof_url?: string }) =>
-    api.post(`/api/tasks/${id}/complete/`, payload ?? {}),
+  complete: (id: number, completed = true, payload?: { photo_proof_url?: string }) =>
+    api.post(`/api/tasks/${id}/complete/`, { completed, ...payload }),
   snooze: (id: number, payload: { snooze_until: string }) =>
     api.post(`/api/tasks/${id}/snooze/`, payload),
   createSwap: (id: number, payload: { to_user_id?: string; reason?: string }) =>
@@ -52,6 +77,8 @@ export const taskApi = {
   listMarketplace: (id: number, payload: { bonus_points?: number }) =>
     api.post(`/api/tasks/${id}/list-marketplace/`, payload),
   pendingSwaps: () => api.get('/api/users/me/pending-swaps/'),
+  acceptSuggestion: (id: number) => api.post(`/api/tasks/${id}/accept-suggestion/`),
+  declineSuggestion: (id: number) => api.post(`/api/tasks/${id}/decline-suggestion/`),
 };
 
 // ------------------------------------------------------------------ //
@@ -60,6 +87,7 @@ export const taskApi = {
 export const marketplaceApi = {
   groupListings: (groupId: string) => api.get(`/api/groups/${groupId}/marketplace/`),
   claim: (listingId: number) => api.post(`/api/marketplace/${listingId}/claim/`),
+  cancel: (listingId: number) => api.delete(`/api/marketplace/${listingId}/cancel/`),
 };
 
 // ------------------------------------------------------------------ //
@@ -81,4 +109,31 @@ export const notificationApi = {
 export const statsApi = {
   myStats: () => api.get('/api/users/me/stats/'),
   myBadges: () => api.get('/api/users/me/badges/'),
+};
+
+// ------------------------------------------------------------------ //
+//  Messages
+// ------------------------------------------------------------------ //
+export const messageApi = {
+  list: (groupId: string, params?: { limit?: number; before?: number }) =>
+    api.get(`/api/groups/${groupId}/messages/`, { params }),
+  markRead: (groupId: string, messageIds: number[]) =>
+    api.post(`/api/groups/${groupId}/messages/read/`, { message_ids: messageIds }),
+};
+
+// ------------------------------------------------------------------ //
+//  Chatbot / AI Assistant
+// ------------------------------------------------------------------ //
+export const chatbotApi = {
+  listSessions: () =>
+    api.get<{ id: number; preview: string; message_count: number; last_active: string }[]>('/api/assistant/sessions/'),
+  loadSession: (sessionId?: number | null) =>
+    api.get<{ session_id: number | null; messages: { role: 'user' | 'bot'; content: string }[] }>(
+      '/api/assistant/',
+      sessionId ? { params: { session_id: sessionId } } : undefined,
+    ),
+  send: (message: string, sessionId?: number | null) =>
+    api.post('/api/assistant/', { message, ...(sessionId ? { session_id: sessionId } : {}) }),
+  clearSession: (sessionId: number) =>
+    api.delete('/api/assistant/', { data: { session_id: sessionId } }),
 };

@@ -1,9 +1,12 @@
 import { api } from './api';
 
 type SignupPayload = {
+  first_name: string;
+  last_name: string;
   username: string;
   email: string;
   password: string;
+  timezone?: string;
 };
 
 type LoginPayload = {
@@ -30,7 +33,7 @@ export const authService = {
   getProfile() {
     return api.get('/api/profile/');
   },
-  updateProfile(payload: { username?: string; email?: string; timezone?: string }) {
+  updateProfile(payload: { first_name?: string; last_name?: string; username?: string; email?: string; timezone?: string }) {
     return api.post('/api/profile/', payload);
   },
   changePassword(payload: { current_password: string; new_password: string; confirm_password: string }) {

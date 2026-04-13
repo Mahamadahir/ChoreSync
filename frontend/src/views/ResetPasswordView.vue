@@ -11,7 +11,7 @@
           outlined
           dense
           :disable="isSubmitting"
-          @update:model-value="computeStrength"
+          @update:model-value="(v) => computeStrength(String(v ?? ''))"
           required
         >
           <template #append>

@@ -1,5 +1,5 @@
 <template>
-  <q-page class="q-pa-lg flex flex-center">
+  <div class="q-pa-lg flex flex-center">
     <q-card class="q-pa-lg" style="max-width: 520px; width: 100%;">
       <div class="text-h5 q-mb-xs">Check your inbox</div>
       <div class="text-body2 text-grey-7 q-mb-md">
@@ -22,7 +22,7 @@
       <q-banner v-if="message" class="q-mt-md" type="positive" dense>{{ message }}</q-banner>
       <q-banner v-if="error" class="q-mt-md" type="warning" dense>{{ error }}</q-banner>
     </q-card>
-  </q-page>
+  </div>
 </template>
 
 <script setup lang="ts">

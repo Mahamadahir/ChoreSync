@@ -21,10 +21,11 @@ import OutlookCalendarSelectView from './views/OutlookCalendarSelectView.vue';
 import GroupsView from './views/GroupsView.vue';
 import GroupDetailView from './views/GroupDetailView.vue';
 import MyTasksView from './views/MyTasksView.vue';
-import { Quasar, Dark } from 'quasar';
+import ChatbotView from './views/ChatbotView.vue';
+import { Quasar } from 'quasar';
 import '@quasar/extras/material-icons/material-icons.css';
 import 'quasar/src/css/index.sass';
-import './dark-overrides.css';
+import './design-system.css';
 
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/groups' },
@@ -40,6 +41,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/calendar', name: 'calendar', component: CalendarView, meta: { requiresAuth: true } },
   { path: '/calendar/google/select', name: 'google-calendar-select', component: GoogleCalendarSelectView, meta: { requiresAuth: true } },
   { path: '/calendar/outlook/select', name: 'outlook-calendar-select', component: OutlookCalendarSelectView, meta: { requiresAuth: true } },
+  { path: '/assistant', name: 'assistant', component: ChatbotView, meta: { requiresAuth: true } },
   { path: '/forgot-password', name: 'forgot-password', component: ForgotPasswordView, meta: { requiresGuest: true } },
   { path: '/reset-password', name: 'reset-password', component: ResetPasswordView, meta: { requiresGuest: true } },
   { path: '/login/google', name: 'login-google', component: GoogleLoginView, meta: { requiresGuest: true } },
@@ -64,9 +66,15 @@ const ensureAuthBootstrap = () => {
       .getProfile()
       .then(async (profileRes) => {
         const userId: string = profileRes.data.id ?? profileRes.data.user_id;
+        const username: string = profileRes.data.username ?? '';
+        const email: string = profileRes.data.email ?? '';
+        const firstName: string = profileRes.data.first_name ?? '';
+        const lastName: string = profileRes.data.last_name ?? '';
+        const avatarUrl: string | null = profileRes.data.avatar_url ?? null;
         const groupsRes = await groupApi.list().catch(() => ({ data: [] }));
         const householdIds: string[] = groupsRes.data.map((g: { id: string }) => g.id);
-        authStore.setAuthenticated(true, userId, householdIds);
+        authStore.setAuthenticated(true, userId, householdIds, username, email, firstName, lastName);
+        if (avatarUrl) authStore.setAvatarUrl(avatarUrl);
       })
       .catch(() => authStore.clear())
       .finally(() => {
@@ -89,24 +97,8 @@ router.beforeEach(async (to) => {
   return true;
 });
 
-/** Exported for test imports — mounts the application. */
-export function bootstrapApplication() {
-  return createApp(App)
-    .use(Quasar, { plugins: { Dark }, config: { dark: (localStorage.getItem('choresync-dark') ?? 'auto') as boolean | 'auto' } })
-    .use(createPinia())
-    .use(router)
-    .mount('#app');
-}
-
-const savedDark = localStorage.getItem('choresync-dark');
-
 createApp(App)
-  .use(Quasar, {
-    plugins: { Dark },
-    config: {
-      dark: savedDark !== null ? savedDark === 'true' : 'auto',
-    },
-  })
+  .use(Quasar, { plugins: {} })
   .use(pinia)
   .use(router)
   .mount('#app');

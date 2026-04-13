@@ -1,5 +1,5 @@
 <template>
-  <q-page class="q-pa-lg flex flex-center">
+  <div class="q-pa-lg flex flex-center">
     <q-card class="q-pa-lg" style="max-width: 420px; width: 100%;">
       <div class="text-h5 q-mb-sm">Continue with Microsoft</div>
       <div class="text-body2 text-grey-7 q-mb-md">
@@ -15,7 +15,7 @@
       />
       <q-banner v-if="error" type="warning" dense>{{ error }}</q-banner>
     </q-card>
-  </q-page>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -52,8 +52,9 @@ async function startLogin() {
       scopes: ['openid', 'profile', 'email'],
     });
     const idToken = resp.idToken;
-    await authService.loginWithMicrosoft(idToken);
+    const res = await authService.loginWithMicrosoft(idToken);
     authStore.setAuthenticated(true);
+    authStore.setName(res.data?.first_name ?? '', res.data?.last_name ?? '');
     authStore.markBootstrapped();
     router.push({ name: 'home' });
   } catch (err: any) {

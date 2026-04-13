@@ -1,5 +1,5 @@
 <template>
-  <q-page class="q-pa-lg flex flex-center">
+  <div class="q-pa-lg flex flex-center">
     <q-card class="q-pa-lg" style="max-width: 420px; width: 100%;">
       <div class="text-h5 q-mb-sm">Continue with Google</div>
       <div class="text-body2 text-grey-7 q-mb-md">
@@ -10,7 +10,7 @@
       </div>
       <q-banner v-if="error" type="warning" dense>{{ error }}</q-banner>
     </q-card>
-  </q-page>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -56,8 +56,9 @@ async function handleCredential(response: any) {
     return;
   }
   try {
-    await authService.loginWithGoogle(response.credential);
+    const res = await authService.loginWithGoogle(response.credential);
     authStore.setAuthenticated(true);
+    authStore.setName(res.data?.first_name ?? '', res.data?.last_name ?? '');
     router.push({ name: 'home' });
   } catch (err: any) {
     error.value = err?.response?.data?.detail || err?.message || 'Google Sign-In failed.';

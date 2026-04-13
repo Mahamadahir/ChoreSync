@@ -1,19 +1,5 @@
-/* Dark mode overrides for custom elements that Quasar doesn't auto-invert */
-
-.body--dark .bubble-text {
-  background: #2a2a2a;
-  color: #e0e0e0;
-}
-
-.body--dark .chat-bubble.self .bubble-text {
-  background: #1565c0;
-  color: #ffffff;
-}
-
-.body--dark .chat-input-row {
-  border-top: 1px solid #3a3a3a;
-}
-
-.body--dark .group-card:hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+/* Legacy overrides — kept for Quasar dialog/chat components */
+.chat-bubble.self .bubble-text {
+  background: var(--cs-primary-container);
+  color: var(--cs-on-primary-container);
 }
