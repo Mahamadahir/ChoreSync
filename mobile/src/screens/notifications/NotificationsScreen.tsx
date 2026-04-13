@@ -83,8 +83,8 @@ function NotifCard({
   onNavigate,
 }: {
   notif: Notification;
-  onMarkRead: (id: number) => void;
-  onDismiss: (id: number) => void;
+  onMarkRead: (id: string | number) => void;
+  onDismiss: (id: string | number) => void;
   onSwapAccept: (notif: Notification) => void;
   onSwapDecline: (notif: Notification) => void;
   onNavigate: (notif: Notification) => void;
@@ -265,7 +265,7 @@ export default function NotificationsScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleMarkRead = useCallback(async (id: number) => {
+  const handleMarkRead = useCallback(async (id: string | number) => {
     storeMarkRead(id); // optimistic
     try {
       await notificationService.markRead(id);

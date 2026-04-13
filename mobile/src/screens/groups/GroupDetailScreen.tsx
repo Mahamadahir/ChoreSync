@@ -328,6 +328,7 @@ export default function GroupDetailScreen() {
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
+  const [chatDisconnected, setChatDisconnected] = useState(false);
   const [receiptModal, setReceiptModal] = useState<{ visible: boolean; msg: ChatMsg | null }>({ visible: false, msg: null });
   const flatListRef = useRef<ScrollView>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -359,31 +360,42 @@ export default function GroupDetailScreen() {
   useEffect(() => {
     if (activeTab !== 'chat') return;
 
-    let ws: WebSocket;
     let destroyed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    const reconnectAttempts = { count: 0 };
 
-    async function initChat() {
-      // Load REST history
+    function clearTimer() {
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    }
+
+    async function fetchHistory() {
       setChatLoading(true);
       try {
         const res = await groupService.messages(groupId);
         const msgs: ChatMsg[] = res.data;
         setChatMessages(msgs);
-        // Mark all messages from others as read
         const unread = msgs
           .filter(m => m.sender_id !== null && m.sender_id !== myUserId)
           .map(m => m.id);
         if (unread.length) groupService.markRead(groupId, unread).catch(() => {});
       } catch { /* ignore */ }
       setChatLoading(false);
+    }
 
-      // Open WebSocket
+    async function connectSocket() {
+      if (destroyed) return;
       const token = await tokenStorage.getAccess();
       if (!token || destroyed) return;
+
       const baseUrl = (Constants.expoConfig?.extra?.apiBaseUrl ?? 'http://localhost:8000')
         .replace(/^http/, 'ws');
-      ws = new WebSocket(`${baseUrl}/ws/chores/?token=${encodeURIComponent(token)}`);
+      const ws = new WebSocket(`${baseUrl}/ws/chores/?token=${encodeURIComponent(token)}`);
       wsRef.current = ws;
+
+      ws.onopen = () => {
+        reconnectAttempts.count = 0;
+        setChatDisconnected(false);
+      };
 
       ws.onmessage = (ev) => {
         try {
@@ -401,7 +413,6 @@ export default function GroupDetailScreen() {
               all_read: false,
             };
             setChatMessages(prev => [...prev, msg]);
-            // Mark as read immediately if from someone else
             if (data.sender_id !== myUserId) {
               groupService.markRead(groupId, [data.id]).catch(() => {});
               ws.send(JSON.stringify({ type: 'mark_read', group_id: groupId, message_ids: [data.id] }));
@@ -423,13 +434,29 @@ export default function GroupDetailScreen() {
       };
 
       ws.onerror = () => ws.close();
+
+      ws.onclose = () => {
+        if (destroyed) return;
+        setChatDisconnected(true);
+        // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.count), 30000);
+        reconnectAttempts.count += 1;
+        reconnectTimer = setTimeout(async () => {
+          // Backfill any missed messages before reconnecting
+          await fetchHistory();
+          connectSocket();
+        }, delay);
+      };
     }
 
-    initChat();
+    fetchHistory().then(() => connectSocket());
+
     return () => {
       destroyed = true;
+      clearTimer();
       wsRef.current?.close();
       wsRef.current = null;
+      setChatDisconnected(false);
     };
   }, [activeTab, groupId]);  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -623,6 +650,12 @@ export default function GroupDetailScreen() {
 
     return (
       <View>
+        {chatDisconnected && (
+          <View style={styles.chatReconnectBanner}>
+            <ActivityIndicator size="small" color={C.onSurfaceVariant} style={{ marginRight: 8 }} />
+            <Text style={styles.chatReconnectText}>Reconnecting…</Text>
+          </View>
+        )}
         <View style={styles.chatContainer}>
           <ScrollView
             ref={flatListRef}
@@ -1458,6 +1491,21 @@ const styles = StyleSheet.create({
   msIcon: { fontFamily: 'MaterialSymbols', fontSize: 24, color: C.onSurface },
 
   // Chat tab
+  chatReconnectBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: C.surfaceContainerHigh,
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    marginBottom: 8,
+  },
+  chatReconnectText: {
+    fontFamily: 'PlusJakartaSans-Regular',
+    fontSize: 12,
+    color: C.onSurfaceVariant,
+  },
   chatContainer: {
     backgroundColor: C.surfaceContainerLowest, borderRadius: 18,
     overflow: 'hidden', marginBottom: 8,

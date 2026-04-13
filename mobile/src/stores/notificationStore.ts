@@ -27,9 +27,9 @@ interface NotificationState {
   tasksBadge: number;
   setNotifications: (notifications: Notification[]) => void;
   prependNotification: (n: Notification) => void;
-  markRead: (id: number) => void;
-  markUnread: (id: number) => void;
-  dismiss: (id: number) => void;
+  markRead: (id: string | number) => void;
+  markUnread: (id: string | number) => void;
+  dismiss: (id: string | number) => void;
   groupBadge: (groupId: string) => number;
   tabBadge: (groupId: string, tab: string) => number;
 }
@@ -63,21 +63,24 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   },
 
   markRead: (id) => {
+    const sid = String(id);
     const updated = get().notifications.map((n) =>
-      n.id === id ? { ...n, read: true } : n,
+      String(n.id) === sid ? { ...n, read: true } : n,
     );
     set({ notifications: updated, ...computeDerived(updated) });
   },
 
   markUnread: (id) => {
+    const sid = String(id);
     const updated = get().notifications.map((n) =>
-      n.id === id ? { ...n, read: false } : n,
+      String(n.id) === sid ? { ...n, read: false } : n,
     );
     set({ notifications: updated, ...computeDerived(updated) });
   },
 
   dismiss: (id) => {
-    const updated = get().notifications.filter((n) => n.id !== id);
+    const sid = String(id);
+    const updated = get().notifications.filter((n) => String(n.id) !== sid);
     set({ notifications: updated, ...computeDerived(updated) });
   },
 

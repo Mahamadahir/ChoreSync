@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   RefreshControl,
   ScrollView,
@@ -15,6 +16,8 @@ import { useNavigation } from '@react-navigation/native';
 import { taskService } from '../../services/taskService';
 import { groupService } from '../../services/groupService';
 import { useAuthStore } from '../../stores/authStore';
+import { useNotificationStore } from '../../stores/notificationStore';
+import { notificationService } from '../../services/notificationService';
 import { api } from '../../services/api';
 import { useAppForegroundRefresh } from '../../hooks/useAppForegroundRefresh';
 import type { TaskOccurrence } from '../../types/task';
@@ -101,6 +104,55 @@ function TodayTaskRow({
   );
 }
 
+const SUGGESTION_TYPES = new Set([
+  'suggestion_pattern',
+  'suggestion_availability',
+  'suggestion_preference',
+  'suggestion_streak',
+]);
+
+const SUGGESTION_LABEL: Record<string, string> = {
+  suggestion_pattern:      'Pattern detected',
+  suggestion_availability: 'Availability insight',
+  suggestion_preference:   'Preference suggestion',
+  suggestion_streak:       'Streak suggestion',
+};
+
+// ── Smart Suggestion Card ─────────────────────────────────────
+function SuggestionCard({
+  title,
+  content,
+  onDismiss,
+  onView,
+}: {
+  title: string;
+  content: string;
+  onDismiss: () => void;
+  onView: () => void;
+}) {
+  return (
+    <View style={styles.suggCard}>
+      <View style={styles.suggLeft}>
+        <View style={styles.suggIconWrap}>
+          <Text style={[styles.msIcon, { color: C.tertiary, fontSize: 22 }]}>auto_awesome</Text>
+        </View>
+        <View style={styles.suggText}>
+          <Text style={styles.suggTitle} numberOfLines={1}>{title}</Text>
+          <Text style={styles.suggBody} numberOfLines={2}>{content}</Text>
+        </View>
+      </View>
+      <View style={styles.suggActions}>
+        <TouchableOpacity activeOpacity={0.7} onPress={onView} style={styles.suggViewBtn}>
+          <Text style={styles.suggViewText}>View</Text>
+        </TouchableOpacity>
+        <TouchableOpacity activeOpacity={0.7} onPress={onDismiss} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Text style={[styles.msIcon, { color: C.outline, fontSize: 18 }]}>close</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
 // ── Main screen ───────────────────────────────────────────────
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -155,6 +207,12 @@ export default function HomeScreen() {
       setStats(aggregated);
     }
 
+    // Surface any partial failures so the user knows something went wrong
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    if (failed > 0) {
+      Alert.alert('Some data failed to load', 'Pull down to retry.');
+    }
+
     setLoading(false);
     setRefreshing(false);
   }, []);
@@ -172,6 +230,28 @@ export default function HomeScreen() {
   }, [primaryGroup, todayTasks]);
 
   const displayName = user?.first_name || user?.username || 'there';
+
+  // Smart suggestion card — most recent unread suggestion notification
+  const { notifications, dismiss: storeDismiss } = useNotificationStore();
+  const suggestionNotif = notifications.find(
+    (n) => !n.read && !n.dismissed && SUGGESTION_TYPES.has(n.type),
+  ) ?? null;
+
+  async function handleDismissSuggestion() {
+    if (!suggestionNotif) return;
+    storeDismiss(suggestionNotif.id);
+    notificationService.dismiss(suggestionNotif.id).catch(() => {});
+  }
+
+  function handleViewSuggestion() {
+    if (!suggestionNotif?.group_id) return;
+    storeDismiss(suggestionNotif.id);
+    notificationService.dismiss(suggestionNotif.id).catch(() => {});
+    navigation.navigate('GroupsTab', {
+      screen: 'GroupDetail',
+      params: { groupId: suggestionNotif.group_id, initialTab: 'discover' },
+    });
+  }
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -221,6 +301,16 @@ export default function HomeScreen() {
             labelColor={`${C.secondary}b3`}
           />
         </View>
+
+        {/* ── Smart Suggestion Card ────────────── */}
+        {suggestionNotif && (
+          <SuggestionCard
+            title={SUGGESTION_LABEL[suggestionNotif.type] ?? 'Smart Suggestion'}
+            content={suggestionNotif.content}
+            onDismiss={handleDismissSuggestion}
+            onView={handleViewSuggestion}
+          />
+        )}
 
         {/* ── Today's Tasks ────────────────────── */}
         <View style={styles.section}>
@@ -574,4 +664,44 @@ const styles = StyleSheet.create({
 
   // Shared
   msIcon: { fontFamily: 'MaterialSymbols', fontSize: 24, color: C.onSurface },
+
+  // Suggestion card
+  suggCard: {
+    backgroundColor: C.tertiaryFixed,
+    borderRadius: 18,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  suggLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
+  suggIconWrap: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: `${C.tertiary}22`,
+    alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0,
+  },
+  suggText: { flex: 1 },
+  suggTitle: {
+    fontFamily: 'PlusJakartaSans-Bold',
+    fontSize: 13, color: C.onTertiaryFixed, letterSpacing: 0.2, marginBottom: 2,
+  },
+  suggBody: {
+    fontFamily: 'PlusJakartaSans-Regular',
+    fontSize: 12, color: `${C.onTertiaryFixed}cc`, lineHeight: 17,
+  },
+  suggActions: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 0 },
+  suggViewBtn: {
+    backgroundColor: C.tertiary,
+    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6,
+  },
+  suggViewText: {
+    fontFamily: 'PlusJakartaSans-Bold',
+    fontSize: 12, color: C.white,
+  },
 });

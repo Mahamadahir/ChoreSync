@@ -42,9 +42,6 @@ export const groupService = {
   deleteTemplate: (templateId: number) =>
     api.delete(`/api/task-templates/${templateId}/`),
 
-  generateOccurrences: (templateId: number) =>
-    api.post(`/api/task-templates/${templateId}/generate-occurrences/`),
-
   // Proposals
   proposals: (groupId: string) => api.get(`/api/groups/${groupId}/proposals/`),
 

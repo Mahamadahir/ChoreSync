@@ -20,6 +20,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Constants from 'expo-constants';
 import { useAuthStore } from '../../stores/authStore';
 import { api } from '../../services/api';
+import { authService } from '../../services/authService';
 import type { RootStackParamList } from '../../navigation/types';
 import { Palette as C } from '../../theme';
 
@@ -107,12 +108,16 @@ export default function ProfileScreen() {
 
   const [stats, setStats] = useState<{ current_streak_days: number; total_points: number } | null>(null);
   const [loadingStats, setLoadingStats] = useState(true);
+  const [statsError, setStatsError] = useState(false);
+  const [statsRetry, setStatsRetry] = useState(0);
   const [googleConnected, setGoogleConnected] = useState(false);
   const [outlookConnected, setOutlookConnected] = useState(false);
 
   // Badges
   const [badges, setBadges] = useState<any[]>([]);
   const [loadingBadges, setLoadingBadges] = useState(true);
+  const [badgesError, setBadgesError] = useState(false);
+  const [badgesRetry, setBadgesRetry] = useState(0);
   const [selectedBadge, setSelectedBadge] = useState<any>(null);
   const [badgeModalOpen, setBadgeModalOpen] = useState(false);
 
@@ -132,6 +137,14 @@ export default function ProfileScreen() {
   const [confirmPw, setConfirmPw] = useState('');
   const [pwSaving, setPwSaving] = useState(false);
 
+  // Edit profile modal (name / username / timezone)
+  const [editProfileModal, setEditProfileModal] = useState(false);
+  const [editFirstName, setEditFirstName] = useState('');
+  const [editLastName, setEditLastName] = useState('');
+  const [editUsername, setEditUsername] = useState('');
+  const [editTimezone, setEditTimezone] = useState('');
+  const [editProfileSaving, setEditProfileSaving] = useState(false);
+
   const displayName = user
     ? [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username
     : 'You';
@@ -143,6 +156,8 @@ export default function ProfileScreen() {
     .join('');
 
   useEffect(() => {
+    setLoadingStats(true);
+    setStatsError(false);
     async function loadStats() {
       try {
         const res = await api.get('/api/users/me/stats/');
@@ -156,26 +171,29 @@ export default function ProfileScreen() {
           setStats(raw);
         }
       } catch {
-        // non-critical
+        setStatsError(true);
       } finally {
         setLoadingStats(false);
       }
     }
+    loadStats();
+  }, [statsRetry]);
 
+  useEffect(() => {
+    setLoadingBadges(true);
+    setBadgesError(false);
     async function loadBadges() {
       try {
         const res = await api.get('/api/users/me/badges/');
         setBadges(Array.isArray(res.data) ? res.data : []);
       } catch {
-        // non-critical
+        setBadgesError(true);
       } finally {
         setLoadingBadges(false);
       }
     }
-
-    loadStats();
     loadBadges();
-  }, []);
+  }, [badgesRetry]);
 
   async function pickAvatar() {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -215,6 +233,43 @@ export default function ProfileScreen() {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Log Out', style: 'destructive', onPress: () => logout() },
     ]);
+  }
+
+  function openEditProfile() {
+    setEditFirstName(user?.first_name ?? '');
+    setEditLastName(user?.last_name ?? '');
+    setEditUsername(user?.username ?? '');
+    setEditTimezone(user?.timezone ?? '');
+    setEditProfileModal(true);
+  }
+
+  async function submitEditProfile() {
+    const username = editUsername.trim();
+    if (!username) {
+      Alert.alert('Validation', 'Username cannot be empty.');
+      return;
+    }
+    setEditProfileSaving(true);
+    try {
+      const res = await authService.updateProfile({
+        first_name: editFirstName.trim(),
+        last_name: editLastName.trim(),
+        username,
+        timezone: editTimezone.trim() || undefined,
+      });
+      // Refresh user in auth store so header/display name updates
+      const { setUser } = useAuthStore.getState();
+      setUser(res.data);
+      setEditProfileModal(false);
+      Alert.alert('Done', 'Profile updated.');
+    } catch (e: any) {
+      const msg = e?.response?.data?.username?.[0]
+        ?? e?.response?.data?.detail
+        ?? 'Could not update profile. Please try again.';
+      Alert.alert('Error', msg);
+    } finally {
+      setEditProfileSaving(false);
+    }
   }
 
   function handleGoogleToggle(val: boolean) {
@@ -343,6 +398,10 @@ export default function ProfileScreen() {
           <View style={styles.pillsRow}>
             {loadingStats ? (
               <ActivityIndicator color={C.primary} size="small" />
+            ) : statsError ? (
+              <TouchableOpacity onPress={() => setStatsRetry((n) => n + 1)}>
+                <Text style={[styles.bentoCardValue, { color: C.outline }]}>Failed to load stats — tap to retry</Text>
+              </TouchableOpacity>
             ) : (
               <>
                 {/* Streak — secondary-container */}
@@ -371,7 +430,26 @@ export default function ProfileScreen() {
         {/* ── Account Settings Bento Grid ────────── */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>ACCOUNT SETTINGS</Text>
-          {/* Row 1: Email + Password side by side */}
+          {/* Row 1: Edit Profile full-width */}
+          <TouchableOpacity
+            onPress={openEditProfile}
+            activeOpacity={0.75}
+            style={[styles.notifCard, { marginBottom: 10 }]}
+          >
+            <View style={styles.notifCardLeft}>
+              <View style={styles.notifIconWrap}>
+                <Text style={[styles.msIcon, { color: C.primary, fontSize: 22 }]}>manage_accounts</Text>
+              </View>
+              <View>
+                <Text style={styles.bentoCardLabel}>EDIT PROFILE</Text>
+                <Text style={styles.bentoCardValue}>
+                  {[user?.first_name, user?.last_name].filter(Boolean).join(' ') || user?.username || 'Tap to edit'}
+                </Text>
+              </View>
+            </View>
+            <Text style={[styles.msIcon, { color: C.outline, fontSize: 18 }]}>chevron_right</Text>
+          </TouchableOpacity>
+          {/* Row 2: Email + Password side by side */}
           <View style={styles.bentoRow}>
             <BentoCard
               icon="mail"
@@ -441,6 +519,10 @@ export default function ProfileScreen() {
           <Text style={styles.sectionLabel}>ACHIEVEMENTS</Text>
           {loadingBadges ? (
             <ActivityIndicator color={C.primary} size="small" style={{ alignSelf: 'flex-start' }} />
+          ) : badgesError ? (
+            <TouchableOpacity onPress={() => setBadgesRetry((n) => n + 1)}>
+              <Text style={[styles.badgeEmptyText, { color: C.outline }]}>Failed to load — tap to retry</Text>
+            </TouchableOpacity>
           ) : badges.length === 0 ? (
             <View style={styles.badgeEmpty}>
               <Text style={[styles.msIcon, { color: C.outline, fontSize: 28 }]}>emoji_events</Text>
@@ -566,6 +648,69 @@ export default function ProfileScreen() {
                 disabled={pwSaving}
               >
                 {pwSaving
+                  ? <ActivityIndicator color={C.white} size="small" />
+                  : <Text style={[styles.modalBtnText, { color: C.white }]}>Save</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Edit Profile Modal ──────────────────── */}
+      <Modal visible={editProfileModal} transparent animationType="slide" onRequestClose={() => setEditProfileModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Edit Profile</Text>
+            <Text style={styles.modalLabel}>First Name</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editFirstName}
+              onChangeText={setEditFirstName}
+              placeholder="First name"
+              placeholderTextColor={C.outline}
+            />
+            <Text style={[styles.modalLabel, { marginTop: 12 }]}>Last Name</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editLastName}
+              onChangeText={setEditLastName}
+              placeholder="Last name"
+              placeholderTextColor={C.outline}
+            />
+            <Text style={[styles.modalLabel, { marginTop: 12 }]}>Username</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editUsername}
+              onChangeText={setEditUsername}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="username"
+              placeholderTextColor={C.outline}
+            />
+            <Text style={[styles.modalLabel, { marginTop: 12 }]}>Timezone</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editTimezone}
+              onChangeText={setEditTimezone}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="e.g. Europe/London"
+              placeholderTextColor={C.outline}
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnGhost]}
+                onPress={() => setEditProfileModal(false)}
+              >
+                <Text style={[styles.modalBtnText, { color: C.onSurfaceVariant }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: C.primary }]}
+                onPress={submitEditProfile}
+                disabled={editProfileSaving}
+              >
+                {editProfileSaving
                   ? <ActivityIndicator color={C.white} size="small" />
                   : <Text style={[styles.modalBtnText, { color: C.white }]}>Save</Text>
                 }

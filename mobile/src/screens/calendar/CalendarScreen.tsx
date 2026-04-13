@@ -29,6 +29,7 @@ import {
 } from '../../services/calendarService';
 import { api } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
+import { useNotificationStore } from '../../stores/notificationStore';
 import { Palette as C } from '../../theme';
 
 type CalendarEvent = {
@@ -435,6 +436,18 @@ function CalendarViewTab({ insets }: { insets: ReturnType<typeof useSafeAreaInse
   }, [selectedDate]);
 
   useEffect(() => { loadEvents(selectedDate); }, [selectedDate]);
+
+  // ── Live-refresh: re-fetch when a calendar_sync_complete notification arrives ──
+  const syncCount = useNotificationStore(
+    (s) => s.notifications.filter((n) => n.type === 'calendar_sync_complete').length,
+  );
+  const prevSyncCount = useRef(syncCount);
+  useEffect(() => {
+    if (syncCount > prevSyncCount.current) {
+      loadEvents(selectedDate);
+    }
+    prevSyncCount.current = syncCount;
+  }, [syncCount, selectedDate, loadEvents]);
 
   const dayEvents = events.filter((ev) => ev.start.split('T')[0] === selectedDate);
 

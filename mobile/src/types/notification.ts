@@ -17,7 +17,7 @@ export type NotificationType =
   | 'task_suggestion';
 
 export interface Notification {
-  id: number;
+  id: string | number;
   type: NotificationType;
   title: string;
   content: string;

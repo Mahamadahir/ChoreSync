@@ -489,6 +489,25 @@ export default function TaskDetailScreen() {
     Alert.alert('Listed!', `Your task is now on the marketplace${bonusPoints > 0 ? ` with +${bonusPoints} bonus points` : ''}.`);
   }
 
+  async function handleCancelListing() {
+    if (!task?.marketplace_listing_id) return;
+    Alert.alert('Remove Listing', 'Remove this task from the marketplace?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await groupService.cancelListing(task.marketplace_listing_id!);
+            setTask((t) => t ? { ...t, on_marketplace: false, marketplace_listing_id: null } : t);
+          } catch (e: any) {
+            Alert.alert('Error', e?.response?.data?.detail ?? 'Could not remove listing.');
+          }
+        },
+      },
+    ]);
+  }
+
   function confirmEmergencyReassign() {
     Alert.alert(
       'Emergency Reassignment',
@@ -841,13 +860,14 @@ export default function TaskDetailScreen() {
 
             <TouchableOpacity
               activeOpacity={0.85}
-              onPress={() => setShowMarketplace(true)}
-              disabled={task.on_marketplace}
-              style={[styles.secBtn, task.on_marketplace && { opacity: 0.4 }]}
+              onPress={task.on_marketplace ? handleCancelListing : () => setShowMarketplace(true)}
+              style={styles.secBtn}
             >
-              <Text style={[styles.msIcon, { fontSize: 16, color: C.onSurfaceVariant }]}>storefront</Text>
-              <Text style={styles.secBtnText}>
-                {task.on_marketplace ? 'Listed' : 'Marketplace'}
+              <Text style={[styles.msIcon, { fontSize: 16, color: task.on_marketplace ? C.error : C.onSurfaceVariant }]}>
+                {task.on_marketplace ? 'remove_shopping_cart' : 'storefront'}
+              </Text>
+              <Text style={[styles.secBtnText, task.on_marketplace && { color: C.error }]}>
+                {task.on_marketplace ? 'Remove Listing' : 'Marketplace'}
               </Text>
             </TouchableOpacity>
 

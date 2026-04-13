@@ -6,9 +6,9 @@ export const notificationService = {
   history: (params?: { limit?: number; offset?: number }) =>
     api.get('/api/notifications/history/', { params }),
 
-  markRead: (id: number) => api.post(`/api/notifications/${id}/read/`),
+  markRead: (id: string | number) => api.post(`/api/notifications/${id}/read/`),
 
-  dismiss: (id: number) => api.post(`/api/notifications/${id}/dismiss/`),
+  dismiss: (id: string | number) => api.post(`/api/notifications/${id}/dismiss/`),
 
   getPrefs: () => api.get('/api/users/me/notification-preferences/'),
 

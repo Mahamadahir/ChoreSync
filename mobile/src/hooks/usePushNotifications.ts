@@ -31,7 +31,7 @@ export function usePushNotifications() {
 
   // Navigate to the correct screen based on notification metadata.
   // Mirrors the logic in NotificationsScreen.handleCardNavigate.
-  function handleNavigate(data: Partial<Notification & { id?: number }>) {
+  function handleNavigate(data: Partial<Notification>) {
     const type = data.type;
     const groupId = data.group_id;
     const taskId = data.task_occurrence_id;
@@ -81,7 +81,7 @@ export function usePushNotifications() {
     // a freshly-opened app before the WS handshake completes.
     receivedSub.current = Notifications.addNotificationReceivedListener(
       (notification) => {
-        const data = notification.request.content.data as Partial<Notification>;
+        const data = notification.request.content.data as unknown as Partial<Notification>;
         if (data?.id) {
           prependNotification(data as Notification);
         }
@@ -91,7 +91,7 @@ export function usePushNotifications() {
     // Tap from background / notification centre: navigate.
     responseSub.current = Notifications.addNotificationResponseReceivedListener(
       (response) => {
-        const data = response.notification.request.content.data as Partial<Notification>;
+        const data = response.notification.request.content.data as unknown as Partial<Notification>;
         handleNavigate(data);
       },
     );
@@ -99,7 +99,7 @@ export function usePushNotifications() {
     // Cold-start tap (app was killed): handle the response that launched the app.
     Notifications.getLastNotificationResponseAsync().then((response) => {
       if (response?.notification.request.content.data) {
-        const data = response.notification.request.content.data as Partial<Notification>;
+        const data = response.notification.request.content.data as unknown as Partial<Notification>;
         // Delay slightly so navigation stack is fully mounted before we push.
         setTimeout(() => handleNavigate(data), 500);
       }
