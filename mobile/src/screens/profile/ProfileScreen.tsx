@@ -155,6 +155,15 @@ export default function ProfileScreen() {
     .map((w: string) => w[0]?.toUpperCase() ?? '')
     .join('');
 
+  // Hydrate calendar connection status from backend on mount
+  useEffect(() => {
+    api.get('/api/calendars/').then((res) => {
+      const cals: { provider: string }[] = Array.isArray(res.data) ? res.data : [];
+      setGoogleConnected(cals.some((c) => c.provider === 'google'));
+      setOutlookConnected(cals.some((c) => c.provider === 'outlook'));
+    }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     setLoadingStats(true);
     setStatsError(false);

@@ -343,10 +343,12 @@ function formatDateLabel(dateStr: string): string {
   return dt.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 }
 
-/** Extract the HH:MM portion from an ISO datetime string. */
+/** Extract the HH:MM portion from an ISO datetime string in local time. */
 function isoToHHMM(iso: string): string {
-  const t = iso.split('T')[1] ?? '09:00';
-  return t.substring(0, 5); // "HH:MM"
+  const d = new Date(iso);
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
 }
 
 /** Validate that a string is a valid HH:MM time. */
@@ -356,16 +358,16 @@ function isValidHHMM(t: string): boolean {
   return h >= 0 && h <= 23 && m >= 0 && m <= 59;
 }
 
-/** Build an ISO-8601 UTC datetime string from a local date + HH:MM time. */
+/** Build an ISO-8601 datetime string from a local date + HH:MM time, preserving local timezone. */
 function buildIso(date: string, time: string): string {
-  return `${date}T${time.padStart(5, '0')}:00Z`;
+  return new Date(`${date}T${time.padStart(5, '0')}:00`).toISOString();
 }
 
 type UserCalendar = { id: number; name: string; provider: string; color: string; push_enabled: boolean };
 
 // ── Calendar event view tab ───────────────────────────────────
 function CalendarViewTab({ insets }: { insets: ReturnType<typeof useSafeAreaInsets> }) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local timezone
   const [selectedDate, setSelectedDate] = useState(today);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -415,7 +417,7 @@ function CalendarViewTab({ insets }: { insets: ReturnType<typeof useSafeAreaInse
       // Build marked dates for the calendar dots
       const marks: Record<string, any> = {};
       data.forEach((ev) => {
-        const d = ev.start.split('T')[0];
+        const d = new Date(ev.start).toLocaleDateString('en-CA');
         marks[d] = {
           marked: true,
           dotColor: ev.calendar_color || C.primary,
@@ -449,7 +451,7 @@ function CalendarViewTab({ insets }: { insets: ReturnType<typeof useSafeAreaInse
     prevSyncCount.current = syncCount;
   }, [syncCount, selectedDate, loadEvents]);
 
-  const dayEvents = events.filter((ev) => ev.start.split('T')[0] === selectedDate);
+  const dayEvents = events.filter((ev) => new Date(ev.start).toLocaleDateString('en-CA') === selectedDate);
 
   function defaultCalendarId(): number | null {
     // Prefer: first push-enabled non-internal (Google/Outlook), then any, then null

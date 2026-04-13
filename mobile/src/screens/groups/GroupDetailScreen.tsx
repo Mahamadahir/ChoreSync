@@ -350,6 +350,11 @@ export default function GroupDetailScreen() {
     if (membersRes.status === 'fulfilled') setMembers(membersRes.value.data.results ?? membersRes.value.data);
     if (lbRes.status === 'fulfilled') setLeaderboard(lbRes.value.data.results ?? lbRes.value.data);
 
+    const failed = [grpRes, tasksRes, membersRes, lbRes].filter((r) => r.status === 'rejected').length;
+    if (failed > 0) {
+      Alert.alert('Some sections failed to load', 'Pull down to retry.');
+    }
+
     setLoading(false);
     setRefreshing(false);
   }, [groupId]);

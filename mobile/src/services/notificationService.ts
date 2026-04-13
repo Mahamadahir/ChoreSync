@@ -3,9 +3,6 @@ import { api } from './api';
 export const notificationService = {
   list: () => api.get('/api/notifications/'),
 
-  history: (params?: { limit?: number; offset?: number }) =>
-    api.get('/api/notifications/history/', { params }),
-
   markRead: (id: string | number) => api.post(`/api/notifications/${id}/read/`),
 
   dismiss: (id: string | number) => api.post(`/api/notifications/${id}/dismiss/`),
