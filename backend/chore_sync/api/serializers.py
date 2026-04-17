@@ -127,5 +127,4 @@ class InviteMemberSerializer(serializers.Serializer):
 
 class GroupSettingsSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=100, required=False)
-    photo_proof_required = serializers.BooleanField(required=False)
     task_proposal_voting_required = serializers.BooleanField(required=False)

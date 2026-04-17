@@ -8,12 +8,15 @@ any moderator edits, making the diff a built-in audit log.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from django.db import transaction
 from django.utils import timezone
 
 from chore_sync.models import GroupMembership, TaskProposal, TaskTemplate
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -173,7 +176,12 @@ class ProposalService:
                 task_template_id=str(template.id)
             )
         except Exception:
-            pass  # Celery beat will pick it up on the next tick if this fails
+            logger.exception(
+                "proposal approve: occurrence generation failed for template_id=%s — scheduling async retry",
+                template.id,
+            )
+            from chore_sync.tasks import spawn_next_occurrence
+            spawn_next_occurrence.delay(str(template.id))
 
         self._notify_proposer_approved(proposal)
         return proposal

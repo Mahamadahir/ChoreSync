@@ -212,9 +212,10 @@ $secrets = @{
     CELERY_BROKER_URL      = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND  = "redis://localhost:6379/0"
 
-    # AI (Ollama — change if using a remote model)
-    OLLAMA_URL             = "http://localhost:11434/api/chat"
-    OLLAMA_MODEL           = "phi3:mini"
+    # AI (Gemini — primary: gemini-3.1-flash-lite-preview, fallback: gemma-4-31b-it)
+    GEMINI_API_KEY         = "FILL_IN_GEMINI_API_KEY"
+    GEMINI_MODEL           = "gemini-3.1-flash-lite-preview"
+    GEMINI_FALLBACK_MODEL  = "gemma-4-31b-it"
 }
 
 # Carry over OAuth/email secrets from existing file (don't overwrite on re-run)

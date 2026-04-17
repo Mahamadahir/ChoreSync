@@ -222,7 +222,6 @@ class Group(models.Model):
             "family/work_team/custom: owner chooses role per invite."
         ),
     )
-    photo_proof_required = models.BooleanField(default=False)
     task_proposal_voting_required = models.BooleanField(
         default=False,
         help_text=(

@@ -451,7 +451,6 @@
         <template v-if="group.role === 'moderator'">
           <div class="cs-section-title">Group Configuration</div>
           <div class="cs-card" style="max-width:440px;margin-bottom:20px">
-            <q-toggle v-model="settings.photo_proof_required" label="Require photo proof on task completion" class="q-mb-sm" />
             <q-toggle v-model="settings.task_proposal_voting_required" label="Restrict task creation to moderators (members suggest, moderators approve)" />
             <div style="margin-top:16px">
               <button class="cs-btn-primary" :disabled="settings.loading" @click="saveSettings">
@@ -463,22 +462,22 @@
             </div>
           </div>
 
-          <!-- Task templates -->
+          <!-- Recurring tasks -->
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-            <div class="cs-section-title" style="margin:0">Task Templates</div>
+            <div class="cs-section-title" style="margin:0">Recurring Tasks</div>
             <button class="cs-btn-primary" style="padding:7px 14px;font-size:13px;gap:4px" @click="showTemplateForm = true">
               <span class="material-symbols-outlined" style="font-size:16px">add</span>
-              New Template
+              New Recurring Task
             </button>
           </div>
-          <div v-if="templates.length === 0" style="font-size:13px;color:var(--cs-muted)">No templates yet.</div>
+          <div v-if="templates.length === 0" style="font-size:13px;color:var(--cs-muted)">No recurring tasks yet.</div>
           <div v-else class="cs-card" style="padding:0;overflow:hidden;max-width:560px">
             <div v-for="tmpl in templates" :key="tmpl.id" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--cs-outline-variant)">
               <div>
                 <div style="font-size:14px;font-weight:600">{{ tmpl.name }}</div>
                 <div style="font-size:11px;color:var(--cs-muted)">{{ tmpl.category }} · {{ tmpl.recurring_choice }}</div>
               </div>
-              <button class="cs-icon-btn" style="color:var(--cs-error)" @click="deleteTemplate(tmpl.id)" title="Delete template">
+              <button class="cs-icon-btn" style="color:var(--cs-error)" @click="deleteTemplate(tmpl.id)" title="Delete recurring task">
                 <span class="material-symbols-outlined">delete</span>
               </button>
             </div>
@@ -1104,7 +1103,6 @@ const templateForm = ref({
 
 // Settings
 const settings = ref({
-  photo_proof_required: false,
   task_proposal_voting_required: false,
   loading: false, message: '', error: false,
 });
@@ -1174,7 +1172,6 @@ async function loadAll() {
     group.value = gRes.data;
     members.value = mRes.data;
     tasks.value = tRes.data;
-    settings.value.photo_proof_required = gRes.data.photo_proof_required;
     settings.value.task_proposal_voting_required = gRes.data.task_proposal_voting_required;
     // Set sensible default invite role based on group type
     invite.value.role = gRes.data.group_type === 'flatshare' ? 'moderator' : 'member';
@@ -1539,7 +1536,6 @@ async function saveSettings() {
   settings.value.message = '';
   try {
     await groupApi.settings(groupId, {
-      photo_proof_required: settings.value.photo_proof_required,
       task_proposal_voting_required: settings.value.task_proposal_voting_required,
     });
     settings.value.message = 'Settings saved.';

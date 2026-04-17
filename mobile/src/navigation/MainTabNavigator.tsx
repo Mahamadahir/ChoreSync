@@ -193,6 +193,7 @@ function TabNavigator() {
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
+        tabBarHideOnKeyboard: true,
         tabBarStyle: {
           backgroundColor: Colors.navBackground,
           borderTopColor: Colors.navBorder,

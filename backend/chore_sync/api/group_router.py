@@ -61,7 +61,6 @@ class GroupListCreateAPIView(APIView):
                 "group_code": m.group.group_code,
                 "role": m.role,
                 "my_role": m.role,
-                "photo_proof_required": m.group.photo_proof_required,
                 "member_count": member_counts.get(m.group_id, 0),
                 "open_task_count": open_task_counts.get(m.group_id, 0),
             }
@@ -126,7 +125,6 @@ class GroupDetailAPIView(APIView):
             "my_role": membership.role,
             "member_count": member_count,
             "reassignment_rule": g.reassignment_rule,
-            "photo_proof_required": g.photo_proof_required,
             "task_proposal_voting_required": g.task_proposal_voting_required,
             "group_type": g.group_type,
         })
@@ -227,7 +225,7 @@ class GroupSettingsAPIView(APIView):
 
         group = membership.group
         update_fields = []
-        for field in ('name', 'photo_proof_required', 'task_proposal_voting_required'):
+        for field in ('name', 'task_proposal_voting_required'):
             if field in serializer.validated_data:
                 setattr(group, field, serializer.validated_data[field])
                 update_fields.append(field)
@@ -236,7 +234,6 @@ class GroupSettingsAPIView(APIView):
 
         return Response({
             "name": group.name,
-            "photo_proof_required": group.photo_proof_required,
             "task_proposal_voting_required": group.task_proposal_voting_required,
             "group_type": group.group_type,
         })

@@ -249,15 +249,22 @@ class TaskLifecycleService:
         group = template.group
         deadline = occurrence.deadline
 
-        stage1: dict[str, float] = GroupOrchestrator().compute_assignment_matrix(
-            group_id=str(group.id)
+        matrix_detailed = GroupOrchestrator().compute_assignment_matrix(
+            group_id=str(group.id), detailed=True
         )
+        stage1: dict[str, float] = {uid: v['score'] for uid, v in matrix_detailed.items()}
+        tasks_norm: dict[str, float] = {uid: v['tasks_score'] for uid, v in matrix_detailed.items()}
+        time_norm: dict[str, float] = {uid: v['time_score'] for uid, v in matrix_detailed.items()}
+        points_norm: dict[str, float] = {uid: v['points_score'] for uid, v in matrix_detailed.items()}
 
         # Strip excluded candidates (fallback: use full pool if nothing left)
         if excluded_ids:
             filtered = {uid: s for uid, s in stage1.items() if uid not in excluded_ids}
             if filtered:
                 stage1 = filtered
+                tasks_norm = {uid: tasks_norm[uid] for uid in stage1}
+                time_norm = {uid: time_norm[uid] for uid in stage1}
+                points_norm = {uid: points_norm[uid] for uid in stage1}
 
         # Bulk-fetch usernames for breakdown payload
         username_map: dict[str, str] = {
@@ -360,6 +367,9 @@ class TaskLifecycleService:
                     'user_id': uid,
                     'username': username_map.get(uid, uid[:8]),
                     'stage1_score': round(stage1[uid], 4),
+                    'tasks_score': round(tasks_norm[uid], 4),
+                    'time_score': round(time_norm[uid], 4),
+                    'points_score': round(points_norm[uid], 4),
                     'pref_multiplier': pref_mult[uid],
                     'affinity_multiplier': affinity_mult[uid],
                     'calendar_penalty': cal_penalty[uid],
@@ -629,7 +639,7 @@ class TaskLifecycleService:
             raise PermissionError("Only the assigned user or a group moderator can update this task.")
 
         if completed:
-            needs_proof = group.photo_proof_required or occurrence.template.photo_proof_required
+            needs_proof = occurrence.template.photo_proof_required
             if needs_proof and not occurrence.photo_proof:
                 raise ValueError("Photo proof is required to complete this task.")
 
@@ -1005,6 +1015,24 @@ class TaskLifecycleService:
                 ),
                 task_occurrence_id=occurrence.id,
                 action_url=f"/tasks/{occurrence.id}",
+            )
+
+        # Schedule auto-reassignment via pipeline if no one volunteers in time.
+        # Wait = max(30 min, min(6 h, 40% of remaining time)).
+        # If deadline is under 2 h away, give a 5-minute broadcast window only.
+        from chore_sync.tasks import auto_reassign_emergency_orphan
+        time_until = (occurrence.deadline - timezone.now()).total_seconds()
+        if time_until > 0:
+            if time_until < 7200:  # < 2 h — act quickly
+                wait_seconds = 300  # 5 min
+            else:
+                wait_seconds = int(max(1800, min(21600, time_until * 0.4)))
+            auto_reassign_emergency_orphan.apply_async(
+                args=[occurrence.id], countdown=wait_seconds
+            )
+            logger.info(
+                "emergency_reassign: scheduled auto-reassign for occurrence_id=%s in %ds",
+                occurrence.id, wait_seconds,
             )
 
         return occurrence

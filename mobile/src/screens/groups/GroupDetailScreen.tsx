@@ -3,7 +3,9 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -329,6 +331,8 @@ export default function GroupDetailScreen() {
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatDisconnected, setChatDisconnected] = useState(false);
+  // KAV offset = height of everything above the chat area (topBar + hero + tabs)
+  const [chatKvOffset, setChatKvOffset] = useState(0);
   const [receiptModal, setReceiptModal] = useState<{ visible: boolean; msg: ChatMsg | null }>({ visible: false, msg: null });
   const flatListRef = useRef<ScrollView>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -588,7 +592,7 @@ export default function GroupDetailScreen() {
           <View style={styles.emptyState}>
             <Text style={[styles.msIcon, { fontSize: 48, color: C.outlineVariant }]}>assignment</Text>
             <Text style={styles.emptyTitle}>No tasks yet.</Text>
-            <Text style={styles.emptySub}>Add task templates in Settings to get started.</Text>
+            <Text style={styles.emptySub}>Add recurring tasks in Settings to get started.</Text>
           </View>
         ) : (
           <View style={styles.taskCardList}>
@@ -647,78 +651,82 @@ export default function GroupDetailScreen() {
 
     if (chatLoading) {
       return (
-        <View style={[styles.tabContent, { alignItems: 'center', paddingVertical: 40 }]}>
+        <View style={[styles.chatRoot, { alignItems: 'center', justifyContent: 'center' }]}>
           <ActivityIndicator color={C.primary} />
         </View>
       );
     }
 
     return (
-      <View>
+      <KeyboardAvoidingView
+        style={styles.chatRoot}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? chatKvOffset : 0}
+      >
         {chatDisconnected && (
           <View style={styles.chatReconnectBanner}>
             <ActivityIndicator size="small" color={C.onSurfaceVariant} style={{ marginRight: 8 }} />
             <Text style={styles.chatReconnectText}>Reconnecting…</Text>
           </View>
         )}
-        <View style={styles.chatContainer}>
-          <ScrollView
-            ref={flatListRef}
-            style={styles.chatScroll}
-            contentContainerStyle={styles.chatList}
-            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
-          >
-            {chatMessages.length === 0 ? (
-              <View style={{ alignItems: 'center', paddingVertical: 48 }}>
-                <Text style={[styles.msIcon, { fontSize: 40, color: C.outlineVariant }]}>chat_bubble</Text>
-                <Text style={styles.emptyTitle}>No messages yet</Text>
-                <Text style={styles.emptySub}>Say hello to your group!</Text>
-              </View>
-            ) : chatMessages.map((msg) => {
-              const isMine = msg.sender_id === myUserId;
-              return (
-                <Pressable
-                  key={msg.id}
-                  onLongPress={() => setReceiptModal({ visible: true, msg })}
-                  style={[styles.chatBubbleRow, isMine ? styles.chatBubbleRowSelf : styles.chatBubbleRowOther]}
-                >
-                  <View style={[styles.chatBubble, isMine ? styles.chatBubbleSelf : styles.chatBubbleOther]}>
-                    {!isMine && <Text style={styles.chatSenderName}>{msg.username}</Text>}
-                    <Text style={[styles.chatBubbleText, isMine && styles.chatBubbleTextSelf]}>
-                      {msg.body}
-                    </Text>
-                    <View style={styles.chatBubbleMeta}>
-                      <Text style={[styles.chatBubbleTime, isMine && styles.chatBubbleTimeSelf]}>
-                        {formatMsgTime(msg.sent_at)}
-                      </Text>
-                      {isMine && <TickIcon msg={msg} />}
-                    </View>
-                  </View>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
 
-          {/* Input row */}
-          <View style={styles.chatInputRow}>
-            <TextInput
-              style={styles.chatInput}
-              value={chatInput}
-              onChangeText={setChatInput}
-              placeholder="Type a message…"
-              placeholderTextColor={C.stone500}
-              onSubmitEditing={sendChatMessage}
-              returnKeyType="send"
-              multiline={false}
-            />
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={sendChatMessage}
-              style={styles.chatSendBtn}
-            >
-              <Text style={[styles.msIcon, { color: C.white, fontSize: 22 }]}>send</Text>
-            </TouchableOpacity>
-          </View>
+        <ScrollView
+          ref={flatListRef}
+          style={styles.chatScroll}
+          contentContainerStyle={styles.chatList}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
+          keyboardShouldPersistTaps="handled"
+        >
+          {chatMessages.length === 0 ? (
+            <View style={{ alignItems: 'center', paddingVertical: 48 }}>
+              <Text style={[styles.msIcon, { fontSize: 40, color: C.outlineVariant }]}>chat_bubble</Text>
+              <Text style={styles.emptyTitle}>No messages yet</Text>
+              <Text style={styles.emptySub}>Say hello to your group!</Text>
+            </View>
+          ) : chatMessages.map((msg) => {
+            const isMine = msg.sender_id === myUserId;
+            return (
+              <Pressable
+                key={msg.id}
+                onLongPress={() => setReceiptModal({ visible: true, msg })}
+                style={[styles.chatBubbleRow, isMine ? styles.chatBubbleRowSelf : styles.chatBubbleRowOther]}
+              >
+                <View style={[styles.chatBubble, isMine ? styles.chatBubbleSelf : styles.chatBubbleOther]}>
+                  {!isMine && <Text style={styles.chatSenderName}>{msg.username}</Text>}
+                  <Text style={[styles.chatBubbleText, isMine && styles.chatBubbleTextSelf]}>
+                    {msg.body}
+                  </Text>
+                  <View style={styles.chatBubbleMeta}>
+                    <Text style={[styles.chatBubbleTime, isMine && styles.chatBubbleTimeSelf]}>
+                      {formatMsgTime(msg.sent_at)}
+                    </Text>
+                    {isMine && <TickIcon msg={msg} />}
+                  </View>
+                </View>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        {/* Input row — lifted by the outer KeyboardAvoidingView */}
+        <View style={[styles.chatInputRow, { paddingBottom: insets.bottom || 12 }]}>
+          <TextInput
+            style={styles.chatInput}
+            value={chatInput}
+            onChangeText={setChatInput}
+            placeholder="Type a message…"
+            placeholderTextColor={C.stone500}
+            onSubmitEditing={sendChatMessage}
+            returnKeyType="send"
+            multiline={false}
+          />
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={sendChatMessage}
+            style={styles.chatSendBtn}
+          >
+            <Text style={[styles.msIcon, { color: C.white, fontSize: 22 }]}>send</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Receipt modal */}
@@ -760,7 +768,7 @@ export default function GroupDetailScreen() {
             </View>
           </Pressable>
         </Modal>
-      </View>
+      </KeyboardAvoidingView>
     );
   }
 
@@ -988,7 +996,7 @@ export default function GroupDetailScreen() {
           <Text style={[styles.msIcon, { color: C.primary, fontSize: 28 }]}>settings</Text>
           <View style={styles.discoverCardText}>
             <Text style={styles.discoverCardTitle}>Group Settings</Text>
-            <Text style={styles.discoverCardSub}>Name, fairness, photo proof, task templates</Text>
+            <Text style={styles.discoverCardSub}>Name, fairness, photo proof, recurring tasks</Text>
           </View>
           <Text style={[styles.msIcon, { color: C.onSurfaceVariant, fontSize: 20 }]}>chevron_right</Text>
         </TouchableOpacity>
@@ -1041,13 +1049,10 @@ export default function GroupDetailScreen() {
         </View>
       </View>
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={C.primary} />
-        }
+      {/* ── Hero + Tabs (always a plain View — no flex:0 ScrollView hack) ── */}
+      <View
+        style={styles.heroTabsContainer}
+        onLayout={e => setChatKvOffset(insets.top + 56 + e.nativeEvent.layout.height)}
       >
         {/* ── Group Hero ───────────────────────── */}
         <View style={styles.heroSection}>
@@ -1125,17 +1130,28 @@ export default function GroupDetailScreen() {
             );
           })}
         </ScrollView>
+      </View>
 
-        {/* ── Tab content ──────────────────────── */}
-        {activeTab === 'tasks'     && renderTasks()}
-        {activeTab === 'people'    && renderPeople()}
-        {activeTab === 'chat'      && renderChat()}
-        {activeTab === 'discover'  && renderDiscover()}
-        {activeTab === 'analytics' && renderAnalytics()}
-        {activeTab === 'settings'  && renderSettings()}
-
-        <View style={{ height: 40 }} />
-      </ScrollView>
+      {/* ── Content area: chat fills remaining height; other tabs scroll ── */}
+      {activeTab === 'chat' ? (
+        renderChat()
+      ) : (
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          style={styles.contentScroll}
+          contentContainerStyle={styles.contentScrollContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={C.primary} />
+          }
+        >
+          {activeTab === 'tasks'     && renderTasks()}
+          {activeTab === 'people'    && renderPeople()}
+          {activeTab === 'discover'  && renderDiscover()}
+          {activeTab === 'analytics' && renderAnalytics()}
+          {activeTab === 'settings'  && renderSettings()}
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -1169,8 +1185,11 @@ const styles = StyleSheet.create({
     width: 36, height: 36, borderRadius: 18,
   },
 
-  scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 24, paddingTop: 8 },
+  // Hero + tabs wrapper (plain View — no flex:0 ScrollView hack needed)
+  heroTabsContainer: { paddingHorizontal: 24, paddingTop: 8, backgroundColor: C.bg },
+  // Scrollable content for all non-chat tabs
+  contentScroll: { flex: 1 },
+  contentScrollContent: { paddingHorizontal: 24 },
 
   // Hero
   heroSection: { marginBottom: 24, gap: 6 },
@@ -1511,14 +1530,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: C.onSurfaceVariant,
   },
-  chatContainer: {
-    backgroundColor: C.surfaceContainerLowest, borderRadius: 18,
-    overflow: 'hidden', marginBottom: 8,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05, shadowRadius: 8, elevation: 1,
+  chatRoot: {
+    flex: 1,
+    backgroundColor: C.bg,
   },
-  chatScroll: { height: 380 },
-  chatList: { padding: 16, gap: 8 },
+  chatScroll: { flex: 1 },
+  chatList: { flexGrow: 1, padding: 16, gap: 8 },
   chatBubbleRow: { flexDirection: 'row', marginBottom: 4 },
   chatBubbleRowSelf: { justifyContent: 'flex-end' },
   chatBubbleRowOther: { justifyContent: 'flex-start' },
@@ -1555,7 +1572,7 @@ const styles = StyleSheet.create({
   chatTickIcon: { fontSize: 14 },
   chatInputRow: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingHorizontal: 16, paddingVertical: 12,
+    paddingHorizontal: 16, paddingTop: 12,
     borderTopWidth: 1, borderTopColor: C.outlineVariant,
     backgroundColor: C.bg,
   },

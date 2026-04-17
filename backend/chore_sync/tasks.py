@@ -79,6 +79,48 @@ def spawn_next_occurrence(template_id: str) -> dict:
 
 
 @shared_task
+def auto_reassign_emergency_orphan(occurrence_id: int) -> dict:
+    """Pipeline-reassign an emergency occurrence if no one has accepted it yet.
+
+    Scheduled by emergency_reassign() with a proportional countdown:
+        wait = max(30 min, min(6 h, time_until_deadline * 0.4))
+    If the deadline is under 2 hours away when the emergency is triggered,
+    a short 5-minute window is used instead so the task isn't left unattended.
+
+    The original assignee is excluded from the pipeline pool — they already
+    said they can't do it. Falls back to the full pool if the group has only
+    one member.
+    """
+    from chore_sync.models import TaskOccurrence
+    from chore_sync.services.task_lifecycle_service import TaskLifecycleService
+
+    occurrence = (
+        TaskOccurrence.objects
+        .select_related('template__group')
+        .filter(id=occurrence_id, assigned_to__isnull=True, reassignment_reason='emergency')
+        .first()
+    )
+    if occurrence is None:
+        return {'skipped': 'already_resolved', 'occurrence_id': occurrence_id}
+
+    excluded: set[str] = set()
+    if occurrence.original_assignee_id:
+        excluded.add(str(occurrence.original_assignee_id))
+
+    try:
+        TaskLifecycleService().assign_occurrence(occurrence, excluded_ids=excluded or None)
+        logger.info(
+            "auto_reassign_emergency_orphan: reassigned occurrence_id=%s via pipeline", occurrence_id
+        )
+        return {'assigned': occurrence_id}
+    except Exception:
+        logger.exception(
+            "auto_reassign_emergency_orphan: pipeline failed for occurrence_id=%s", occurrence_id
+        )
+        return {'error': True, 'occurrence_id': occurrence_id}
+
+
+@shared_task
 def generate_daily_occurrences() -> dict:
     """Safety-net gap-fill: create a next occurrence for any template that has none active.
 

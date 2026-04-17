@@ -44,9 +44,9 @@ class GroupMembershipInline(admin.TabularInline):
 
 @admin.register(models.Group)
 class GroupAdmin(admin.ModelAdmin):
-    list_display = ("name", "group_code", "owner", "reassignment_rule", "reassignment_value", "photo_proof_required", "task_proposal_voting_required")
+    list_display = ("name", "group_code", "owner", "reassignment_rule", "reassignment_value", "task_proposal_voting_required")
     search_fields = ("name", "group_code", "owner__email")
-    list_filter = ("reassignment_rule", "photo_proof_required", "task_proposal_voting_required")
+    list_filter = ("reassignment_rule", "task_proposal_voting_required")
     inlines = [GroupMembershipInline]
 
 

@@ -153,6 +153,8 @@ export default function AssistantScreen() {
   const [sessions, setSessions] = useState<{ id: string; preview: string; last_active: string; message_count: number }[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  // Measured height of AppHeader + subBar — used as KAV keyboardVerticalOffset on iOS
+  const [headerAreaHeight, setHeaderAreaHeight] = useState(104);
 
   const loadHistory = useCallback(async () => {
     setLoadingHistory(true);
@@ -269,19 +271,22 @@ export default function AssistantScreen() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
 
-      <AppHeader />
+      {/* Measure the fixed header area so KAV can offset correctly on iOS */}
+      <View onLayout={e => setHeaderAreaHeight(e.nativeEvent.layout.height)}>
+        <AppHeader />
 
-      {/* ── Sub-bar: history + clear ── */}
-      <View style={styles.subBar}>
-        <TouchableOpacity style={styles.subBarBtn} onPress={openHistory}>
-          <Text style={[styles.materialIcon, { color: Colors.stone500, fontSize: 20 }]}>history</Text>
-          <Text style={styles.subBarLabel}>History</Text>
-        </TouchableOpacity>
-        <View style={styles.subBarDivider} />
-        <TouchableOpacity style={styles.subBarBtn} onPress={handleClear}>
-          <Text style={[styles.materialIcon, { color: Colors.stone500, fontSize: 20 }]}>delete_sweep</Text>
-          <Text style={styles.subBarLabel}>Clear chat</Text>
-        </TouchableOpacity>
+        {/* ── Sub-bar: history + clear ── */}
+        <View style={styles.subBar}>
+          <TouchableOpacity style={styles.subBarBtn} onPress={openHistory}>
+            <Text style={[styles.materialIcon, { color: Colors.stone500, fontSize: 20 }]}>history</Text>
+            <Text style={styles.subBarLabel}>History</Text>
+          </TouchableOpacity>
+          <View style={styles.subBarDivider} />
+          <TouchableOpacity style={styles.subBarBtn} onPress={handleClear}>
+            <Text style={[styles.materialIcon, { color: Colors.stone500, fontSize: 20 }]}>delete_sweep</Text>
+            <Text style={styles.subBarLabel}>Clear chat</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* ── History modal ── */}
@@ -345,10 +350,12 @@ export default function AssistantScreen() {
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? headerAreaHeight + insets.top : 0}
       >
         <ScrollView
           ref={scrollRef}
+          style={{ flex: 1 }}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -374,11 +381,10 @@ export default function AssistantScreen() {
             {isTyping && <TypingIndicator />}
           </View>
 
-          <View style={{ height: 140 }} />
         </ScrollView>
 
-        {/* ── Input bar ── */}
-        <View style={[styles.inputContainer, { paddingBottom: insets.bottom + 80 }]}>
+        {/* ── Input bar (normal flex child — KAV lifts it above the keyboard) ── */}
+        <View style={[styles.inputContainer, { paddingBottom: insets.bottom + 8 }]}>
           <View style={styles.inputBar}>
             <TouchableOpacity style={styles.attachBtn}>
               <Text style={[styles.materialIcon, styles.attachIcon]}>attach_file</Text>
@@ -392,6 +398,8 @@ export default function AssistantScreen() {
               onSubmitEditing={() => send(input)}
               returnKeyType="send"
               multiline
+              scrollEnabled
+              textAlignVertical="top"
             />
             <TouchableOpacity onPress={() => send(input)} disabled={!input.trim() || isTyping}>
               <LinearGradient
@@ -417,13 +425,15 @@ export default function AssistantScreen() {
 
 function resolveChipIcon(label: string): string {
   const l = label.toLowerCase();
+  if (l === 'none' || l === 'cancel' || l === 'nevermind') return 'cancel';
   if (l.includes('emergency'))            return 'emergency';
   if (l.includes('marketplace') || l.includes('market')) return 'storefront';
   if (l.includes('swap'))                 return 'swap_horiz';
   if (l.includes('view') || l.includes('show')) return 'visibility';
   if (l.includes('accept'))               return 'check_circle';
-  if (l.includes('decline') || l.includes('cancel')) return 'cancel';
-  return 'chevron_right';
+  if (l.includes('decline'))              return 'cancel';
+  // Group name chips (group picker context) — apartment icon
+  return 'apartment';
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
@@ -545,6 +555,7 @@ const styles = StyleSheet.create({
   },
 
   scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
   },
@@ -730,17 +741,15 @@ const styles = StyleSheet.create({
 
   // Input bar
   inputContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
     backgroundColor: Colors.warmCream,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(168,162,158,0.25)',
   },
   inputBar: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     backgroundColor: Colors.white,
     borderRadius: Radii['3xl'],
     paddingHorizontal: 10,
@@ -752,6 +761,7 @@ const styles = StyleSheet.create({
   },
   attachBtn: {
     padding: 8,
+    paddingBottom: Platform.OS === 'ios' ? 10 : 8,
   },
   attachIcon: {
     color: Colors.stone400,
@@ -761,8 +771,10 @@ const styles = StyleSheet.create({
     fontFamily: 'BeVietnamPro-Regular',
     fontSize: 14,
     color: Colors.charcoal,
-    paddingVertical: Platform.OS === 'ios' ? 8 : 4,
-    maxHeight: 100,
+    paddingVertical: Platform.OS === 'ios' ? 8 : 6,
+    minHeight: 40,
+    maxHeight: 120,
+    lineHeight: 20,
   },
   sendBtn: {
     width: 48,

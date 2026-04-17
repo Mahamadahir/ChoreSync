@@ -206,7 +206,7 @@ class GroupOrchestrator:
         membership.delete()
         return False
 
-    def compute_assignment_matrix(self, *, group_id: str) -> dict:
+    def compute_assignment_matrix(self, *, group_id: str, detailed: bool = False) -> dict:
         """Build a unified fairness matrix used for automated task assignments.
 
         Blends three independently-normalised workload signals:
@@ -302,6 +302,16 @@ class GroupOrchestrator:
         points_norm = GroupOrchestrator._normalise(points_raw)
 
         # Blend and return — already in 0–1 range, no second normalise needed
+        if detailed:
+            return {
+                uid: {
+                    'score': tasks_norm[uid] * 0.40 + time_norm[uid] * 0.35 + points_norm[uid] * 0.25,
+                    'tasks_score': tasks_norm[uid],
+                    'time_score': time_norm[uid],
+                    'points_score': points_norm[uid],
+                }
+                for uid in tasks_norm
+            }
         return {
             uid: tasks_norm[uid] * 0.40 + time_norm[uid] * 0.35 + points_norm[uid] * 0.25
             for uid in tasks_norm

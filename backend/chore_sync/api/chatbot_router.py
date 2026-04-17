@@ -1,5 +1,5 @@
 """
-Chatbot router — conversational task assistant powered by Ollama + Phi-3 Mini.
+Chatbot router — conversational task assistant powered by Gemini Flash.
 
 Intents:
   CREATE_TASK           create a new task template + occurrences
@@ -32,6 +32,8 @@ import json
 import logging
 from datetime import timedelta
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+
 logger = logging.getLogger("chore_sync")
 
 from django.conf import settings
@@ -44,17 +46,20 @@ from chore_sync.api.views import CsrfExemptSessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from chore_sync.models import (
     ChatbotSession, Group, GroupMembership, MarketplaceListing,
-    TaskAssignmentHistory, TaskOccurrence, TaskPreference, TaskSwap,
+    TaskAssignmentHistory, TaskOccurrence, TaskSwap,
     TaskTemplate, UserStats, UserBadge,
 )
 from chore_sync.services.task_lifecycle_service import TaskLifecycleService
 from chore_sync.services.task_template_service import TaskTemplateService
+from chore_sync.services.task_preference_service import TaskPreferenceService
 from chore_sync.services.marketplace_service import MarketplaceService
 from chore_sync.services.group_service import GroupOrchestrator
 from chore_sync.services.proposal_service import ProposalService
 
-OLLAMA_URL = getattr(settings, 'OLLAMA_URL', 'http://localhost:11434/api/chat')
-MODEL = getattr(settings, 'OLLAMA_MODEL', 'phi3:mini')
+GEMINI_API_KEY = getattr(settings, 'GEMINI_API_KEY', '')
+GEMINI_PRIMARY_MODEL   = getattr(settings, 'GEMINI_MODEL',          'gemini-3.1-flash-lite-preview')
+GEMINI_FALLBACK_MODEL  = getattr(settings, 'GEMINI_FALLBACK_MODEL',  'gemma-4-31b-it')
+GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/'
 DAY_INT_TO_ABBR = {0: 'mon', 1: 'tue', 2: 'wed', 3: 'thu', 4: 'fri', 5: 'sat', 6: 'sun'}
 DAY_NAME_TO_INT = {
     'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
@@ -71,7 +76,7 @@ Understand the user's message and return ONLY a JSON object — no explanation, 
 
 Possible intents and JSON shapes:
 
-CREATE_TASK: {"intent":"CREATE_TASK","name":"str","recurrence":"weekly|monthly|once","day_of_week":"monday|tuesday|wednesday|thursday|friday|saturday|sunday|null","estimated_minutes":int_or_null,"difficulty":1-5_or_null,"category":"cleaning|cooking|laundry|maintenance|other","assign_to_name":"str_or_null"}
+CREATE_TASK: {"intent":"CREATE_TASK","name":"str","recurrence":"daily|weekly|fortnightly|monthly|once|unknown","day_of_week":"monday|tuesday|wednesday|thursday|friday|saturday|sunday|null","day_of_month":int_1-31_or_null,"time_of_day":"HH:MM_24h_or_null","estimated_minutes":int_or_null,"difficulty":1-5_or_null,"category":"cleaning|cooking|laundry|maintenance|other","assign_to_name":"str_or_null,"group_name":"str_or_null"}
 CANT_DO_TASK: {"intent":"CANT_DO_TASK","task_name":"str_or_null","reason":"str_or_null"}
 COMPLETE_TASK: {"intent":"COMPLETE_TASK","task_name":"str_or_null"}
 SNOOZE_TASK: {"intent":"SNOOZE_TASK","task_name":"str_or_null","snooze_hours":int_or_null}
@@ -96,7 +101,10 @@ UNKNOWN: {"intent":"UNKNOWN"}
 
 Rules:
 - Return ONLY the JSON object.
-- day_of_week: use the full day name in lowercase, e.g. "monday", "friday". Use null if no specific day.
+- day_of_week: full lowercase day name e.g. "monday". null for daily/fortnightly/monthly/once.
+- recurrence: only set if the user EXPLICITLY states it. "daily"=every day, "weekly"=same day each week, "fortnightly"=every 2 weeks, "monthly"=same date each month, "once"=one-off. Use "unknown" if the user did not explicitly mention how often — do NOT guess or infer.
+- day_of_month: integer 1-31 only for monthly (e.g. "every 1st" → 1). null otherwise.
+- time_of_day: 24h "HH:MM" if user mentions a time (e.g. "at 6pm" → "18:00", "18:45" → "18:45"). null if not mentioned.
 - "I can't do X", "I'm sick", "I won't be able to" → CANT_DO_TASK
 - "I've done X", "mark X complete", "finished X" → COMPLETE_TASK
 - "I hate X", "I love doing X", "avoid X" → SET_PREFERENCE
@@ -111,35 +119,69 @@ Rules:
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _call_ollama(messages: list[dict]) -> dict | None:
-    payload = {
-        "model": MODEL,
-        "messages": messages,
-        "stream": False,
-        "options": {"temperature": 0.1},
+def _call_gemini(messages: list[dict]) -> dict | None:
+    """Call Gemini REST API with primary model, falling back to the fallback model on failure."""
+    # Split system prompt from conversation turns
+    system_text = None
+    turns = []
+    for msg in messages:
+        role = msg["role"]
+        content = msg["content"]
+        if role == "system":
+            system_text = content
+        elif role == "assistant":
+            turns.append({"role": "model", "parts": [{"text": content}]})
+        else:
+            turns.append({"role": "user", "parts": [{"text": content}]})
+
+    payload: dict = {
+        "contents": turns,
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 1024,
+            "responseMimeType": "application/json",
+        },
     }
-    logger.debug("Chatbot → Ollama | model=%s | messages=%d", MODEL, len(messages))
-    try:
-        resp = httpx.post(OLLAMA_URL, json=payload, timeout=60)
-    except httpx.RequestError as exc:
-        logger.error("Chatbot Ollama request error: %s", exc)
-        return None
-    if not resp.is_success:
-        logger.error("Chatbot Ollama HTTP %s: %s", resp.status_code, resp.text[:200])
-        return None
-    body = resp.json()
-    raw = body.get("message", {}).get("content", "").strip()
-    logger.debug("Chatbot ← Ollama raw: %s", raw[:300])
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        logger.warning("Chatbot JSON parse failed. Raw: %s", raw[:300])
-        return None
+    if system_text:
+        payload["system_instruction"] = {"parts": [{"text": system_text}]}
+
+    for model in (GEMINI_PRIMARY_MODEL, GEMINI_FALLBACK_MODEL):
+        url = f"{GEMINI_BASE_URL}{model}:generateContent"
+        logger.debug("Chatbot → Gemini | model=%s | turns=%d", model, len(turns))
+        try:
+            resp = httpx.post(
+                url,
+                json=payload,
+                headers={"X-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
+                timeout=60,
+            )
+        except httpx.RequestError as exc:
+            logger.warning("Chatbot Gemini request error (model=%s): %s — trying next", model, exc)
+            continue
+        if not resp.is_success:
+            logger.warning("Chatbot Gemini HTTP %s (model=%s): %s — trying next", resp.status_code, model, resp.text[:200])
+            continue
+        body = resp.json()
+        try:
+            raw = body["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except (KeyError, IndexError):
+            logger.warning("Chatbot Gemini unexpected response shape (model=%s): %s — trying next", model, str(body)[:200])
+            continue
+        logger.debug("Chatbot ← Gemini raw (model=%s): %s", model, raw[:300])
+        # Strip accidental markdown fences
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("Chatbot JSON parse failed (model=%s). Raw: %s — trying next", model, raw[:300])
+            continue
+
+    logger.error("Chatbot: all models failed")
+    return None
 
 
 def _name(user) -> str:
@@ -174,15 +216,20 @@ def _find_member_by_name(user, name: str):
 
 
 def _find_group(user, group_name: str | None) -> Group | None:
-    qs = GroupMembership.objects.filter(user=user).select_related('group')
+    """Return the single best-matching group, or None.
+    Use _find_groups() when you need to detect ambiguity."""
+    groups = _find_groups(user, group_name)
+    return groups[0] if groups else None
+
+
+def _find_groups(user, group_name: str | None) -> list[Group]:
+    """Return all groups the user belongs to that match group_name (substring,
+    case-insensitive). If group_name is None, return all groups ordered by name."""
+    qs = GroupMembership.objects.filter(user=user).select_related('group').order_by('group__name')
     if not group_name:
-        m = qs.first()
-        return m.group if m else None
+        return [m.group for m in qs]
     low = group_name.lower()
-    for m in qs:
-        if low in m.group.name.lower():
-            return m.group
-    return None
+    return [m.group for m in qs if low in m.group.name.lower()]
 
 
 def _find_template(user, task_name: str, group: Group | None = None) -> TaskTemplate | None:
@@ -207,10 +254,89 @@ def _emergency_reassigns_used(user) -> int:
     ).count()
 
 
-def _compute_next_due(recurrence: str, day_of_week: int | None):
-    base = timezone.now().replace(hour=20, minute=0, second=0, microsecond=0)
-    if recurrence == 'once' or day_of_week is None:
-        return base + timedelta(days=1)
+# ── Chip option lists ────────────────────────────────────────────────────────
+
+_RECURRENCE_CHIPS   = ["Daily", "Weekly", "Fortnightly", "Monthly", "One-off", "None"]
+_DAY_CHIPS          = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "None"]
+_DOM_CHIPS          = ["1st", "5th", "10th", "15th", "20th", "25th", "28th", "None"]
+_TIME_CHIPS         = ["8:00 AM", "12:00 PM", "3:00 PM", "6:00 PM", "8:00 PM", "Skip"]
+
+# ── Date/time helpers ─────────────────────────────────────────────────────────
+
+def _parse_day_field(raw) -> int | None:
+    """Normalise Gemini day_of_week value → 0–6 int or None."""
+    if isinstance(raw, str):
+        return DAY_NAME_TO_INT.get(raw.lower().strip())
+    if isinstance(raw, int) and 0 <= raw <= 6:
+        return raw
+    return None
+
+
+def _parse_time_str(raw: str | None) -> tuple[int, int]:
+    """Parse "HH:MM" (24h) → (hour, minute). Returns (20, 0) on failure."""
+    if not raw:
+        return 20, 0
+    try:
+        h, m = raw.strip().split(':')
+        return int(h), int(m)
+    except (ValueError, AttributeError):
+        return 20, 0
+
+
+def _parse_chip_time(raw: str) -> str | None:
+    """Parse chip labels like '8:00 AM' / '6:00 PM' or freetext '18:45' → 'HH:MM'. None on failure."""
+    from datetime import datetime as _dt
+    raw = raw.strip()
+    upper = raw.upper()
+    for fmt in ('%I:%M %p', '%I %p'):
+        try:
+            t = _dt.strptime(upper, fmt)
+            return f'{t.hour:02d}:{t.minute:02d}'
+        except ValueError:
+            pass
+    # Try bare 24h
+    try:
+        parts = raw.split(':')
+        h, m = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            return f'{h:02d}:{m:02d}'
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
+def _compute_next_due(
+    recurrence: str,
+    day_of_week: int | None,
+    time_of_day: str | None = None,
+    day_of_month: int | None = None,
+):
+    now = timezone.now()
+    hour, minute = _parse_time_str(time_of_day)
+
+    if recurrence == 'monthly' and day_of_month:
+        dom = max(1, min(28, day_of_month))
+        base = now.replace(day=dom, hour=hour, minute=minute, second=0, microsecond=0)
+        if base <= now:
+            if base.month == 12:
+                base = base.replace(year=base.year + 1, month=1)
+            else:
+                base = base.replace(month=base.month + 1)
+        return base
+
+    if day_of_week is None or recurrence in ('once', 'daily', 'fortnightly'):
+        base = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if base <= now:
+            base += timedelta(days=1)
+        return base
+
+    # weekly/custom: advance to next occurrence of that weekday
+    days_ahead = (day_of_week - now.weekday()) % 7
+    base = (now + timedelta(days=days_ahead)).replace(
+        hour=hour, minute=minute, second=0, microsecond=0
+    )
+    if days_ahead == 0 and base <= now:
+        base += timedelta(days=7)
     return base
 
 
@@ -218,49 +344,161 @@ def _compute_next_due(recurrence: str, day_of_week: int | None):
 # Intent handlers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _handle_create_task(user, parsed: dict) -> tuple[str, None]:
-    recurrence = parsed.get("recurrence", "weekly")
-    raw_day = parsed.get("day_of_week")
-    # Normalise: LLM may return a name ("monday"), an int, or null
-    if isinstance(raw_day, str):
-        day_of_week = DAY_NAME_TO_INT.get(raw_day.lower().strip())
-    elif isinstance(raw_day, int) and 0 <= raw_day <= 6:
-        day_of_week = raw_day
-    else:
-        day_of_week = None
+def _handle_create_task(user, parsed: dict) -> tuple[str, dict | None]:
+    group_name_hint = parsed.get("group_name")
+    candidates = _find_groups(user, group_name_hint)
 
-    if recurrence == "once":
-        recurring_choice, days_of_week = "none", None
-    elif day_of_week is not None:
-        recurring_choice, days_of_week = "custom", [DAY_INT_TO_ABBR[day_of_week]]
-    else:
-        recurring_choice, days_of_week = "weekly", None
-
-    group = _find_group(user, None)
-    if not group:
+    if not candidates:
+        if group_name_hint:
+            return f"I couldn't find a group called **{group_name_hint}** that you belong to.", None
         return "You're not in any group yet. Create or join a group first.", None
 
+    if len(candidates) > 1:
+        reply = f"Which group should I add **{parsed.get('name', 'this task')}** to?"
+        return reply, {
+            "intent": "CREATE_TASK",
+            "parsed": parsed,
+            "awaiting": "group",
+            "group_ids": [str(g.id) for g in candidates],
+            "group_names": [g.name for g in candidates],
+            "options": [g.name for g in candidates] + ["None"],
+        }
+
+    return _check_and_ask(user, parsed, candidates[0])
+
+
+def _check_and_ask(user, parsed: dict, group) -> tuple[str, dict | None]:
+    """Ask for the next missing required field, or create the task if all present."""
+    name = parsed.get('name', 'this task')
+    recurrence = (parsed.get('recurrence') or '').lower().strip()
+    day_of_week = _parse_day_field(parsed.get('day_of_week'))
+    day_of_month = parsed.get('day_of_month')
+    time_of_day = parsed.get('time_of_day')
+
+    base = {"intent": "CREATE_TASK", "parsed": parsed, "group_id": str(group.id), "group_name": group.name}
+
+    if recurrence not in ('daily', 'weekly', 'fortnightly', 'monthly', 'once'):
+        return (
+            f"How often should **{name}** repeat?",
+            {**base, "awaiting": "recurrence", "options": _RECURRENCE_CHIPS},
+        )
+    if recurrence == 'weekly' and day_of_week is None:
+        return (
+            f"Which day should **{name}** run each week?",
+            {**base, "awaiting": "day_of_week", "options": _DAY_CHIPS},
+        )
+    if recurrence == 'monthly' and not day_of_month:
+        return (
+            f"Which day of the month should **{name}** run?",
+            {**base, "awaiting": "day_of_month", "options": _DOM_CHIPS},
+        )
+    if recurrence == 'once' and not time_of_day:
+        return (
+            f"What time should **{name}** be due? (Scheduled for tomorrow.)",
+            {**base, "awaiting": "time_of_day", "options": _TIME_CHIPS},
+        )
+
+    return _build_and_create(user, parsed, group)
+
+
+def _build_payload(parsed: dict) -> tuple[dict, int | None]:
+    """Translate parsed Gemini fields into a TaskTemplate payload dict.
+    Returns (payload, recur_value) so callers can use both."""
+    recurrence   = (parsed.get('recurrence') or 'weekly').lower()
+    day_of_week  = _parse_day_field(parsed.get('day_of_week'))
+    day_of_month = parsed.get('day_of_month')
+    time_of_day  = parsed.get('time_of_day')
+
+    if recurrence == 'once':
+        recurring_choice, days_of_week_list, recur_value = 'none', None, None
+    elif recurrence == 'daily':
+        recurring_choice, days_of_week_list, recur_value = 'every_n_days', None, 1
+    elif recurrence == 'fortnightly':
+        recurring_choice, days_of_week_list, recur_value = 'every_n_days', None, 14
+    elif recurrence == 'monthly':
+        recurring_choice, days_of_week_list, recur_value = 'monthly', None, None
+    elif day_of_week is not None:
+        recurring_choice, days_of_week_list, recur_value = 'custom', [DAY_INT_TO_ABBR[day_of_week]], None
+    else:
+        recurring_choice, days_of_week_list, recur_value = 'weekly', None, None
+
+    next_due = _compute_next_due(recurrence, day_of_week, time_of_day, day_of_month)
+
     payload = {
-        "name": parsed.get("name", "New Task"),
+        "name":             parsed.get("name", "New Task"),
         "recurring_choice": recurring_choice,
-        "days_of_week": days_of_week,
-        "estimated_mins": parsed.get("estimated_minutes") or 30,
-        "difficulty": parsed.get("difficulty") or 2,
-        "category": parsed.get("category", "other"),
-        "next_due": _compute_next_due(recurrence, day_of_week),
+        "days_of_week":     days_of_week_list,
+        "estimated_mins":   parsed.get("estimated_minutes") or 30,
+        "difficulty":       parsed.get("difficulty") or 2,
+        "category":         parsed.get("category") or "other",
+        "next_due":         next_due,
     }
+    if recur_value:
+        payload["recur_value"] = recur_value
+    return payload, recur_value
+
+
+def _freq_label(recurring_choice: str, recur_value: int | None, day_of_week: int | None, day_of_month: int | None) -> str:
+    day_names = ['Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays']
+    if recurring_choice == 'none':
+        return 'one-off'
+    if recurring_choice == 'every_n_days':
+        return 'every day' if recur_value == 1 else f'every {recur_value} days'
+    if recurring_choice == 'custom':
+        return f'every {day_names[day_of_week]}' if day_of_week is not None else 'custom'
+    if recurring_choice == 'monthly':
+        if day_of_month:
+            suffix = 'st' if day_of_month == 1 else ('nd' if day_of_month == 2 else ('rd' if day_of_month == 3 else 'th'))
+            return f'monthly on the {day_of_month}{suffix}'
+        return 'monthly'
+    return recurring_choice
+
+
+def _build_and_create(user, parsed: dict, group) -> tuple[str, None]:
+    """Map parsed fields → model fields, create template and occurrences.
+
+    If the group requires proposals and the user is not a moderator,
+    auto-submits the task as a suggestion instead of failing with a 500.
+    """
+    payload, recur_value = _build_payload(parsed)
+
     try:
         template = TaskTemplateService().create_template(
-            creator=user,
-            group_id=str(group.id),
-            payload=payload,
+            creator=user, group_id=str(group.id), payload=payload,
         )
+    except PermissionError:
+        # Group is proposal-only for this user — submit as a suggestion instead.
+        try:
+            ProposalService().create_proposal(
+                proposer_id=str(user.id),
+                group_id=str(group.id),
+                payload=payload,
+                reason="Submitted via chatbot assistant.",
+            )
+        except Exception as exc:
+            return f"Couldn't submit suggestion: {exc}", None
+        return (
+            f"This group requires moderator approval for new tasks, so I've submitted "
+            f"**{payload['name']}** as a suggestion instead. "
+            f"A moderator will be notified to review it.",
+            None,
+        )
+    except DjangoValidationError as exc:
+        messages = '; '.join(
+            f"{f}: {', '.join(errs)}" for f, errs in exc.message_dict.items()
+        ) if hasattr(exc, 'message_dict') else str(exc)
+        return f"Couldn't create task — invalid details: {messages}", None
     except ValueError as exc:
         return f"Couldn't create task: {exc}", None
+
     TaskLifecycleService().generate_recurring_instances(task_template_id=str(template.id))
 
-    day_str = f" on {['Mondays','Tuesdays','Wednesdays','Thursdays','Fridays','Saturdays','Sundays'][day_of_week]}" if day_of_week is not None else ""
-    return f"Done! Created **{template.name}** ({recurrence}{day_str}) in {group.name}.", None
+    day_of_week  = _parse_day_field(parsed.get('day_of_week'))
+    day_of_month = parsed.get('day_of_month')
+    time_of_day  = parsed.get('time_of_day')
+    freq_str = _freq_label(payload['recurring_choice'], recur_value, day_of_week, day_of_month)
+    time_str = f' at {time_of_day}' if time_of_day else ''
+    return f"Done! Created **{template.name}** ({freq_str}{time_str}) in **{group.name}**.", None
 
 
 def _handle_cant_do_task(user, parsed: dict) -> tuple[str, dict | None]:
@@ -342,9 +580,11 @@ def _handle_snooze_all(user, parsed: dict) -> tuple[str, None]:
 
 
 def _handle_query_tasks(user) -> tuple[str, None]:
-    occs = TaskOccurrence.objects.filter(
-        assigned_to=user, status__in=['pending', 'snoozed']
-    ).select_related('template').order_by('deadline')[:10]
+    buckets = TaskLifecycleService().list_user_tasks(user_id=str(user.id))
+    occs = sorted(
+        buckets['active'] + buckets['upcoming'],
+        key=lambda o: o.deadline,
+    )[:10]
     if not occs:
         return "You have no pending tasks right now.", None
     lines = [f"Your pending tasks ({len(occs)}):"]
@@ -358,9 +598,13 @@ def _handle_query_group_tasks(user, parsed: dict) -> tuple[str, None]:
     group = _find_group(user, parsed.get("group_name"))
     if not group:
         return "I couldn't find that group.", None
-    occs = TaskOccurrence.objects.filter(
-        template__group=group, status__in=['pending', 'snoozed', 'overdue']
-    ).select_related('template', 'assigned_to').order_by('deadline')[:15]
+    try:
+        all_occs = TaskLifecycleService().list_group_tasks(
+            group_id=str(group.id), actor_id=str(user.id)
+        )
+    except PermissionError:
+        return "I couldn't find that group.", None
+    occs = [o for o in all_occs if o.status in ('pending', 'snoozed', 'overdue')][:15]
     if not occs:
         return f"No pending tasks in **{group.name}**.", None
     lines = [f"Tasks in **{group.name}**:"]
@@ -438,10 +682,10 @@ def _handle_set_preference(user, parsed: dict) -> tuple[str, None]:
     template = _find_template(user, task_name)
     if not template:
         return f"I couldn't find a task called '{task_name}' in your groups.", None
-    obj, _ = TaskPreference.objects.update_or_create(
-        user=user, task_template=template,
-        defaults={"preference": preference},
-    )
+    try:
+        TaskPreferenceService().set_preference(user=user, template=template, preference=preference)
+    except (ValueError, PermissionError) as exc:
+        return f"Couldn't save preference: {exc}", None
     verb = {"prefer": "You'll be prioritised for", "avoid": "You'll be deprioritised for", "neutral": "You're neutral on"}[preference]
     return f"{verb} **{template.name}**. Preference saved.", None
 
@@ -587,28 +831,130 @@ def _handle_delete_template(user, parsed: dict) -> tuple[str, dict | None]:
 
 
 def _handle_propose_task(user, parsed: dict) -> tuple[str, None]:
-    task_name = parsed.get("task_name", "")
+    task_name = parsed.get("task_name", "").strip()
+    if not task_name:
+        return "What task would you like to suggest?", None
     group = _find_group(user, parsed.get("group_name"))
     if not group:
         return "I couldn't find that group.", None
-    template = _find_template(user, task_name, group)
-    if not template:
-        return f"I couldn't find a template called '{task_name}'. Proposals are for existing templates.", None
     reason = parsed.get("reason") or ""
+
+    # Build a minimal proposal payload from what the user described.
+    # next_due defaults to tomorrow; a moderator can adjust it on approval.
+    proposal_payload, _ = _build_payload({**parsed, "name": task_name})
     try:
         ProposalService().create_proposal(
             proposer_id=str(user.id),
             group_id=str(group.id),
-            task_template_id=template.id,
+            payload=proposal_payload,
             reason=reason,
         )
-        return f"Proposal submitted for **{template.name}** in **{group.name}**. Group members can now vote.", None
+        return (
+            f"Suggestion submitted for **{task_name}** in **{group.name}**. "
+            f"A moderator will be notified to review it.",
+            None,
+        )
     except (ValueError, PermissionError) as e:
-        return f"Couldn't submit proposal: {e}", None
+        return f"Couldn't submit suggestion: {e}", None
 
 
 def _handle_choose_option(user, choice: str, pending: dict) -> tuple[str, dict | None]:
     intent = pending.get("intent")
+
+    if intent == "CREATE_TASK":
+        cs = choice.strip()
+        cl = cs.lower()
+
+        # Always allow cancel
+        if cl in ("none", "cancel", "nevermind", "never mind"):
+            return "No problem, task creation cancelled!", None
+
+        awaiting = pending.get("awaiting")
+        parsed   = dict(pending.get("parsed", {}))
+
+        # ── Group disambiguation ──────────────────────────────────────────────
+        if awaiting == "group":
+            group_ids   = pending.get("group_ids", [])
+            group_names = pending.get("group_names", [])
+            selected_group = None
+            if cs.isdigit():
+                idx = int(cs) - 1
+                if 0 <= idx < len(group_ids):
+                    selected_group = Group.objects.filter(id=group_ids[idx]).first()
+            if selected_group is None:
+                for gid, gname in zip(group_ids, group_names):
+                    if cl in gname.lower():
+                        selected_group = Group.objects.filter(id=gid).first()
+                        break
+            if selected_group is None:
+                return "Task creation cancelled. Just ask me again whenever you're ready!", None
+            return _check_and_ask(user, parsed, selected_group)
+
+        # ── All other awaiting states use stored group_id ─────────────────────
+        group = Group.objects.filter(id=pending.get("group_id")).first()
+        if not group:
+            return "Task creation cancelled (group not found). Please try again.", None
+
+        if awaiting == "recurrence":
+            recurrence_map = {
+                "daily": "daily", "weekly": "weekly", "fortnightly": "fortnightly",
+                "monthly": "monthly", "one-off": "once", "once": "once",
+            }
+            recurrence = recurrence_map.get(cl)
+            if not recurrence:
+                return (
+                    f"Please pick one of the options.",
+                    {**pending, "options": _RECURRENCE_CHIPS},
+                )
+            parsed["recurrence"] = recurrence
+            return _check_and_ask(user, parsed, group)
+
+        if awaiting == "day_of_week":
+            day = DAY_NAME_TO_INT.get(cl)
+            if day is None:
+                return (
+                    "Please pick a day from the options.",
+                    {**pending, "options": _DAY_CHIPS},
+                )
+            parsed["day_of_week"] = cl  # store as name, _parse_day_field handles it
+            return _check_and_ask(user, parsed, group)
+
+        if awaiting == "day_of_month":
+            # Parse ordinals: "1st" → 1, "last day" / "28th" → 28
+            dom_raw = cl.replace('st','').replace('nd','').replace('rd','').replace('th','').strip()
+            if dom_raw in ('last', 'last day'):
+                dom = 28
+            else:
+                try:
+                    dom = int(dom_raw)
+                except ValueError:
+                    return (
+                        "Please pick a day from the options.",
+                        {**pending, "options": _DOM_CHIPS},
+                    )
+            if not 1 <= dom <= 31:
+                return (
+                    "Please pick a valid day (1–31).",
+                    {**pending, "options": _DOM_CHIPS},
+                )
+            parsed["day_of_month"] = dom
+            return _check_and_ask(user, parsed, group)
+
+        if awaiting == "time_of_day":
+            if cl == "skip":
+                parsed["time_of_day"] = None
+            else:
+                t = _parse_chip_time(cs)
+                if not t:
+                    return (
+                        "I couldn't read that time. Please pick one of the options.",
+                        {**pending, "options": _TIME_CHIPS},
+                    )
+                parsed["time_of_day"] = t
+            return _check_and_ask(user, parsed, group)
+
+        # Unknown awaiting — shouldn't happen, cancel cleanly
+        return "Task creation cancelled. Just ask me again whenever you're ready!", None
 
     if intent == "CANT_DO_TASK":
         occ_id = pending.get("occurrence_id")
@@ -770,15 +1116,15 @@ class ChatbotMessageAPIView(APIView):
             session = ChatbotSession.objects.create(user=user)
             created_session = True
 
-        # Multi-turn: if pending action, parse choice locally without Ollama
+        # Multi-turn: if pending action, parse choice locally without LLM call
         if session.pending_action:
             parsed = {"intent": "CHOOSE_OPTION", "choice": message}
         else:
             history = session.messages[-20:]
-            ollama_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history + [
+            llm_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history + [
                 {"role": "user", "content": message}
             ]
-            parsed = _call_ollama(ollama_messages)
+            parsed = _call_gemini(llm_messages)
             if parsed is None:
                 if created_session and not session.messages and not session.pending_action:
                     session.delete()
@@ -807,10 +1153,12 @@ class ChatbotMessageAPIView(APIView):
         session.pending_action = next_pending
         session.save()
 
+        options = next_pending.get("options", []) if next_pending else []
         return Response({
             "reply": reply,
             "session_id": session.id,
             "pending_action": bool(next_pending),
+            "options": options,
         })
 
     def delete(self, request):

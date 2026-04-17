@@ -81,7 +81,23 @@
             <div v-if="msg.role === 'bot'" class="chatbot-avatar">
               <span class="material-symbols-outlined" style="font-size:18px;font-variation-settings:'FILL' 1">smart_toy</span>
             </div>
-            <div class="chatbot-bubble" v-html="renderMarkdown(msg.content)" />
+            <div class="chatbot-msg-body">
+              <div class="chatbot-bubble" v-html="renderMarkdown(msg.content)" />
+              <div v-if="msg.chips && msg.chips.length" class="chatbot-chips">
+                <button
+                  v-for="chip in msg.chips"
+                  :key="chip"
+                  :class="['chatbot-chip', chip === 'None' && 'chatbot-chip--none']"
+                  :disabled="loading"
+                  @click="sendMessage(chip)"
+                >
+                  <span class="material-symbols-outlined chatbot-chip-icon">
+                    {{ chip === 'None' ? 'cancel' : 'apartment' }}
+                  </span>
+                  {{ chip }}
+                </button>
+              </div>
+            </div>
             <div v-if="msg.role === 'user'" class="chatbot-avatar chatbot-avatar--user">
               {{ userInitials }}
             </div>
@@ -127,7 +143,7 @@
           </button>
         </div>
         <div style="font-size:11px;color:var(--cs-muted);text-align:center;margin-top:6px">
-          Powered by Phi-3 Mini (local) · Shift+Enter for newline
+          Powered by Gemini · Shift+Enter for newline
         </div>
       </div>
 
@@ -147,7 +163,7 @@ const userInitials = computed(() => {
   return name.slice(0, 2).toUpperCase();
 });
 
-interface ChatMessage { role: 'user' | 'bot'; content: string }
+interface ChatMessage { role: 'user' | 'bot'; content: string; chips?: string[] }
 interface SessionSummary { id: number; preview: string; message_count: number; last_active: string }
 
 const messages = ref<ChatMessage[]>([]);
@@ -234,11 +250,15 @@ async function sendMessage(text: string) {
 
   try {
     const res = await chatbotApi.send(trimmed, sessionId.value);
-    const { reply, session_id, pending_action } = res.data;
+    const { reply, session_id, pending_action, options } = res.data;
 
     sessionId.value = session_id;
     pendingAction.value = !!pending_action;
-    messages.value.push({ role: 'bot', content: reply });
+    messages.value.push({
+      role: 'bot',
+      content: reply,
+      chips: Array.isArray(options) && options.length > 0 ? options : undefined,
+    });
     // Refresh sidebar list after each message
     await loadSessions();
   } catch (err: any) {
@@ -519,7 +539,6 @@ onMounted(async () => {
 }
 
 .chatbot-bubble {
-  max-width: 70%;
   padding: 12px 16px;
   border-radius: 18px;
   font-size: 14px;
@@ -528,12 +547,58 @@ onMounted(async () => {
   background: var(--cs-surface-container);
   word-break: break-word;
 }
+.chatbot-msg-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 70%;
+}
+.chatbot-msg--user .chatbot-msg-body { align-items: flex-end; }
 .chatbot-msg--user .chatbot-bubble {
   background: var(--cs-primary);
   color: #fff;
   border-bottom-right-radius: 4px;
+  max-width: 100%;
 }
-.chatbot-msg--bot .chatbot-bubble { border-bottom-left-radius: 4px; }
+.chatbot-msg--bot .chatbot-bubble { border-bottom-left-radius: 4px; max-width: 100%; }
+
+/* ── Option chips ─────────────────────────────────────────── */
+.chatbot-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chatbot-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--cs-outline-variant);
+  background: var(--cs-surface-container);
+  color: var(--cs-on-surface);
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.chatbot-chip:hover:not(:disabled) {
+  background: var(--cs-primary-fixed, #ffdad5);
+  border-color: var(--cs-primary);
+  color: var(--cs-primary);
+}
+.chatbot-chip:disabled { opacity: 0.5; cursor: not-allowed; }
+.chatbot-chip--none {
+  border-color: var(--cs-error, #ba1a1a);
+  color: var(--cs-error, #ba1a1a);
+}
+.chatbot-chip--none:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--cs-error, #ba1a1a) 10%, transparent);
+}
+.chatbot-chip-icon {
+  font-size: 14px;
+}
 
 .chatbot-bubble :deep(code) {
   background: rgba(0,0,0,0.08);

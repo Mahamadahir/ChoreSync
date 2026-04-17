@@ -116,6 +116,7 @@ if (Test-Path $nginxExe) {
 # ==============================================================================
 Write-Host ""
 Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
-Write-Host "  Deploy complete — https://$($env:FRONTEND_APP_URL ?? 'localhost')" -ForegroundColor Green
+$deployUrl = if ($env:FRONTEND_APP_URL) { $env:FRONTEND_APP_URL } else { 'localhost' }
+Write-Host "  Deploy complete — https://$deployUrl" -ForegroundColor Green
 Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
 Write-Host ""

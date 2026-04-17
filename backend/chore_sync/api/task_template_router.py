@@ -123,11 +123,14 @@ class GroupTaskTemplateListCreateAPIView(APIView):
             )
         except Exception:
             logger.exception(
-                "create_task_template: occurrence generation failed for template_id=%s", template.id
+                "create_task_template: occurrence generation failed for template_id=%s — scheduling async retry",
+                template.id,
             )
+            from chore_sync.tasks import spawn_next_occurrence
+            spawn_next_occurrence.delay(str(template.id))
             generation_warning = (
                 "Template saved, but initial task scheduling failed. "
-                "Tasks will appear after the next scheduled background job runs."
+                "Tasks will appear shortly via background processing."
             )
 
         response_data = _serialize(template)

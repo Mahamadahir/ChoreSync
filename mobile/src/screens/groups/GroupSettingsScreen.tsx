@@ -70,7 +70,6 @@ export default function GroupSettingsScreen() {
 
   const [group, setGroup] = useState<Group | null>(null);
   const [groupName, setGroupName] = useState('');
-  const [photoProof, setPhotoProof] = useState(false);
   const [taskVoting, setTaskVoting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -81,7 +80,6 @@ export default function GroupSettingsScreen() {
       const g: Group = res.data;
       setGroup(g);
       setGroupName(g.name);
-      setPhotoProof(g.photo_proof_required ?? false);
       setTaskVoting((g as any).task_proposal_voting_required ?? false);
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.detail ?? 'Could not load group settings.');
@@ -100,7 +98,6 @@ export default function GroupSettingsScreen() {
     try {
       await groupService.settings(groupId, {
         name: trimmed,
-        photo_proof_required: photoProof,
         task_proposal_voting_required: taskVoting,
       });
       Alert.alert('Saved', 'Group settings updated.');
@@ -206,13 +203,6 @@ export default function GroupSettingsScreen() {
             subtitle="Automate accountability within your group."
           />
           <View style={styles.togglesCard}>
-            <ToggleRow
-              label="Require Photo Proof"
-              sub="Members must upload a photo to complete tasks"
-              value={photoProof}
-              onToggle={setPhotoProof}
-            />
-            <View style={styles.toggleDivider} />
             <ToggleRow
               label="Moderator Approval Required"
               sub="Members can only suggest tasks — moderators approve before they go live"

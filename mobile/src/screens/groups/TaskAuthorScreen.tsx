@@ -215,14 +215,14 @@ export default function TaskAuthorScreen() {
     try {
       if (isEdit) {
         await groupService.updateTemplate(templateId!, payload);
-        Alert.alert('Saved', 'Task template updated.');
+        Alert.alert('Saved', 'Recurring task updated.');
       } else {
         const res = await groupService.createTemplate(groupId, payload);
         const warn = res.data?.generation_warning;
         if (warn) {
           Alert.alert('Created', warn);
         } else {
-          Alert.alert('Created', 'Task template created successfully.');
+          Alert.alert('Created', 'Recurring task created successfully.');
         }
       }
       navigation.goBack();
@@ -237,8 +237,8 @@ export default function TaskAuthorScreen() {
   // ── Delete ─────────────────────────────────────────────────
   function handleDelete() {
     Alert.alert(
-      'Delete template',
-      'This will deactivate the template and cancel all pending tasks. Continue?',
+      'Delete recurring task',
+      'This will deactivate this recurring task and cancel all pending tasks. Continue?',
       [
         { text: 'Cancel', style: 'cancel' },
         {

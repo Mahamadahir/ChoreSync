@@ -19,6 +19,9 @@ interface Candidate {
   is_me: boolean;
   components?: {
     stage1_score: number;      // ×100
+    tasks_score: number;       // ×100 normalised task count component
+    time_score: number;        // ×100 normalised time burden component
+    points_score: number;      // ×100 normalised points component
     pref_multiplier: number;   // e.g. 0.8, 1.0, 1.2
     affinity_multiplier: number;
     calendar_penalty: number;  // ×100
@@ -27,6 +30,9 @@ interface Candidate {
 
 interface BreakdownData {
   breakdown_available: boolean;
+  assigned_via?: 'emergency_cover';
+  covered_by?: string | null;
+  original_assignee?: string | null;
   template_name: string;
   assigned_at?: string;
   winner_id?: string;
@@ -55,6 +61,29 @@ function affinityLabel(mult: number): string {
 
 export default function BreakdownPanel({ breakdown }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [fairnessExpanded, setFairnessExpanded] = useState(false);
+
+  if (breakdown.assigned_via === 'emergency_cover') {
+    return (
+      <View style={styles.emergencyCard}>
+        <View style={styles.emergencyHeader}>
+          <Text style={[styles.msIcon, { color: C.error, fontSize: 20 }]}>crisis_alert</Text>
+          <Text style={styles.emergencyTitle}>Emergency Cover</Text>
+        </View>
+        <Text style={styles.emergencyBody}>
+          {breakdown.original_assignee
+            ? `${breakdown.original_assignee} requested emergency cover and `
+            : 'The original assignee requested emergency cover. '}
+          {breakdown.covered_by
+            ? `${breakdown.covered_by} volunteered to take over.`
+            : 'a group member volunteered to take over.'}
+        </Text>
+        <Text style={styles.emergencyNote}>
+          This task was not assigned by the fairness pipeline — no score breakdown is available.
+        </Text>
+      </View>
+    );
+  }
 
   if (!breakdown.breakdown_available || breakdown.candidates.length === 0) {
     return (
@@ -137,11 +166,30 @@ export default function BreakdownPanel({ breakdown }: Props) {
 
             {isExpandable && expanded && c.components && (
               <View style={styles.componentsCard}>
-                <ComponentRow
-                  label="Fairness score"
-                  value={`${c.components.stage1_score}`}
-                  sub="Blends task count (40%), difficulty-weighted time (35%), points (25%)"
-                />
+                {/* Fairness score — expandable sub-breakdown */}
+                <TouchableOpacity
+                  onPress={() => setFairnessExpanded((v) => !v)}
+                  activeOpacity={0.7}
+                  style={styles.fairnessHeader}
+                >
+                  <View style={styles.compLeft}>
+                    <Text style={styles.compLabel}>Fairness score</Text>
+                    <Text style={styles.compSub}>Blends task count (40%), time burden (35%), points (25%)</Text>
+                  </View>
+                  <View style={styles.fairnessRight}>
+                    <Text style={styles.compValue}>{c.components.stage1_score}</Text>
+                    <Text style={[styles.msIcon, { color: C.primary, fontSize: 14 }]}>
+                      {fairnessExpanded ? 'expand_less' : 'expand_more'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                {fairnessExpanded && (
+                  <View style={styles.fairnessSub}>
+                    <SubComponentRow label="Task count" value={c.components.tasks_score} weight="40%" />
+                    <SubComponentRow label="Time burden" value={c.components.time_score} weight="35%" />
+                    <SubComponentRow label="Points" value={c.components.points_score} weight="25%" />
+                  </View>
+                )}
                 <ComponentRow
                   label="Preference"
                   value={prefLabel(c.components.pref_multiplier)}
@@ -150,7 +198,7 @@ export default function BreakdownPanel({ breakdown }: Props) {
                 <ComponentRow
                   label="History affinity"
                   value={affinityLabel(c.components.affinity_multiplier)}
-                  sub="Completion rate for this task template (≥3 assignments)"
+                  sub="Completion rate for this recurring task (≥3 assignments)"
                 />
                 <ComponentRow
                   label="Calendar penalty"
@@ -174,6 +222,24 @@ function ComponentRow({ label, value, sub }: { label: string; value: string; sub
         <Text style={styles.compSub}>{sub}</Text>
       </View>
       <Text style={styles.compValue}>{value}</Text>
+    </View>
+  );
+}
+
+function SubComponentRow({ label, value, weight }: { label: string; value: number; weight: string }) {
+  const barPct = value;  // already 0–100
+  return (
+    <View style={styles.subCompRow}>
+      <View style={styles.subCompMeta}>
+        <Text style={styles.subCompLabel}>{label}</Text>
+        <Text style={styles.subCompWeight}>{weight}</Text>
+      </View>
+      <View style={styles.subCompBarWrap}>
+        <View style={styles.subCompBarTrack}>
+          <View style={[styles.subCompBarFill, { width: `${barPct}%` as any }]} />
+        </View>
+        <Text style={styles.subCompScore}>{value}</Text>
+      </View>
     </View>
   );
 }
@@ -290,6 +356,69 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 10,
   },
+  fairnessHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  fairnessRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flexShrink: 0,
+  },
+  fairnessSub: {
+    marginTop: 2,
+    marginBottom: 2,
+    paddingLeft: 8,
+    gap: 6,
+    borderLeftWidth: 2,
+    borderLeftColor: `${C.primary}33`,
+  },
+  subCompRow: {
+    gap: 3,
+  },
+  subCompMeta: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  subCompLabel: {
+    fontFamily: 'PlusJakartaSans-Regular',
+    fontSize: 11,
+    color: C.onSurface,
+  },
+  subCompWeight: {
+    fontFamily: 'PlusJakartaSans-Regular',
+    fontSize: 10,
+    color: C.onSurfaceVariant,
+  },
+  subCompBarWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  subCompBarTrack: {
+    flex: 1,
+    height: 4,
+    backgroundColor: C.surfaceContainerHigh,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  subCompBarFill: {
+    height: '100%',
+    borderRadius: 2,
+    backgroundColor: C.primary,
+    opacity: 0.5,
+  },
+  subCompScore: {
+    fontFamily: 'PlusJakartaSans-Bold',
+    fontSize: 10,
+    color: C.primary,
+    width: 24,
+    textAlign: 'right',
+  },
   compRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -334,5 +463,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: C.onSurfaceVariant,
     flex: 1,
+  },
+
+  emergencyCard: {
+    padding: 14,
+    backgroundColor: `${C.error}12`,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: `${C.error}44`,
+    gap: 6,
+  },
+  emergencyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  emergencyTitle: {
+    fontFamily: 'PlusJakartaSans-Bold',
+    fontSize: 13,
+    color: C.error,
+  },
+  emergencyBody: {
+    fontFamily: 'PlusJakartaSans-Regular',
+    fontSize: 12,
+    color: C.onSurface,
+    lineHeight: 18,
+  },
+  emergencyNote: {
+    fontFamily: 'PlusJakartaSans-Regular',
+    fontSize: 11,
+    color: C.onSurfaceVariant,
+    marginTop: 2,
   },
 });

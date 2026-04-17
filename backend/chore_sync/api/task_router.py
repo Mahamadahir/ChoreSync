@@ -491,6 +491,26 @@ class TaskOccurrenceAssignmentBreakdownAPIView(APIView):
             .first()
         )
 
+        # Emergency cover: task was accepted by a volunteer, not assigned by the pipeline.
+        # This is true when reassignment_reason='emergency' AND there is no subsequent
+        # pipeline history row (auto-reassignment via pipeline creates one with was_emergency=False).
+        if occ.reassignment_reason == 'emergency' and (history is None or history.score_breakdown is None):
+            original_username = None
+            if occ.original_assignee_id:
+                from django.contrib.auth import get_user_model
+                orig = get_user_model().objects.filter(id=occ.original_assignee_id).values('username').first()
+                original_username = orig['username'] if orig else None
+            covered_by = occ.assigned_to.username if occ.assigned_to else None
+            return Response({
+                "occurrence_id": occ.id,
+                "template_name": occ.template.name,
+                "breakdown_available": False,
+                "assigned_via": "emergency_cover",
+                "covered_by": covered_by,
+                "original_assignee": original_username,
+                "candidates": [],
+            })
+
         if history is None or history.score_breakdown is None:
             return Response({
                 "occurrence_id": occ.id,
@@ -515,6 +535,9 @@ class TaskOccurrenceAssignmentBreakdownAPIView(APIView):
             if uid == my_id:
                 entry["components"] = {
                     "stage1_score": round(c['stage1_score'] * 100),
+                    "tasks_score": round(c.get('tasks_score', 0) * 100),
+                    "time_score": round(c.get('time_score', 0) * 100),
+                    "points_score": round(c.get('points_score', 0) * 100),
                     "pref_multiplier": c['pref_multiplier'],
                     "affinity_multiplier": c['affinity_multiplier'],
                     "calendar_penalty": round(c['calendar_penalty'] * 100),
