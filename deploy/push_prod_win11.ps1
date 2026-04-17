@@ -1,10 +1,10 @@
 # ==============================================================================
-# ChoreSync — Windows 11 Production Deploy
+# ChoreSync - Windows 11 Production Deploy
 # ==============================================================================
 #
 # Equivalent of deploy/push-prod.sh for Windows 11.
 #
-# Run from the repo root (or anywhere — the script resolves paths itself):
+# Run from the repo root (or anywhere - the script resolves paths itself):
 #   .\deploy\push_prod_win11.ps1
 #
 # What it does:
@@ -22,19 +22,19 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# ── Colours ───────────────────────────────────────────────────────────────────
-function Step { param($m) Write-Host "`n▶  $m" -ForegroundColor Cyan }
-function Ok   { param($m) Write-Host "✓  $m" -ForegroundColor Green }
-function Die  { param($m) Write-Host "✗  $m" -ForegroundColor Red; exit 1 }
+# -- Colours -------------------------------------------------------------------
+function Step { param($m) Write-Host "`n>>  $m" -ForegroundColor Cyan }
+function Ok   { param($m) Write-Host "[OK]  $m" -ForegroundColor Green }
+function Die  { param($m) Write-Host "[FAIL]  $m" -ForegroundColor Red; exit 1 }
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
+# -- Paths ---------------------------------------------------------------------
 $REPO_ROOT   = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $BACKEND     = Join-Path $REPO_ROOT "backend"
 $FRONTEND    = Join-Path $REPO_ROOT "frontend"
 $SECRETS     = Join-Path $BACKEND "secrets.prod.env"
 $CONDA_ENV   = "choreSync"
 
-# ── Resolve conda python ──────────────────────────────────────────────────────
+# -- Resolve conda python ------------------------------------------------------
 if (-not (Get-Command conda -ErrorAction SilentlyContinue)) {
     Die "conda not found. Make sure Miniconda is on PATH."
 }
@@ -59,23 +59,23 @@ foreach ($line in Get-Content $SECRETS) {
     [System.Environment]::SetEnvironmentVariable($k, $v, 'Process')
 }
 
-# ── Admin check ───────────────────────────────────────────────────────────────
+# -- Admin check ---------------------------------------------------------------
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
         [Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Die "This script must be run as Administrator (needed to restart Windows services)."
 }
 
 # ==============================================================================
-# ── 1. Frontend build ─────────────────────────────────────────────────────────
+# -- 1. Frontend build ---------------------------------------------------------
 # ==============================================================================
 Step "Building Vue frontend"
 
 Set-Location $FRONTEND
 npm run build
-Ok "Frontend built → frontend/dist/"
+Ok "Frontend built -> frontend/dist/"
 
 # ==============================================================================
-# ── 2. Django migrations ──────────────────────────────────────────────────────
+# -- 2. Django migrations ------------------------------------------------------
 # ==============================================================================
 Step "Running Django migrations"
 
@@ -84,7 +84,7 @@ Set-Location $BACKEND
 Ok "Migrations applied"
 
 # ==============================================================================
-# ── 3. Collect static files ───────────────────────────────────────────────────
+# -- 3. Collect static files ---------------------------------------------------
 # ==============================================================================
 Step "Collecting static files"
 
@@ -92,7 +92,7 @@ Step "Collecting static files"
 Ok "Static files collected"
 
 # ==============================================================================
-# ── 4. Restart services ───────────────────────────────────────────────────────
+# -- 4. Restart services -------------------------------------------------------
 # ==============================================================================
 Step "Restarting backend services"
 
@@ -112,11 +112,11 @@ if (Test-Path $nginxExe) {
 }
 
 # ==============================================================================
-# ── Done ──────────────────────────────────────────────────────────────────────
+# -- Done ----------------------------------------------------------------------
 # ==============================================================================
 Write-Host ""
-Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
+Write-Host "===========================================================" -ForegroundColor Green
 $deployUrl = if ($env:FRONTEND_APP_URL) { $env:FRONTEND_APP_URL } else { 'localhost' }
-Write-Host "  Deploy complete — https://$deployUrl" -ForegroundColor Green
-Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
+Write-Host "  Deploy complete - https://$deployUrl" -ForegroundColor Green
+Write-Host "===========================================================" -ForegroundColor Green
 Write-Host ""

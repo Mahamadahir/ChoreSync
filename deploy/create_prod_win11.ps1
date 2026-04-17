@@ -1,5 +1,5 @@
 # ==============================================================================
-# ChoreSync — Windows 11 Production Environment Setup
+# ChoreSync - Windows 11 Production Environment Setup
 # ==============================================================================
 #
 # BEFORE RUNNING THIS SCRIPT, complete every item on this checklist:
@@ -10,7 +10,7 @@
 #     - Tick "Add PostgreSQL bin to PATH" in the installer, OR add manually:
 #       C:\Program Files\PostgreSQL\16\bin
 #
-#  2. Redis for Windows (Memurai — free community edition)
+#  2. Redis for Windows (Memurai - free community edition)
 #     https://www.memurai.com/get-memurai
 #     - The installer registers Redis as a Windows service automatically.
 #     - Default port 6379, no password needed for local-only use.
@@ -27,12 +27,12 @@
 #     https://nginx.org/en/download.html  (Stable version)
 #     - Extract to C:\nginx   (the script assumes this path; change NGINX_DIR if needed)
 #
-#  6. NSSM — Non-Sucking Service Manager (runs Daphne/Celery as Windows services)
+#  6. NSSM - Non-Sucking Service Manager (runs Daphne/Celery as Windows services)
 #     https://nssm.cc/download
 #     - Extract nssm.exe (64-bit) and place it somewhere on your PATH,
 #       OR set NSSM_EXE below to the full path.
 #
-#  7. Cloudflare Tunnel (optional — only needed for public HTTPS)
+#  7. Cloudflare Tunnel (optional - only needed for public HTTPS)
 #     https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
 #     - Install cloudflared, authenticate, and create a tunnel named "choresync".
 #     - Update DOMAIN below to match your Cloudflare hostname.
@@ -41,7 +41,7 @@
 #       after updating deploy\cloudflared-config.yml with your tunnel ID.
 #
 #  8. Run this script from an ADMINISTRATOR PowerShell:
-#       Right-click PowerShell → "Run as Administrator"
+#       Right-click PowerShell -> "Run as Administrator"
 #       Set-ExecutionPolicy RemoteSigned -Scope Process
 #       .\deploy\create_prod_win11.ps1
 #
@@ -50,20 +50,20 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# ── Colours ───────────────────────────────────────────────────────────────────
-function Step  { param($m) Write-Host "`n▶  $m" -ForegroundColor Cyan }
-function Ok    { param($m) Write-Host "✓  $m" -ForegroundColor Green }
+# -- Colours -------------------------------------------------------------------
+function Step  { param($m) Write-Host "`n>>  $m" -ForegroundColor Cyan }
+function Ok    { param($m) Write-Host "[OK]  $m" -ForegroundColor Green }
 function Warn  { param($m) Write-Host "!  $m" -ForegroundColor Yellow }
-function Die   { param($m) Write-Host "✗  $m" -ForegroundColor Red; exit 1 }
+function Die   { param($m) Write-Host "[FAIL]  $m" -ForegroundColor Red; exit 1 }
 
 # ==============================================================================
-# ── CONFIGURATION — edit these before running ─────────────────────────────────
+# -- CONFIGURATION - edit these before running ---------------------------------
 # ==============================================================================
 
 # Your public domain (used in Django ALLOWED_HOSTS, CORS, email links, etc.)
 $DOMAIN = "choresync.mahamadahir.com"
 
-# PostgreSQL superuser — the account created during PG installation
+# PostgreSQL superuser - the account created during PG installation
 $PG_SUPERUSER          = "postgres"
 $PG_SUPERUSER_PASSWORD = "CHANGE_ME"        # <-- set to your PG install password
 
@@ -79,7 +79,7 @@ $CONDA_ENV  = "choreSync"
 $LOG_DIR    = "C:\ProgramData\ChoreSync\logs"
 
 # ==============================================================================
-# ── HELPERS ───────────────────────────────────────────────────────────────────
+# -- HELPERS -------------------------------------------------------------------
 # ==============================================================================
 
 function Require-Command {
@@ -132,7 +132,7 @@ function Write-EnvFile {
 }
 
 # ==============================================================================
-# ── PRE-FLIGHT CHECKS ─────────────────────────────────────────────────────────
+# -- PRE-FLIGHT CHECKS ---------------------------------------------------------
 # ==============================================================================
 Step "Pre-flight checks"
 
@@ -154,7 +154,7 @@ if (-not (Test-Path $NGINX_DIR)) {
 Ok "All prerequisites found"
 
 # ==============================================================================
-# ── STEP 1 — Generate random DB credentials ───────────────────────────────────
+# -- STEP 1 - Generate random DB credentials -----------------------------------
 # ==============================================================================
 Step "Generating PostgreSQL app credentials"
 
@@ -164,10 +164,10 @@ $DB_PASSWORD = Random-String -Length 32
 
 Ok "DB user  : $DB_USER"
 Ok "DB name  : $DB_NAME"
-Ok "Password : (32-char random — will be written to secrets.prod.env)"
+Ok "Password : (32-char random - will be written to secrets.prod.env)"
 
 # ==============================================================================
-# ── STEP 2 — Generate Django secret keys ──────────────────────────────────────
+# -- STEP 2 - Generate Django secret keys --------------------------------------
 # ==============================================================================
 Step "Generating Django secret keys"
 
@@ -177,7 +177,7 @@ $FIELD_ENCRYPTION_KEY   = [Convert]::ToBase64String(
 )
 
 # ==============================================================================
-# ── STEP 3 — Create/update secrets.prod.env ───────────────────────────────────
+# -- STEP 3 - Create/update secrets.prod.env -----------------------------------
 # ==============================================================================
 Step "Writing secrets.prod.env"
 
@@ -212,7 +212,7 @@ $secrets = @{
     CELERY_BROKER_URL      = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND  = "redis://localhost:6379/0"
 
-    # AI (Gemini — primary: gemini-3.1-flash-lite-preview, fallback: gemma-4-31b-it)
+    # AI (Gemini - primary: gemini-3.1-flash-lite-preview, fallback: gemma-4-31b-it)
     GEMINI_API_KEY         = "FILL_IN_GEMINI_API_KEY"
     GEMINI_MODEL           = "gemini-3.1-flash-lite-preview"
     GEMINI_FALLBACK_MODEL  = "gemma-4-31b-it"
@@ -234,12 +234,12 @@ foreach ($k in $carryOver) {
 }
 
 Write-EnvFile -Path $secretsPath -Vars $secrets `
-    -HeaderComment "# Production secrets — auto-generated by create_prod_win11.ps1`n# Edit OAuth/email values before starting services."
+    -HeaderComment "# Production secrets - auto-generated by create_prod_win11.ps1`n# Edit OAuth/email values before starting services."
 
 Ok "Written to $secretsPath"
 
 # ==============================================================================
-# ── STEP 4 — PostgreSQL: create role + database ───────────────────────────────
+# -- STEP 4 - PostgreSQL: create role + database -------------------------------
 # ==============================================================================
 Step "Creating PostgreSQL role and database"
 
@@ -266,13 +266,13 @@ $env:PGPASSWORD = ""
 Ok "Database '$DB_NAME' created, owned by '$DB_USER'"
 
 # ==============================================================================
-# ── STEP 5 — Conda environment + Python packages ──────────────────────────────
+# -- STEP 5 - Conda environment + Python packages ------------------------------
 # ==============================================================================
 Step "Setting up conda environment '$CONDA_ENV'"
 
 $condaExists = (conda env list 2>&1) -match "^\s*$CONDA_ENV\s"
 if ($condaExists) {
-    Warn "Conda env '$CONDA_ENV' already exists — skipping creation"
+    Warn "Conda env '$CONDA_ENV' already exists - skipping creation"
 } else {
     conda create -n $CONDA_ENV python=3.12 -y
     Ok "Created conda env '$CONDA_ENV'"
@@ -345,17 +345,17 @@ Set-Content -Path $reqFile -Value $requirementsContent -Encoding UTF8
 Ok "Python packages installed"
 
 # ==============================================================================
-# ── STEP 6 — Frontend build ───────────────────────────────────────────────────
+# -- STEP 6 - Frontend build ---------------------------------------------------
 # ==============================================================================
 Step "Building Vue frontend"
 
 Set-Location $FRONTEND
 npm ci
 npm run build
-Ok "Frontend built → frontend/dist/"
+Ok "Frontend built -> frontend/dist/"
 
 # ==============================================================================
-# ── STEP 7 — Django migrations + static files ────────────────────────────────
+# -- STEP 7 - Django migrations + static files --------------------------------
 # ==============================================================================
 Step "Running Django migrations"
 
@@ -380,7 +380,7 @@ Step "Collecting static files"
 Ok "Static files collected"
 
 # ==============================================================================
-# ── STEP 8 — nginx configuration ─────────────────────────────────────────────
+# -- STEP 8 - nginx configuration ---------------------------------------------
 # ==============================================================================
 Step "Configuring nginx"
 
@@ -395,7 +395,7 @@ server {
     root $repoRootFwd/frontend/dist;
     index index.html;
 
-    # Backend — API, admin, static
+    # Backend - API, admin, static
     location ~ ^/(api|admin|static|media)/ {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host `$host;
@@ -405,7 +405,7 @@ server {
         proxy_read_timeout 60s;
     }
 
-    # WebSocket — Django Channels
+    # WebSocket - Django Channels
     location /ws/ {
         proxy_pass http://127.0.0.1:8000;
         proxy_http_version 1.1;
@@ -444,11 +444,11 @@ if (-not (Get-Service "nginx" -ErrorAction SilentlyContinue)) {
     & $NSSM_EXE set nginx Start SERVICE_AUTO_START
     Ok "nginx Windows service created"
 } else {
-    Warn "nginx service already exists — skipping"
+    Warn "nginx service already exists - skipping"
 }
 
 # ==============================================================================
-# ── STEP 9 — Windows services: Daphne, Celery worker, Celery beat ────────────
+# -- STEP 9 - Windows services: Daphne, Celery worker, Celery beat ------------
 # ==============================================================================
 Step "Creating Windows services via NSSM"
 
@@ -461,7 +461,7 @@ function Install-NssmService {
     param($Name, $Exe, $Args, $Description)
 
     if (Get-Service $Name -ErrorAction SilentlyContinue) {
-        Warn "Service '$Name' already exists — removing and recreating"
+        Warn "Service '$Name' already exists - removing and recreating"
         & $NSSM_EXE stop $Name 2>$null
         & $NSSM_EXE remove $Name confirm
     }
@@ -508,7 +508,7 @@ Install-NssmService `
     -Description "ChoreSync Celery beat scheduler"
 
 # ==============================================================================
-# ── STEP 10 — Start all services ─────────────────────────────────────────────
+# -- STEP 10 - Start all services ---------------------------------------------
 # ==============================================================================
 Step "Starting all services"
 
@@ -518,13 +518,13 @@ foreach ($svc in @("nginx", "choresync-daphne", "choresync-celery", "choresync-c
 }
 
 # ==============================================================================
-# ── DONE ──────────────────────────────────────────────────────────────────────
+# -- DONE ----------------------------------------------------------------------
 # ==============================================================================
 
 Write-Host ""
-Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
+Write-Host "===========================================================" -ForegroundColor Green
 Write-Host "  ChoreSync production environment ready!" -ForegroundColor Green
-Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
+Write-Host "===========================================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Local URL : http://localhost" -ForegroundColor Cyan
 Write-Host "  Public URL: https://$DOMAIN  (requires Cloudflare tunnel)" -ForegroundColor Cyan
