@@ -565,9 +565,7 @@ export default function GroupDetailScreen() {
               <Text style={styles.taskCountText}>{activeTasks.length}</Text>
             </View>
           </View>
-          {/* Moderators always see New Task; members in restricted groups see Suggest Task */}
-          {(group?.my_role === 'moderator' || !group?.task_proposal_voting_required) ? (
-            <TouchableOpacity
+          <TouchableOpacity
               activeOpacity={0.7}
               onPress={() => navigation.navigate('TaskAuthor', { groupId })}
               style={styles.newTaskBtn}
@@ -575,16 +573,6 @@ export default function GroupDetailScreen() {
               <Text style={[styles.msIcon, { color: C.primary, fontSize: 20 }]}>add_circle</Text>
               <Text style={styles.newTaskBtnText}>New Task</Text>
             </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => navigation.navigate('Proposals', { groupId, myRole: group?.my_role ?? 'member' })}
-              style={styles.newTaskBtn}
-            >
-              <Text style={[styles.msIcon, { color: C.primary, fontSize: 20 }]}>lightbulb</Text>
-              <Text style={styles.newTaskBtnText}>Suggest Task</Text>
-            </TouchableOpacity>
-          )}
         </View>
 
         {/* Task cards */}

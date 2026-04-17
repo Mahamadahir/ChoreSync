@@ -34,7 +34,7 @@ api.interceptors.request.use((config) => {
 // ------------------------------------------------------------------ //
 export const groupApi = {
   list: () => api.get('/api/groups/'),
-  create: (payload: { name: string; reassignment_rule?: string; task_proposal_voting_required?: boolean; group_type?: string }) =>
+  create: (payload: { name: string; reassignment_rule?: string; group_type?: string }) =>
     api.post('/api/groups/', payload),
   get: (id: string) => api.get(`/api/groups/${id}/`),
   members: (id: string) => api.get(`/api/groups/${id}/members/`),

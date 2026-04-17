@@ -112,7 +112,6 @@ class CreateGroupSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
-    task_proposal_voting_required = serializers.BooleanField(required=False, default=False)
     group_type = serializers.ChoiceField(
         choices=['flatshare', 'family', 'work_team', 'custom'],
         required=False,
@@ -127,4 +126,3 @@ class InviteMemberSerializer(serializers.Serializer):
 
 class GroupSettingsSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=100, required=False)
-    task_proposal_voting_required = serializers.BooleanField(required=False)

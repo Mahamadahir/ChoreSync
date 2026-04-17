@@ -7,7 +7,6 @@ export interface Group {
   open_task_count: number;
   my_role: GroupRole;
   reassignment_rule: string;
-  task_proposal_voting_required: boolean;
   group_type: 'flatshare' | 'family' | 'work_team' | 'custom';
 }
 
@@ -53,8 +52,5 @@ export interface Proposal {
   task_template_name: string;
   reason: string;
   status: 'open' | 'approved' | 'rejected';
-  votes_for: number;
-  votes_against: number;
-  my_vote: 'for' | 'against' | null;
   created_at: string;
 }

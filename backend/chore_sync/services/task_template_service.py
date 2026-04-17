@@ -31,11 +31,6 @@ class TaskTemplateService:
         membership = group.members.filter(user=creator).first()
         if membership is None:
             raise ValueError("Creator is not a member of this group.")
-        if group.task_proposal_voting_required and membership.role != 'moderator':
-            raise PermissionError(
-                "Only moderators can create tasks directly in this group. "
-                "Submit a suggestion instead."
-            )
 
         payload.pop('created_at', None)
         payload.pop('updated_at', None)

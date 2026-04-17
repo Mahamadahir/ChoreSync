@@ -201,25 +201,25 @@ type PresetId = 'flat_share' | 'family' | 'work_team';
 const PRESETS: {
   id: PresetId; label: string; icon: string; description: string;
   reassignment_rule: string;
-  task_proposal_voting_required: boolean; group_type: string;
+  group_type: string;
 }[] = [
   {
     id: 'flat_share', label: 'Flat Share', icon: 'apartment',
-    description: 'Equal rotation — everyone has full access. No approval needed to add tasks.',
+    description: 'Equal rotation — everyone has full access.',
     reassignment_rule: 'on_create',
-    task_proposal_voting_required: false, group_type: 'flatshare',
+    group_type: 'flatshare',
   },
   {
     id: 'family', label: 'Family', icon: 'family_restroom',
-    description: 'Adults are moderators who approve tasks. Children can suggest tasks.',
+    description: 'Adults are moderators who manage tasks. Children are members.',
     reassignment_rule: 'on_create',
-    task_proposal_voting_required: true, group_type: 'family',
+    group_type: 'family',
   },
   {
     id: 'work_team', label: 'Work Team', icon: 'corporate_fare',
-    description: 'Equal rotation. Team Leads manage tasks; Members can suggest.',
+    description: 'Equal rotation. Team Leads manage tasks; Members complete them.',
     reassignment_rule: 'on_create',
-    task_proposal_voting_required: false, group_type: 'work_team',
+    group_type: 'work_team',
   },
 ];
 
@@ -233,7 +233,7 @@ function CreateGroupModal({
   onClose: () => void;
   onCreate: (payload: {
     name: string;
-    reassignment_rule: string; task_proposal_voting_required: boolean;
+    reassignment_rule: string;
     group_type: string;
   }) => Promise<void>;
 }) {
@@ -265,7 +265,6 @@ function CreateGroupModal({
       await onCreate({
         name: name.trim(),
         reassignment_rule: chosen.reassignment_rule,
-        task_proposal_voting_required: chosen.task_proposal_voting_required,
         group_type: chosen.group_type,
       });
       onClose();
@@ -592,7 +591,7 @@ export default function GroupsScreen() {
 
   async function handleCreate(payload: {
     name: string;
-    reassignment_rule: string; task_proposal_voting_required: boolean;
+    reassignment_rule: string;
     group_type: string;
   }) {
     const res = await groupService.create(payload);

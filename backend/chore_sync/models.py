@@ -222,13 +222,6 @@ class Group(models.Model):
             "family/work_team/custom: owner chooses role per invite."
         ),
     )
-    task_proposal_voting_required = models.BooleanField(
-        default=False,
-        help_text=(
-            "When True, only moderators can create tasks directly. "
-            "Members must submit suggestions which moderators approve or reject."
-        ),
-    )
 
     def __str__(self):
         return self.group_code
@@ -1070,50 +1063,6 @@ class TaskProposal(models.Model):
         name = self.proposed_payload.get('name', f'Proposal #{self.pk}')
         return f"Proposal '{name}' in {self.group.name} [{self.state}]"
 
-
-class TaskVote(models.Model):
-    """Represents a member's vote for a specific task decision."""
-
-    VOTE_CHOICES = [
-        ('support', 'Support'),
-        ('reject', 'Reject'),
-        ('abstain', 'Abstain'),
-    ]
-
-    proposal = models.ForeignKey(
-        TaskProposal,
-        on_delete=models.CASCADE,
-        related_name='votes',
-        help_text="The proposal being voted on.",
-    )
-
-    voter = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='task_votes',
-    )
-
-    choice = models.CharField(
-        max_length=20,
-        choices=VOTE_CHOICES,
-        help_text="The member's decision for this proposal.",
-    )
-
-    note = models.TextField(
-        blank=True,
-        help_text="Optional comment or reasoning for the vote.",
-    )
-
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        unique_together = ('proposal', 'voter')
-        verbose_name = "Task vote"
-        verbose_name_plural = "Task votes"
-
-    def __str__(self):
-        return f"{self.voter} voted {self.choice} on {self.proposal_id}"
 
 
 class TaskPreference(models.Model):

@@ -61,9 +61,7 @@
       <!-- ── TASKS ──────────────────────────────────────────── -->
       <div v-if="tab === 'tasks'">
         <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px">
-          <!-- Moderators always see New Task. Members in restricted groups see Suggest Task. -->
           <button
-            v-if="group.role === 'moderator' || !group.task_proposal_voting_required"
             class="cs-btn-primary"
             @click="showTemplateForm = true"
           >
@@ -71,7 +69,6 @@
             New Task
           </button>
           <button
-            v-if="group.task_proposal_voting_required && group.role !== 'moderator'"
             class="cs-btn-outline"
             @click="showProposalForm = true"
           >
@@ -378,7 +375,7 @@
         <!-- Task Suggestions / Proposals -->
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
           <div class="cs-section-title" style="margin:0">
-            {{ group.task_proposal_voting_required ? 'Pending Approvals' : 'Task Suggestions' }}
+            Task Suggestions
           </div>
           <button class="cs-btn-primary" style="padding:7px 14px;font-size:13px;gap:4px" @click="showProposalForm = true">
             <span class="material-symbols-outlined" style="font-size:16px">lightbulb</span>
@@ -451,7 +448,6 @@
         <template v-if="group.role === 'moderator'">
           <div class="cs-section-title">Group Configuration</div>
           <div class="cs-card" style="max-width:440px;margin-bottom:20px">
-            <q-toggle v-model="settings.task_proposal_voting_required" label="Restrict task creation to moderators (members suggest, moderators approve)" />
             <div style="margin-top:16px">
               <button class="cs-btn-primary" :disabled="settings.loading" @click="saveSettings">
                 {{ settings.loading ? 'Saving…' : 'Save Settings' }}
@@ -1103,7 +1099,6 @@ const templateForm = ref({
 
 // Settings
 const settings = ref({
-  task_proposal_voting_required: false,
   loading: false, message: '', error: false,
 });
 
@@ -1172,7 +1167,6 @@ async function loadAll() {
     group.value = gRes.data;
     members.value = mRes.data;
     tasks.value = tRes.data;
-    settings.value.task_proposal_voting_required = gRes.data.task_proposal_voting_required;
     // Set sensible default invite role based on group type
     invite.value.role = gRes.data.group_type === 'flatshare' ? 'moderator' : 'member';
     loadLeaderboard();
@@ -1535,9 +1529,7 @@ async function saveSettings() {
   settings.value.loading = true;
   settings.value.message = '';
   try {
-    await groupApi.settings(groupId, {
-      task_proposal_voting_required: settings.value.task_proposal_voting_required,
-    });
+    await groupApi.settings(groupId, { name: group.value?.name ?? '' });
     settings.value.message = 'Settings saved.';
     settings.value.error = false;
   } catch (e: any) {

@@ -44,9 +44,9 @@ class GroupMembershipInline(admin.TabularInline):
 
 @admin.register(models.Group)
 class GroupAdmin(admin.ModelAdmin):
-    list_display = ("name", "group_code", "owner", "reassignment_rule", "reassignment_value", "task_proposal_voting_required")
+    list_display = ("name", "group_code", "owner", "reassignment_rule", "reassignment_value")
     search_fields = ("name", "group_code", "owner__email")
-    list_filter = ("reassignment_rule", "task_proposal_voting_required")
+    list_filter = ("reassignment_rule",)
     inlines = [GroupMembershipInline]
 
 
@@ -100,12 +100,6 @@ class TaskSwapAdmin(admin.ModelAdmin):
     autocomplete_fields = ("task", "from_user", "to_user", "counterpart_task")
 
 
-class TaskVoteInline(admin.TabularInline):
-    model = models.TaskVote
-    extra = 0
-    autocomplete_fields = ("voter",)
-
-
 @admin.register(models.TaskProposal)
 class TaskProposalAdmin(admin.ModelAdmin):
     list_display = ("proposal_name", "group", "proposed_by", "state", "approved_by", "created_at")
@@ -124,14 +118,6 @@ class TaskProposalAdmin(admin.ModelAdmin):
         if not diff:
             return "No changes"
         return "; ".join(f"{k}: {v['from']} → {v['to']}" for k, v in diff.items())
-
-
-@admin.register(models.TaskVote)
-class TaskVoteAdmin(admin.ModelAdmin):
-    list_display = ("proposal", "voter", "choice", "created_at")
-    list_filter = ("choice",)
-    search_fields = ("proposal__task_template__name", "voter__email")
-    autocomplete_fields = ("proposal", "voter")
 
 
 # -------------------------------------------------------------------

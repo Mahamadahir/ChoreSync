@@ -8,7 +8,6 @@ export const groupService = {
   create: (payload: {
     name: string;
     reassignment_rule: string;
-    task_proposal_voting_required: boolean;
     group_type?: string;
   }) => api.post('/api/groups/', payload),
 

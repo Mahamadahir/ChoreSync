@@ -70,7 +70,6 @@ export default function GroupSettingsScreen() {
 
   const [group, setGroup] = useState<Group | null>(null);
   const [groupName, setGroupName] = useState('');
-  const [taskVoting, setTaskVoting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -80,7 +79,6 @@ export default function GroupSettingsScreen() {
       const g: Group = res.data;
       setGroup(g);
       setGroupName(g.name);
-      setTaskVoting((g as any).task_proposal_voting_required ?? false);
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.detail ?? 'Could not load group settings.');
     }
@@ -96,10 +94,7 @@ export default function GroupSettingsScreen() {
     }
     setSaving(true);
     try {
-      await groupService.settings(groupId, {
-        name: trimmed,
-        task_proposal_voting_required: taskVoting,
-      });
+      await groupService.settings(groupId, { name: trimmed });
       Alert.alert('Saved', 'Group settings updated.');
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.detail ?? 'Could not save settings.');
@@ -203,12 +198,6 @@ export default function GroupSettingsScreen() {
             subtitle="Automate accountability within your group."
           />
           <View style={styles.togglesCard}>
-            <ToggleRow
-              label="Moderator Approval Required"
-              sub="Members can only suggest tasks — moderators approve before they go live"
-              value={taskVoting}
-              onToggle={setTaskVoting}
-            />
           </View>
         </View>
 

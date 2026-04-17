@@ -36,7 +36,6 @@ class GroupOrchestrator:
         owner: User,
         name: str,
         reassignment_rule: str | None = None,
-        task_proposal_voting_required: bool = False,
         group_type: str = 'custom',
     ) -> Group:
         """Provision a new group and default configuration.
@@ -45,7 +44,6 @@ class GroupOrchestrator:
             owner: User creating the group (initial admin).
             name: Human-friendly group name.
             reassignment_rule: Initial fairness/rotation setting identifier.
-            task_proposal_voting_required: Whether new task templates require a group vote.
         Output:
             Group DTO (id, slug, invite code) ready for UI consumption.
         """
@@ -64,7 +62,6 @@ class GroupOrchestrator:
                 owner=owner,
                 reassignment_rule=reassignment_rule,
                 group_code=secrets.token_urlsafe(6).upper(),
-                task_proposal_voting_required=task_proposal_voting_required,
                 group_type=group_type,
             )
             GroupMembership.objects.create(user=owner, group=group, role='moderator')

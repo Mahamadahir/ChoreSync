@@ -21,7 +21,7 @@ Intents:
   JOIN_GROUP            join a group via code
   INVITE_MEMBER         invite someone to a group by email
   DELETE_TASK_TEMPLATE  remove a task template (moderator only)
-  PROPOSE_TASK          propose a new task for group vote
+  PROPOSE_TASK          propose a new task for moderator approval
   CHOOSE_OPTION         reply to a multi-turn prompt
   UNKNOWN               fallback
 """
@@ -455,33 +455,12 @@ def _freq_label(recurring_choice: str, recur_value: int | None, day_of_week: int
 
 
 def _build_and_create(user, parsed: dict, group) -> tuple[str, None]:
-    """Map parsed fields → model fields, create template and occurrences.
-
-    If the group requires proposals and the user is not a moderator,
-    auto-submits the task as a suggestion instead of failing with a 500.
-    """
+    """Map parsed fields → model fields, create template and occurrences."""
     payload, recur_value = _build_payload(parsed)
 
     try:
         template = TaskTemplateService().create_template(
             creator=user, group_id=str(group.id), payload=payload,
-        )
-    except PermissionError:
-        # Group is proposal-only for this user — submit as a suggestion instead.
-        try:
-            ProposalService().create_proposal(
-                proposer_id=str(user.id),
-                group_id=str(group.id),
-                payload=payload,
-                reason="Submitted via chatbot assistant.",
-            )
-        except Exception as exc:
-            return f"Couldn't submit suggestion: {exc}", None
-        return (
-            f"This group requires moderator approval for new tasks, so I've submitted "
-            f"**{payload['name']}** as a suggestion instead. "
-            f"A moderator will be notified to review it.",
-            None,
         )
     except DjangoValidationError as exc:
         messages = '; '.join(

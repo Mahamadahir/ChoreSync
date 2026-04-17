@@ -1376,7 +1376,7 @@ class TaskAssignmentHistory(models.Model):
 
 ---
 
-### Step 28: PWA (Progressive Web App — Mobile Install)
+### Step 28: PWA (Progressive Web App — Mobile Install) - Additional feat
 
 **Context:** Yes — PWA is primarily for phones. It lets users install ChoreSync to their home screen like a native app, with offline support and push notifications. No App Store required.
 
@@ -1428,4 +1428,253 @@ if ('serviceWorker' in navigator) {
 npm install -D vite-plugin-pwa
 ```
 Configure in `vite.config.ts` — auto-generates service worker and manifest, handles cache versioning.
+
+---
+
+### Step 29: User Avatar Upload
+
+**Context:** The `User` model currently has no avatar field. The mobile `ProfileScreen` and web `UpdateProfileView` both display an initials fallback. This step wires up a real image upload so users can set a profile photo.
+
+---
+
+#### 29a. Django settings — media file serving
+
+**File:** `backend/chore_sync/settings.py`
+
+Add after `STATIC_*` settings:
+
+```python
+import os
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+```
+
+**File:** `backend/chore_sync/urls.py`
+
+Add at the bottom (development only — in production, Nginx/S3 serves `MEDIA_ROOT` directly):
+
+```python
+from django.conf import settings
+from django.conf.urls.static import static
+
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+```
+
+---
+
+#### 29b. Model change
+
+**File:** `backend/chore_sync/models.py`
+
+Locate the `User` model (or whichever model stores the user profile — check whether there is a separate `UserProfile` model). Add:
+
+```python
+avatar = models.ImageField(
+    upload_to='avatars/',
+    null=True,
+    blank=True,
+    help_text="Profile photo. Max recommended size: 2 MB. Stored at MEDIA_ROOT/avatars/."
+)
+```
+
+Add the Pillow dependency (required by `ImageField`):
+
+```bash
+pip install Pillow
+```
+
+Add `Pillow` to `requirements.txt`.
+
+Create and run the migration:
+
+```bash
+python manage.py makemigrations chore_sync --name add_user_avatar
+python manage.py migrate
+```
+
+---
+
+#### 29c. Serializer change
+
+**File:** `backend/chore_sync/api/serializers.py`
+
+In `UserProfileSerializer` (or whichever serializer backs `GET/PATCH /api/profile/`), add `avatar` to the fields list:
+
+```python
+class UserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'avatar', ...]
+        read_only_fields = ['id', 'email']
+```
+
+To return an absolute URL (not a relative path), override `to_representation`:
+
+```python
+def to_representation(self, instance):
+    rep = super().to_representation(instance)
+    request = self.context.get('request')
+    if rep.get('avatar') and request:
+        rep['avatar'] = request.build_absolute_uri(rep['avatar'])
+    return rep
+```
+
+---
+
+#### 29d. Upload endpoint
+
+The existing `PATCH /api/profile/` endpoint must accept `multipart/form-data` to handle the image file. In the profile view (likely `ProfileView` or `UpdateProfileView`):
+
+```python
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+
+class ProfileView(RetrieveUpdateAPIView):
+    serializer_class = UserProfileSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_object(self):
+        return self.request.user
+```
+
+`MultiPartParser` + `FormParser` are required for file uploads. `JSONParser` is kept so non-avatar PATCH requests (updating name, email) continue to work with `application/json`.
+
+**Request format from the client:**
+
+```
+PATCH /api/profile/
+Content-Type: multipart/form-data
+
+avatar=<binary file data>
+```
+
+---
+
+#### 29e. Admin registration
+
+**File:** `backend/chore_sync/admin.py`
+
+Add `avatar` to the fieldsets so admins can inspect/clear avatars:
+
+```python
+@admin.register(User)
+class UserAdmin(admin.ModelAdmin):
+    fieldsets = (
+        (None, {'fields': ('username', 'email', 'avatar', ...)}),
+        ...
+    )
+```
+
+---
+
+#### 29f. Production — file storage
+
+For production, serve avatars from an object-store (S3/GCS) rather than the local filesystem.
+
+Install `django-storages`:
+
+```bash
+pip install django-storages boto3
+```
+
+In `settings.py` (production config):
+
+```python
+DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+AWS_STORAGE_BUCKET_NAME = env('AWS_STORAGE_BUCKET_NAME')
+AWS_S3_REGION_NAME = env('AWS_S3_REGION_NAME', default='eu-west-1')
+AWS_S3_FILE_OVERWRITE = False
+AWS_DEFAULT_ACL = 'private'
+```
+
+When using S3, `ImageField.url` already returns a full HTTPS URL, so the `build_absolute_uri` workaround in the serializer is not needed for production.
+
+---
+
+#### 29g. Mobile integration (React Native)
+
+**File:** `mobile/src/screens/profile/ProfileScreen.tsx`
+
+The hero section currently shows an initials circle. Once the backend returns an `avatar` URL, replace the initials view:
+
+```tsx
+{user.avatar ? (
+  <Image
+    source={{ uri: user.avatar }}
+    style={styles.avatar}
+  />
+) : (
+  <View style={styles.avatarPlaceholder}>
+    <Text style={styles.avatarInitials}>{initials}</Text>
+  </View>
+)}
+```
+
+For the upload flow, use `expo-image-picker` to let the user select a photo, then send it as a multipart POST:
+
+```tsx
+import * as ImagePicker from 'expo-image-picker';
+import api from '@/services/api';
+
+async function pickAndUploadAvatar() {
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    allowsEditing: true,
+    aspect: [1, 1],
+    quality: 0.8,
+  });
+
+  if (!result.canceled) {
+    const formData = new FormData();
+    formData.append('avatar', {
+      uri: result.assets[0].uri,
+      name: 'avatar.jpg',
+      type: 'image/jpeg',
+    } as any);
+
+    await api.patch('/api/profile/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  }
+}
+```
+
+Install the dependency:
+
+```bash
+npx expo install expo-image-picker
+```
+
+---
+
+#### 29h. Web integration (Vue)
+
+**File:** `frontend/src/views/UpdateProfileView.vue`
+
+Add a file input wired to the profile PATCH endpoint:
+
+```vue
+<input
+  type="file"
+  accept="image/*"
+  @change="uploadAvatar"
+  ref="avatarInput"
+/>
+
+<script setup>
+async function uploadAvatar(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append('avatar', file);
+  await api.patch('/api/profile/', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  // refresh auth store so the new avatar URL propagates to the sidebar
+  await authStore.refreshProfile();
+}
+</script>
+```
+
+Update the sidebar initials avatar in `App.vue` to show `<img>` when `authStore.user.avatar` is set.
 

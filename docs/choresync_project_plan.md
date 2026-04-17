@@ -506,11 +506,62 @@ For each TaskTemplate due for a new occurrence:
 - Ability to simulate: "What if we switched to time-based fairness?"
 - Admin can change algorithm with household vote
 
+### Feature 13: AI Chatbot Assistant ✅ Backend implemented
+
+**What it is:**
+A conversational assistant for creating and managing tasks via natural language, running locally on-device using **Ollama + Phi-3 Mini** (no external API costs, no rate limits).
+
+**Infrastructure:**
+- Ollama installed as a systemd service (`sudo systemctl enable ollama`)
+- Model: `phi3:mini` — ~2.3GB, optimised for structured JSON extraction, fast on CPU
+- Runs on CPU using system RAM (no GPU required)
+- Response time: ~5–15s per message
+- `httpx` used for HTTP calls to Ollama
+
+**Backend endpoint (implemented):**
+```
+POST /api/groups/{group_id}/assistant/
+Body: { "message": "Add a weekly task to clean the bathroom on Fridays" }
+```
+
+**Current capabilities:**
+- Create task template from natural language
+- Parse recurrence, day of week, difficulty, category, estimated time
+- Assign to a named group member (by username match)
+- Immediately generates occurrences + auto-assigns on creation
+
+**Planned conversational flows (not yet built):**
+
+*Flow 1 — Can't do a task:*
+```
+User:  "I can't do 'Clean bathroom' today, I'm sick"
+Bot:   "Sorry to hear that. You have 2 emergency reassigns remaining this month.
+        What would you like to do?
+        1. Emergency reassign (broadcast to group)
+        2. List on marketplace (offer bonus points)
+        3. Swap with a specific person"
+User:  "Swap with Jamie"
+Bot:   "Swap request sent to Jamie for 'Clean bathroom'. I'll let you know when they respond."
+```
+
+*Flow 2 — Task creation:*
+```
+User:  "Add a weekly task to clean the bathroom on Fridays"
+Bot:   "Done! Created 'Clean bathroom' (weekly, Fridays). Assigned to you for this week."
+```
+
+**What's needed to complete the chatbot:**
+1. **Frontend** — `ChatbotView.vue` chat interface + Vue router entry
+2. **Group context in prompt** — inject member names + existing templates so the model can resolve "swap with Jamie" and avoid duplicate templates
+3. **Conversation history** — pass prior messages to Ollama so the bot remembers context mid-flow
+4. **Action intents** — detect "can't do task X" intent → present options → execute chosen action (emergency reassign / marketplace / swap) via existing service methods
+5. **Task lookup** — resolve "task X" from natural language to a specific `TaskOccurrence` for the requesting user
+
 ---
 
 ## Feature Prioritization (Phased Approach)
 
-### Phase 1: MVP (Core Features)
+### Phase 1: MVP (Core Features) ✅
 1. User authentication & household management
 2. TaskTemplate & TaskOccurrence models
 3. Basic task assignment (manual + simple rotation)
@@ -519,7 +570,7 @@ For each TaskTemplate due for a new occurrence:
 6. Basic WebSocket chat
 7. Deadline reminders
 
-### Phase 2: Smart Assignment & Swaps
+### Phase 2: Smart Assignment & Swaps ✅
 1. User task preferences
 2. Smart assignment algorithm (fairness)
 3. Task swap proposals
@@ -527,14 +578,14 @@ For each TaskTemplate due for a new occurrence:
 5. Assignment history tracking
 6. Calendar events (write tasks to calendar)
 
-### Phase 3: Gamification
+### Phase 3: Gamification ✅
 1. Streaks tracking
 2. Points system
 3. Leaderboard
 4. Badges
 5. "I'll do it later" (snooze)
 
-### Phase 4: Advanced Features
+### Phase 4: Advanced Features ✅
 1. Smart suggestions (ML/pattern recognition)
 2. Task marketplace
 3. Photo proof
@@ -542,7 +593,15 @@ For each TaskTemplate due for a new occurrence:
 5. Customizable fairness algorithms
 6. Group consensus voting system
 
-### Phase 5: Polish & Scaling
+### Phase 5: AI Chatbot (In Progress)
+1. ✅ Local LLM infrastructure (Ollama + Phi-3 Mini)
+2. ✅ Task creation via natural language
+3. ⬜ Frontend chat view
+4. ⬜ Group context injection (member names, existing templates)
+5. ⬜ Conversational task management (can't do task → reassign/swap/marketplace)
+6. ⬜ Conversation history within a session
+
+### Phase 6: Polish & Scaling
 1. Mobile PWA optimization
 2. Performance optimization
 3. Advanced notifications (email/SMS)
@@ -643,6 +702,9 @@ For each TaskTemplate due for a new occurrence:
 **Chat:**
 - `GET /api/households/{id}/chat/messages/` → Chat history (paginated)
 - WebSocket handles real-time sending
+
+**AI Assistant:**
+- `POST /api/groups/{id}/assistant/` → Send message, get reply + action executed
 
 ---
 

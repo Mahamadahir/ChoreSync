@@ -158,23 +158,21 @@ type PresetId = 'flat_share' | 'family' | 'work_team';
 
 const PRESETS: { id: PresetId; label: string; icon: string; description: string;
   reassignment_rule: string;
-  task_proposal_voting_required: boolean; group_type: string }[] = [
+  group_type: string }[] = [
   {
     id: 'flat_share',
     label: 'Flat Share',
     icon: 'apartment',
-    description: 'Equal rotation — everyone can create tasks. New joiners become housemates automatically.',
+    description: 'Equal rotation — everyone can create tasks.',
     reassignment_rule: 'on_create',
-    task_proposal_voting_required: false,
     group_type: 'flatshare',
   },
   {
     id: 'family',
     label: 'Family',
     icon: 'family_restroom',
-    description: 'Parents approve tasks suggested by children. Invite as "Adult" or "Child".',
+    description: 'Adults are moderators who manage tasks. Invite as "Adult" or "Child".',
     reassignment_rule: 'on_create',
-    task_proposal_voting_required: true,
     group_type: 'family',
   },
   {
@@ -183,7 +181,6 @@ const PRESETS: { id: PresetId; label: string; icon: string; description: string;
     icon: 'corporate_fare',
     description: 'Equal rotation. Invite members as "Team Lead" or "Member".',
     reassignment_rule: 'on_create',
-    task_proposal_voting_required: false,
     group_type: 'work_team',
   },
 ];
@@ -233,7 +230,6 @@ async function createGroup() {
     await groupApi.create({
       name: form.value.name,
       reassignment_rule: preset.reassignment_rule,
-      task_proposal_voting_required: preset.task_proposal_voting_required,
       group_type: preset.group_type,
     });
     cancelCreate();

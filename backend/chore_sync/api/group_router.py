@@ -77,7 +77,6 @@ class GroupListCreateAPIView(APIView):
                 owner=request.user,
                 name=serializer.validated_data['name'],
                 reassignment_rule=serializer.validated_data.get('reassignment_rule'),
-                task_proposal_voting_required=serializer.validated_data.get('task_proposal_voting_required', False),
                 group_type=serializer.validated_data.get('group_type', 'custom'),
             )
         except ValueError as exc:
@@ -125,7 +124,6 @@ class GroupDetailAPIView(APIView):
             "my_role": membership.role,
             "member_count": member_count,
             "reassignment_rule": g.reassignment_rule,
-            "task_proposal_voting_required": g.task_proposal_voting_required,
             "group_type": g.group_type,
         })
 
@@ -225,7 +223,7 @@ class GroupSettingsAPIView(APIView):
 
         group = membership.group
         update_fields = []
-        for field in ('name', 'task_proposal_voting_required'):
+        for field in ('name',):
             if field in serializer.validated_data:
                 setattr(group, field, serializer.validated_data[field])
                 update_fields.append(field)
@@ -234,7 +232,6 @@ class GroupSettingsAPIView(APIView):
 
         return Response({
             "name": group.name,
-            "task_proposal_voting_required": group.task_proposal_voting_required,
             "group_type": group.group_type,
         })
 

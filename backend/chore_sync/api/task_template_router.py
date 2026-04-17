@@ -66,12 +66,6 @@ class GroupTaskTemplateListCreateAPIView(APIView):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
         group = membership.group
-        if group.task_proposal_voting_required and membership.role != 'moderator':
-            return Response(
-                {"detail": "This group requires task proposals. Submit a proposal instead of creating directly."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
 
         # Accept a full datetime string (ISO 8601) as next_due directly.
