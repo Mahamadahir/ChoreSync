@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
-from chore_sync.models import Group, GroupMembership, MarketplaceListing, TaskOccurrence, UserStats
+from chore_sync.models import GroupMembership, MarketplaceListing, TaskOccurrence, UserStats
 
 
 @dataclass
@@ -30,7 +30,6 @@ class MarketplaceService:
             listing = MarketplaceListing.objects.create(
                 task_occurrence=occurrence,
                 listed_by=user,
-                group=occurrence.template.group,
                 bonus_points=max(0, int(bonus_points)),
                 expires_at=timezone.now() + timedelta(hours=24),
             )
@@ -59,12 +58,12 @@ class MarketplaceService:
                 'task_occurrence__template__group', 'listed_by'
             ).filter(id=listing_id).first()
             if listing is None:
-                raise ValueError("Listing not found.")
+                raise ValueError("This listing is no longer available.")
             if listing.expires_at < timezone.now():
                 raise ValueError("This listing has expired.")
             if str(listing.listed_by_id) == str(user.id):
                 raise PermissionError("You cannot claim your own listing.")
-            if not GroupMembership.objects.filter(user=user, group=listing.group).exists():
+            if not GroupMembership.objects.filter(user=user, group=listing.task_occurrence.template.group).exists():
                 raise PermissionError("You are not a member of this group.")
 
             occurrence = listing.task_occurrence
@@ -88,7 +87,7 @@ class MarketplaceService:
             # Award bonus points to claimer
             if bonus_pts > 0:
                 stats, _ = UserStats.objects.get_or_create(
-                    user=user, household=listing.group
+                    user=user, group=occurrence.template.group
                 )
                 stats.total_points += bonus_pts
                 stats.save(update_fields=['total_points'])
@@ -115,6 +114,12 @@ class MarketplaceService:
             ),
             task_occurrence_id=occurrence.id,
         )
+        # Tell all household members to remove this listing from their UI
+        svc.push_household_event(
+            group_id=str(occurrence.template.group_id),
+            subtype='marketplace_claimed',
+            listing_id=listing_id,
+        )
         return occurrence
 
     def cancel_listing(self, *, user, listing_id: int) -> None:
@@ -134,7 +139,7 @@ class MarketplaceService:
             MarketplaceListing.objects.select_related(
                 'task_occurrence__template', 'listed_by'
             ).filter(
-                group_id=group_id,
+                task_occurrence__template__group_id=group_id,
                 expires_at__gt=timezone.now(),
             )
         )

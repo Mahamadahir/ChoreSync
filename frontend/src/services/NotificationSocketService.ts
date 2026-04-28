@@ -49,9 +49,17 @@ type ReceiptsPayload = {
   seen_at: string;
 };
 
+export type TaskUpdatePayload = {
+  subtype: 'marketplace_claimed' | 'emergency_accepted';
+  group_id: string | null;
+  occurrence_id: number | null;
+  listing_id: number | null;
+};
+
 type NotificationHandler = (payload: NotificationPayload) => void;
 type ChatHandler = (payload: ChatPayload) => void;
 type ReceiptsHandler = (payload: ReceiptsPayload) => void;
+type TaskUpdateHandler = (payload: TaskUpdatePayload) => void;
 
 /** Module-level singleton used by the function-style API below. */
 let _singleton: NotificationSocketService | null = null;
@@ -77,6 +85,7 @@ export class NotificationSocketService {
   private notificationHandlers: NotificationHandler[] = [];
   private chatHandlers: ChatHandler[] = [];
   private receiptsHandlers: ReceiptsHandler[] = [];
+  private taskUpdateHandlers: TaskUpdateHandler[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private shouldReconnect = true;
 
@@ -110,6 +119,10 @@ export class NotificationSocketService {
 
   onReceiptsUpdate(handler: ReceiptsHandler) {
     this.receiptsHandlers.push(handler);
+  }
+
+  onTaskUpdate(handler: TaskUpdateHandler) {
+    this.taskUpdateHandlers.push(handler);
   }
 
   sendMarkRead(groupId: string, messageIds: number[]) {
@@ -152,6 +165,8 @@ export class NotificationSocketService {
           this.chatHandlers.forEach((h) => h(data));
         } else if (data.type === 'receipts_update') {
           this.receiptsHandlers.forEach((h) => h(data));
+        } else if (data.type === 'task_update') {
+          this.taskUpdateHandlers.forEach((h) => h(data as TaskUpdatePayload));
         }
       } catch (e) {
         console.error('NotificationSocketService: malformed WebSocket frame', event.data, e);

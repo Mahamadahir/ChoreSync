@@ -32,6 +32,9 @@ export const authService = {
   verifyEmail: (token: string) =>
     api.post('/api/auth/verify-email/', { token }),
 
+  logout: (refresh: string) =>
+    api.post('/api/auth/logout/', { refresh }),
+
   loginWithGoogle: (id_token: string) =>
     api.post('/api/auth/google/mobile/', { id_token }),
 

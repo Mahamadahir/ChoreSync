@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: choresync-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: choresync-worker
+  template:
+    metadata:
+      labels:
+        app: choresync-worker
+    spec:
+      containers:
+        - name: worker
+          image: image-registry.openshift-image-registry.svc:5000/choresync/choresync:latest
+          imagePullPolicy: Always
+          # Two queues: default tasks + the low-concurrency calendar sync queue
+          command:
+            - celery
+            - -A
+            - chore_sync
+            - worker
+            - --loglevel=info
+            - --queues=celery,calendar_sync
+            - --concurrency=2
+          envFrom:
+            - secretRef:
+                name: choresync-secret
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            exec:
+              command:
+                - celery
+                - -A
+                - chore_sync
+                - inspect
+                - ping
+                - -d
+                - celery@$HOSTNAME
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            failureThreshold: 3

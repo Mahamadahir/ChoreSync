@@ -5,8 +5,8 @@
  * (lower = better chance of being assigned). The winner bar is highlighted.
  * Only the current user's row expands to show per-component details.
  */
-import React, { useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import { Palette as C } from '../../theme';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -36,6 +36,8 @@ interface BreakdownData {
   template_name: string;
   assigned_at?: string;
   winner_id?: string;
+  tiebreaker_used?: boolean;
+  tiebreaker_reason?: 'no_prior_assignments' | 'least_recently_assigned' | 'joined_most_recently' | null;
   candidates: Candidate[];
 }
 
@@ -45,24 +47,57 @@ interface Props {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function prefLabel(mult: number): string {
-  if (mult <= 0.85) return 'Prefer ×0.8';
-  if (mult >= 1.15) return 'Avoid ×1.2';
-  return 'Neutral ×1.0';
-}
+function buildReasons(me: Candidate, others: Candidate[], breakdown: BreakdownData): string[] {
+  const comp = me.components!;
+  const reasons: string[] = [];
 
-function affinityLabel(mult: number): string {
-  if (mult <= 0.9) return 'High history ×0.88';
-  if (mult >= 1.1) return 'Low history ×1.12';
-  return 'No adjustment';
+  // Tiebreaker — scores were equal, explain what broke the tie
+  if (breakdown.tiebreaker_used && me.is_winner) {
+    if (breakdown.tiebreaker_reason === 'no_prior_assignments')
+      reasons.push("All members had equal workloads — you were selected because you haven't been assigned a task yet");
+    else if (breakdown.tiebreaker_reason === 'least_recently_assigned')
+      reasons.push("All members had equal workloads — you were selected because you haven't had a task assigned in the longest time");
+    else
+      reasons.push("All members had equal workloads — you were selected as the most recently joined member");
+    return reasons;
+  }
+
+  const avgOtherTasks = others.length
+    ? others.reduce((s, c) => s + (c.components?.tasks_score ?? comp.tasks_score), 0) / others.length
+    : comp.tasks_score;
+  const avgOtherTime = others.length
+    ? others.reduce((s, c) => s + (c.components?.time_score ?? comp.time_score), 0) / others.length
+    : comp.time_score;
+
+  if (comp.tasks_score < avgOtherTasks * 0.9)
+    reasons.push("You've completed fewer tasks than others in the group recently");
+  else if (comp.tasks_score <= avgOtherTasks * 1.1)
+    reasons.push("Your workload is similar to the rest of the group");
+
+  if (comp.time_score < avgOtherTime * 0.85)
+    reasons.push("You've spent less time on tasks than others recently");
+
+  if (comp.pref_multiplier <= 0.85)
+    reasons.push("You marked this type of task as preferred");
+  else if (comp.pref_multiplier >= 1.15)
+    reasons.push("Note: you marked this type of task as something to avoid");
+
+  if (comp.affinity_multiplier <= 0.9)
+    reasons.push("You have a strong completion history with this task");
+  else if (comp.affinity_multiplier >= 1.1)
+    reasons.push("Others tend to complete this task more consistently than you");
+
+  if (comp.calendar_penalty === 0)
+    reasons.push("Your calendar is free during the task window");
+  else if (comp.calendar_penalty >= 25)
+    reasons.push("You have some calendar conflicts during the task window — still the best available option");
+
+  return reasons;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function BreakdownPanel({ breakdown }: Props) {
-  const [expanded, setExpanded] = useState(false);
-  const [fairnessExpanded, setFairnessExpanded] = useState(false);
-
   if (breakdown.assigned_via === 'emergency_cover') {
     return (
       <View style={styles.emergencyCard}>
@@ -96,21 +131,19 @@ export default function BreakdownPanel({ breakdown }: Props) {
     );
   }
 
-  // Max score for bar scaling
   const maxScore = Math.max(...breakdown.candidates.map((c) => c.final_score), 1);
+  const me = breakdown.candidates.find((c) => c.is_me);
+  const others = breakdown.candidates.filter((c) => !c.is_me);
+  const reasons = me?.components ? buildReasons(me, others, breakdown) : [];
 
   return (
     <View style={styles.panel}>
-      <Text style={styles.panelLabel}>ASSIGNMENT SCORES</Text>
-      <Text style={styles.panelSub}>Lower score = higher priority for assignment</Text>
+      <Text style={styles.panelLabel}>RELATIVE WORKLOAD</Text>
 
       {breakdown.candidates.map((c) => {
         const barPct = (c.final_score / maxScore) * 100;
-        const isExpandable = c.is_me && !!c.components;
-
         return (
           <View key={c.user_id} style={styles.candidateRow}>
-            {/* Avatar + name */}
             <View style={styles.candidateMeta}>
               <View style={[
                 styles.avatar,
@@ -129,13 +162,9 @@ export default function BreakdownPanel({ breakdown }: Props) {
                 <Text style={styles.candidateName} numberOfLines={1}>
                   {c.username}{c.is_me ? ' (you)' : ''}
                 </Text>
-                {c.is_winner && (
-                  <Text style={styles.winnerChip}>ASSIGNED</Text>
-                )}
+                {c.is_winner && <Text style={styles.winnerChip}>ASSIGNED</Text>}
               </View>
             </View>
-
-            {/* Bar + score */}
             <View style={styles.barWrap}>
               <View style={styles.barTrack}>
                 <View style={[
@@ -145,101 +174,22 @@ export default function BreakdownPanel({ breakdown }: Props) {
                   c.is_me && !c.is_winner && { backgroundColor: C.primaryContainer },
                 ]} />
               </View>
-              <Text style={styles.scoreLabel}>{c.final_score}</Text>
             </View>
-
-            {/* Expandable components (own row only) */}
-            {isExpandable && (
-              <TouchableOpacity
-                onPress={() => setExpanded((v) => !v)}
-                style={styles.expandBtn}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.msIcon, { color: C.primary, fontSize: 14 }]}>
-                  {expanded ? 'expand_less' : 'expand_more'}
-                </Text>
-                <Text style={styles.expandBtnText}>
-                  {expanded ? 'Hide breakdown' : 'Show my breakdown'}
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            {isExpandable && expanded && c.components && (
-              <View style={styles.componentsCard}>
-                {/* Fairness score — expandable sub-breakdown */}
-                <TouchableOpacity
-                  onPress={() => setFairnessExpanded((v) => !v)}
-                  activeOpacity={0.7}
-                  style={styles.fairnessHeader}
-                >
-                  <View style={styles.compLeft}>
-                    <Text style={styles.compLabel}>Fairness score</Text>
-                    <Text style={styles.compSub}>Blends task count (40%), time burden (35%), points (25%)</Text>
-                  </View>
-                  <View style={styles.fairnessRight}>
-                    <Text style={styles.compValue}>{c.components.stage1_score}</Text>
-                    <Text style={[styles.msIcon, { color: C.primary, fontSize: 14 }]}>
-                      {fairnessExpanded ? 'expand_less' : 'expand_more'}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-                {fairnessExpanded && (
-                  <View style={styles.fairnessSub}>
-                    <SubComponentRow label="Task count" value={c.components.tasks_score} weight="40%" />
-                    <SubComponentRow label="Time burden" value={c.components.time_score} weight="35%" />
-                    <SubComponentRow label="Points" value={c.components.points_score} weight="25%" />
-                  </View>
-                )}
-                <ComponentRow
-                  label="Preference"
-                  value={prefLabel(c.components.pref_multiplier)}
-                  sub="Based on your stated prefer / neutral / avoid"
-                />
-                <ComponentRow
-                  label="History affinity"
-                  value={affinityLabel(c.components.affinity_multiplier)}
-                  sub="Completion rate for this recurring task (≥3 assignments)"
-                />
-                <ComponentRow
-                  label="Calendar penalty"
-                  value={`+${c.components.calendar_penalty}`}
-                  sub="Calendar conflicts in the task window (max +50)"
-                />
-              </View>
-            )}
           </View>
         );
       })}
-    </View>
-  );
-}
 
-function ComponentRow({ label, value, sub }: { label: string; value: string; sub: string }) {
-  return (
-    <View style={styles.compRow}>
-      <View style={styles.compLeft}>
-        <Text style={styles.compLabel}>{label}</Text>
-        <Text style={styles.compSub}>{sub}</Text>
-      </View>
-      <Text style={styles.compValue}>{value}</Text>
-    </View>
-  );
-}
-
-function SubComponentRow({ label, value, weight }: { label: string; value: number; weight: string }) {
-  const barPct = value;  // already 0–100
-  return (
-    <View style={styles.subCompRow}>
-      <View style={styles.subCompMeta}>
-        <Text style={styles.subCompLabel}>{label}</Text>
-        <Text style={styles.subCompWeight}>{weight}</Text>
-      </View>
-      <View style={styles.subCompBarWrap}>
-        <View style={styles.subCompBarTrack}>
-          <View style={[styles.subCompBarFill, { width: `${barPct}%` as any }]} />
+      {reasons.length > 0 && (
+        <View style={styles.reasonsCard}>
+          <Text style={styles.reasonsTitle}>WHY YOU?</Text>
+          {reasons.map((r, i) => (
+            <View key={i} style={styles.reasonRow}>
+              <Text style={[styles.msIcon, { color: C.secondary, fontSize: 14 }]}>check_circle</Text>
+              <Text style={styles.reasonText}>{r}</Text>
+            </View>
+          ))}
         </View>
-        <Text style={styles.subCompScore}>{value}</Text>
-      </View>
+      )}
     </View>
   );
 }
@@ -334,116 +284,33 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 
-  expandBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 4,
-    alignSelf: 'flex-start',
-  },
-  expandBtnText: {
-    fontFamily: 'PlusJakartaSans-SemiBold',
-    fontSize: 11,
-    color: C.primary,
-  },
-
-  componentsCard: {
-    marginTop: 8,
+  reasonsCard: {
+    marginTop: 12,
     backgroundColor: C.surfaceContainerLowest,
     borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: `${C.primary}22`,
+    borderLeftWidth: 3,
+    borderLeftColor: C.secondary,
     padding: 12,
-    gap: 10,
+    gap: 8,
   },
-  fairnessHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  fairnessRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    flexShrink: 0,
-  },
-  fairnessSub: {
-    marginTop: 2,
+  reasonsTitle: {
+    fontFamily: 'PlusJakartaSans-Bold',
+    fontSize: 10,
+    letterSpacing: 0.8,
+    color: C.onSurfaceVariant,
     marginBottom: 2,
-    paddingLeft: 8,
-    gap: 6,
-    borderLeftWidth: 2,
-    borderLeftColor: `${C.primary}33`,
   },
-  subCompRow: {
-    gap: 3,
-  },
-  subCompMeta: {
+  reasonRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  subCompLabel: {
-    fontFamily: 'PlusJakartaSans-Regular',
-    fontSize: 11,
-    color: C.onSurface,
-  },
-  subCompWeight: {
-    fontFamily: 'PlusJakartaSans-Regular',
-    fontSize: 10,
-    color: C.onSurfaceVariant,
-  },
-  subCompBarWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  subCompBarTrack: {
-    flex: 1,
-    height: 4,
-    backgroundColor: C.surfaceContainerHigh,
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  subCompBarFill: {
-    height: '100%',
-    borderRadius: 2,
-    backgroundColor: C.primary,
-    opacity: 0.5,
-  },
-  subCompScore: {
-    fontFamily: 'PlusJakartaSans-Bold',
-    fontSize: 10,
-    color: C.primary,
-    width: 24,
-    textAlign: 'right',
-  },
-  compRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'flex-start',
-    gap: 12,
+    gap: 8,
   },
-  compLeft: {
-    flex: 1,
-  },
-  compLabel: {
-    fontFamily: 'PlusJakartaSans-SemiBold',
+  reasonText: {
+    fontFamily: 'PlusJakartaSans-Regular',
     fontSize: 12,
     color: C.onSurface,
-  },
-  compSub: {
-    fontFamily: 'PlusJakartaSans-Regular',
-    fontSize: 10,
-    color: C.onSurfaceVariant,
-    marginTop: 1,
-  },
-  compValue: {
-    fontFamily: 'PlusJakartaSans-Bold',
-    fontSize: 12,
-    color: C.primary,
-    flexShrink: 0,
+    lineHeight: 18,
+    flex: 1,
   },
 
   msIcon: {

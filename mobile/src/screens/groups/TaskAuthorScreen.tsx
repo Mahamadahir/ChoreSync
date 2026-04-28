@@ -41,7 +41,6 @@ const RECUR_OPTIONS = [
   { value: 'custom',      label: 'Custom days'     },
 ] as const;
 const DAYS_OF_WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
-const IMPORTANCE_OPTIONS = ['core', 'additional'] as const;
 
 type RecurChoice = (typeof RECUR_OPTIONS)[number]['value'];
 
@@ -134,7 +133,6 @@ export default function TaskAuthorScreen() {
   const [name,        setName]        = useState('');
   const [details,     setDetails]     = useState('');
   const [category,    setCategory]    = useState<(typeof CATEGORIES)[number]>('other');
-  const [importance,  setImportance]  = useState<'core' | 'additional'>('core');
   const [recurChoice, setRecurChoice] = useState<RecurChoice>('none');
   const [daysOfWeek,  setDaysOfWeek]  = useState<string[]>([]);
   const [recurValue,  setRecurValue]  = useState('');   // for every_n_days
@@ -155,7 +153,6 @@ export default function TaskAuthorScreen() {
       setName(t.name ?? '');
       setDetails(t.details ?? '');
       setCategory(t.category ?? 'other');
-      setImportance(t.importance ?? 'core');
       setRecurChoice(t.recurring_choice ?? 'none');
       setDaysOfWeek(t.days_of_week ?? []);
       setRecurValue(t.recur_value != null ? String(t.recur_value) : '');
@@ -201,7 +198,6 @@ export default function TaskAuthorScreen() {
       name: name.trim(),
       details: details.trim() || null,
       category,
-      importance,
       recurring_choice: recurChoice,
       days_of_week: recurChoice === 'custom' ? daysOfWeek : null,
       recur_value: recurChoice === 'every_n_days' ? parseInt(recurValue, 10) : null,
@@ -419,16 +415,6 @@ export default function TaskAuthorScreen() {
               </Field>
             </View>
           </View>
-
-          {/* ── Importance ───────────────────────── */}
-          <Field label="IMPORTANCE">
-            <PillSelector
-              options={IMPORTANCE_OPTIONS}
-              value={importance}
-              onChange={setImportance}
-              labelFn={(v) => v.charAt(0).toUpperCase() + v.slice(1)}
-            />
-          </Field>
 
           {/* ── Photo proof ──────────────────────── */}
           <View style={styles.switchRow}>

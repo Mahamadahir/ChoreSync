@@ -2,6 +2,8 @@ from __future__ import annotations
 
 
 import logging
+import secrets
+from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -118,6 +120,18 @@ class AccountService:
             is_task_writeback=True,
         )
 
+    def _create_personal_group(self, user: User) -> None:
+        """Creates a hidden personal group for the user's private tasks."""
+        from chore_sync.models import Group, GroupMembership
+        import uuid as _uuid
+        group = Group.all_objects.create(
+            name="Personal",
+            group_code=f"personal-{_uuid.uuid4().hex[:12]}",
+            owner=user,
+            is_personal=True,
+        )
+        GroupMembership.objects.create(user=user, group=group, role='moderator')
+
     def register_user(self, *, username: str, email: str, password: str, first_name: str = '', last_name: str = '', timezone: str | None = None) -> UserDTO:
         """
         Orchestrates full registration:
@@ -152,6 +166,7 @@ class AccountService:
                 if update_fields:
                     user.save(update_fields=update_fields)
                 self._create_internal_calendar(user)
+                self._create_personal_group(user)
 
         except IntegrityError as exc:
             # Edge case 2 separate users attempt to signup with the same username/email at the same time.
@@ -196,7 +211,11 @@ class AccountService:
         """
         Generate a token, store it, and send a confirmation link.
         """
-        token_obj = token_obj or EmailVerificationToken.generate_for_user(user)
+        token_obj = token_obj or EmailVerificationToken.objects.create(
+            user=user,
+            token=secrets.token_urlsafe(32),
+            expires_at=timezone.now() + timedelta(hours=24),
+        )
 
         # Build frontend URL like https://app.example.com/verify-email?token=...
         verify_url = f"{settings.FRONTEND_VERIFY_EMAIL_URL}?token={token_obj.token}"
@@ -257,7 +276,11 @@ class AccountService:
         except EmailNotValidError as exc:
             raise InvalidEmail(str(exc)) from exc
 
-        token_obj = EmailVerificationToken.generate_for_user(user)
+        token_obj = EmailVerificationToken.objects.create(
+            user=user,
+            token=secrets.token_urlsafe(32),
+            expires_at=timezone.now() + timedelta(hours=24),
+        )
         try:
             self._enqueue_verification_email(user)
         except Exception as exc:
@@ -327,7 +350,11 @@ class AccountService:
 
             # Invalidate old token and issue a new one
             token_obj.mark_used()
-            new_token = EmailVerificationToken.generate_for_user(user)
+            new_token = EmailVerificationToken.objects.create(
+                user=user,
+                token=secrets.token_urlsafe(32),
+                expires_at=timezone.now() + timedelta(hours=24),
+            )
             # Send immediately (sync) since Celery is deferred
             self.start_email_verification(user, token_obj=new_token)
 
@@ -358,7 +385,11 @@ class AccountService:
                 user.email_verified = False
                 user.is_active = False
                 dirty_fields.extend(["email", "email_verified", "is_active"])
-                token_obj = EmailVerificationToken.generate_for_user(user)
+                token_obj = EmailVerificationToken.objects.create(
+                    user=user,
+                    token=secrets.token_urlsafe(32),
+                    expires_at=timezone.now() + timedelta(hours=24),
+                )
                 self.start_email_verification(user, token_obj=token_obj)
 
         if timezone is not None and hasattr(user, "timezone"):
@@ -454,6 +485,7 @@ class AccountService:
                     avatar_url=picture,
                 )
                 self._create_internal_calendar(user)
+                self._create_personal_group(user)
             created = True
 
         if not user.is_active or not getattr(user, "email_verified", False):
@@ -541,6 +573,7 @@ class AccountService:
                     avatar_url=picture,
                 )
                 self._create_internal_calendar(user)
+                self._create_personal_group(user)
 
         if not user.is_active or not getattr(user, "email_verified", False):
             user.is_active = True
@@ -585,7 +618,11 @@ class AccountService:
             raise User.DoesNotExist
         if not user.is_active:
             raise InactiveAccount("Account is not active.")
-        token_obj = PasswordResetToken.generate_for_user(user, lifetime_hours=1)
+        token_obj = PasswordResetToken.objects.create(
+            user=user,
+            token=secrets.token_urlsafe(32),
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
         reset_url = f"{settings.FRONTEND_RESET_PASSWORD_URL}?token={token_obj.token}"
         subject = "Reset your password"
         message = (

@@ -17,7 +17,18 @@
       "adaptiveIcon": {
         "backgroundColor": "#FDFBF7"
       },
-      "package": "com.choresync.app"
+      "package": "com.choresync.app",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "com.googleusercontent.apps.718861309094-02gtpjd8pnjb5glljmhiermtcloduov6"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "plugins": [
       "expo-font",

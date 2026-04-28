@@ -271,15 +271,12 @@ class Command(BaseCommand):
                 owner=alice,
                 name="Riverside Flat",
                 members=[bob, carol],
-                reassignment_rule="on_create",
             )
             # Group B: Dave (owner/moderator) + Carol (in both groups) + Bob
             group_b = self._create_group(
                 owner=dave,
                 name="Cedar House",
                 members=[carol, bob],
-                reassignment_rule="after_n_tasks",
-                reassignment_value=3,
             )
 
             # Calendars + events
@@ -350,8 +347,6 @@ class Command(BaseCommand):
         owner: User,
         name: str,
         members: list[User],
-        reassignment_rule: str,
-        reassignment_value: int | None = None,
     ) -> Group:
         existing = Group.objects.filter(name=name).first()
         if existing:
@@ -362,20 +357,16 @@ class Command(BaseCommand):
         group = svc.create_group(
             owner=owner,
             name=name,
-            reassignment_rule=reassignment_rule,
         )
-        if reassignment_value:
-            group.reassignment_value = reassignment_value
-            group.save(update_fields=["reassignment_value"])
 
         for member in members:
             GroupMembership.objects.get_or_create(user=member, group=group, defaults={"role": "member"})
 
-        # Create UserStats for every member (field names: household, total_tasks_completed)
+        # Create UserStats for every member
         for user in [owner, *members]:
             UserStats.objects.get_or_create(
                 user=user,
-                household=group,
+                group=group,
                 defaults={"total_tasks_completed": 0, "total_points": 0},
             )
 
@@ -475,16 +466,13 @@ class Command(BaseCommand):
             for group in Group.objects.filter(members__user=user):
                 stats, created = UserStats.objects.get_or_create(
                     user=user,
-                    household=group,
+                    group=group,
                     defaults=data,
                 )
                 if not created:
                     for field, val in data.items():
                         setattr(stats, field, val)
                     stats.save(update_fields=list(data.keys()))
-            user.on_time_streak_days = data["current_streak_days"]
-            user.longest_on_time_streak_days = data["current_streak_days"] + random.randint(3, 10)
-            user.save(update_fields=["on_time_streak_days", "longest_on_time_streak_days"])
 
     def _create_marketplace_listing(self, group: Group) -> None:
         # Find a pending occurrence in this group to list

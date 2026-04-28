@@ -38,15 +38,25 @@
         </router-link>
       </div>
 
+      <!-- Legal links -->
+      <div class="cs-sidebar-legal">
+        <router-link to="/privacy" class="cs-legal-link">Privacy</router-link>
+        <span class="cs-legal-dot">·</span>
+        <router-link to="/terms" class="cs-legal-link">Terms</router-link>
+      </div>
+
       <!-- New task -->
-      <button class="cs-new-task-btn" @click="$router.push({ name: 'tasks' })">
+      <button class="cs-new-task-btn" @click="newTaskModalOpen = true">
         <span class="material-symbols-outlined">add_task</span>
         New Task
       </button>
 
       <!-- User footer -->
       <div class="cs-sidebar-footer">
-        <div class="cs-user-avatar">{{ userInitials }}</div>
+        <div class="cs-user-avatar">
+          <img v-if="authStore.avatarUrl" :src="authStore.avatarUrl" :alt="userInitials" class="cs-user-avatar-img" />
+          <span v-else>{{ userInitials }}</span>
+        </div>
         <div class="cs-user-info" style="flex:1;min-width:0">
           <div class="cs-user-name">{{ authStore.username || 'User' }}</div>
           <div class="cs-user-email">{{ authStore.email || '' }}</div>
@@ -98,6 +108,14 @@
         <div class="cs-notif-title">Notifications</div>
         <div style="display:flex;align-items:center;gap:4px">
           <button
+            v-if="unreadCount > 0"
+            class="cs-icon-btn"
+            title="Mark all as read"
+            @click="markAllRead"
+          >
+            <span class="material-symbols-outlined">done_all</span>
+          </button>
+          <button
             class="cs-icon-btn"
             @click="notifPanelOpen = false; $router.push({ name: 'profile' })"
             title="Notification preferences"
@@ -148,6 +166,73 @@
       </div>
     </aside>
 
+    <!-- ── New Personal Task Modal ───────────────────────────── -->
+    <div v-if="newTaskModalOpen" class="cs-modal-backdrop" @click.self="closeNewTaskModal">
+      <div class="cs-modal">
+        <div class="cs-modal-header">
+          <span class="cs-modal-title">New Personal Task</span>
+          <button class="cs-icon-btn" @click="closeNewTaskModal">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <form class="cs-modal-body" @submit.prevent="submitNewTask">
+          <div class="cs-form-group">
+            <label class="cs-form-label">Task name *</label>
+            <input
+              class="cs-form-input"
+              v-model="newTask.name"
+              placeholder="e.g. Buy groceries"
+              required
+              autofocus
+            />
+          </div>
+          <div class="cs-form-group">
+            <label class="cs-form-label">Deadline</label>
+            <input
+              class="cs-form-input"
+              type="datetime-local"
+              v-model="newTask.deadline"
+            />
+          </div>
+          <div class="cs-form-group">
+            <label class="cs-form-label">Estimated time (minutes)</label>
+            <input
+              class="cs-form-input"
+              type="number"
+              min="1"
+              v-model.number="newTask.estimated_mins"
+            />
+          </div>
+          <div class="cs-form-group">
+            <label class="cs-form-label">Category</label>
+            <select class="cs-form-input" v-model="newTask.category">
+              <option value="other">Other</option>
+              <option value="cleaning">Cleaning</option>
+              <option value="cooking">Cooking</option>
+              <option value="laundry">Laundry</option>
+              <option value="maintenance">Maintenance</option>
+            </select>
+          </div>
+          <div class="cs-form-group">
+            <label class="cs-form-label">Notes</label>
+            <textarea
+              class="cs-form-input"
+              rows="2"
+              v-model="newTask.details"
+              placeholder="Optional details…"
+            />
+          </div>
+          <div v-if="newTaskError" class="cs-form-error">{{ newTaskError }}</div>
+          <div class="cs-modal-actions">
+            <button type="button" class="cs-btn cs-btn--ghost" @click="closeNewTaskModal">Cancel</button>
+            <button type="submit" class="cs-btn cs-btn--primary" :disabled="newTaskSubmitting">
+              {{ newTaskSubmitting ? 'Creating…' : 'Create Task' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -157,7 +242,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { authService } from './services/authService';
 import { useAuthStore } from './stores/auth';
 import { useNotificationStore } from './stores/notifications';
-import { notificationApi } from './services/api';
+import { notificationApi, taskApi } from './services/api';
 import { NotificationSocketService } from './services/NotificationSocketService';
 import SuggestionPopup from './components/SuggestionPopup.vue';
 
@@ -170,6 +255,41 @@ const notifPanelOpen = ref(false);
 const searchQuery = ref('');
 const socketSvc = new NotificationSocketService();
 const suggestionPopupRef = ref<InstanceType<typeof SuggestionPopup> | null>(null);
+
+// ── Personal task modal ───────────────────────────────────────────────────
+const newTaskModalOpen = ref(false);
+const newTaskSubmitting = ref(false);
+const newTaskError = ref('');
+const newTask = ref({ name: '', deadline: '', estimated_mins: 30, category: 'other', details: '' });
+
+function closeNewTaskModal() {
+  newTaskModalOpen.value = false;
+  newTaskError.value = '';
+  newTask.value = { name: '', deadline: '', estimated_mins: 30, category: 'other', details: '' };
+}
+
+async function submitNewTask() {
+  newTaskError.value = '';
+  newTaskSubmitting.value = true;
+  try {
+    const payload: Record<string, any> = {
+      name: newTask.value.name,
+      estimated_mins: newTask.value.estimated_mins,
+      category: newTask.value.category,
+      details: newTask.value.details,
+    };
+    if (newTask.value.deadline) {
+      payload.deadline = new Date(newTask.value.deadline).toISOString();
+    }
+    await taskApi.createPersonal(payload);
+    closeNewTaskModal();
+    router.push({ name: 'tasks' });
+  } catch (err: any) {
+    newTaskError.value = err?.response?.data?.detail ?? 'Failed to create task.';
+  } finally {
+    newTaskSubmitting.value = false;
+  }
+}
 
 const notifications = computed(() => notifStore.notifications);
 const unreadCount = computed(() => notifStore.unreadCount);
@@ -222,6 +342,13 @@ async function markRead(id: number) {
   } catch {}
 }
 
+async function markAllRead() {
+  notifStore.markAllRead(); // optimistic
+  try {
+    await notificationApi.markAllRead();
+  } catch {}
+}
+
 async function dismiss(id: number) {
   try {
     await notificationApi.dismiss(id);
@@ -258,7 +385,18 @@ async function handleNotificationClick(n: any) {
       return;
     }
 
-    // group_invite / any notification with only group_id and no action_url
+    // group_invite → invitation accept/decline screen
+    const inviteMatch = url.match(/^\/invitations\/(\d+)$/);
+    if (inviteMatch || n.type === 'group_invite') {
+      if (inviteMatch) {
+        await router.push({ name: 'invitation', params: { id: inviteMatch[1] } });
+      } else if (n.group_id) {
+        await router.push({ name: 'group-detail', params: { id: n.group_id } });
+      }
+      return;
+    }
+
+    // fallback: any notification with only group_id and no action_url
     if (!url && n.group_id) {
       await router.push({ name: 'group-detail', params: { id: n.group_id } });
       return;

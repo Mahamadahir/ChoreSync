@@ -1,6 +1,6 @@
 """Domain entity definitions for ChoreSync."""
+import calendar as _cal
 import uuid
-import secrets
 import json
 from datetime import timedelta
 
@@ -8,17 +8,14 @@ from django.conf import settings
 from django.utils import timezone
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
-from django.core.validators import MaxValueValidator
 from django.db import models
 from django.db.models import Q
 from cryptography.fernet import Fernet
+from auditlog.registry import auditlog
 
-# TODO(Model Test Ideas):
-# - Validation paths: required fields, uniqueness, and custom clean/validator logic.
-# - Relationship behavior: foreign-key/many-to-many linkage, cascade delete rules, and reverse lookups.
-# - Domain helpers: computed properties or custom methods that encode business rules (e.g., is_overdue, display_name).
-# - State transitions: enums/choice fields, status changes, and soft-delete or archival flows.
-# - Audit hooks: automatic timestamps, __str__ representations, and signal-driven side effects (notifications, sync events).
+
+def _swap_expiry_default():
+    return timezone.now() + timedelta(hours=48)
 
 
 class EncryptedJSONField(models.TextField):
@@ -58,20 +55,6 @@ class User(AbstractUser):
         blank=True,
     )
 
-    on_time_streak_days = models.PositiveIntegerField(
-        default=0,
-        help_text="Consecutive days the user has met all task deadlines.",
-    )
-    longest_on_time_streak_days = models.PositiveIntegerField(
-        default=0,
-        help_text="Longest historical on-time streak in days.",
-    )
-    last_streak_date = models.DateField(
-        null=True,
-        blank=True,
-        help_text="Date on which the streak was last updated.",
-    )
-
     avatar = models.ImageField(
         upload_to='avatars/',
         null=True,
@@ -106,30 +89,18 @@ class EmailVerificationToken(models.Model):
         on_delete=models.CASCADE,
         related_name='email_verification_tokens',
     )
-    token = models.CharField(
-        max_length=64,
-        unique=True,
-        db_index=True,
-    )
+    token = models.CharField(max_length=64, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField(null=True, blank=True)
     used_at = models.DateTimeField(null=True, blank=True)
 
     def is_expired(self) -> bool:
-        return timezone.now() >= self.expires_at
+        return self.expires_at is not None and timezone.now() >= self.expires_at
 
     def mark_used(self) -> None:
         self.used_at = timezone.now()
         self.save(update_fields=['used_at'])
 
-    @classmethod
-    def generate_for_user(cls, user, *, lifetime_hours: int = 24):
-        token = secrets.token_urlsafe(32)
-        return cls.objects.create(
-            user=user,
-            token=token,
-            expires_at=timezone.now() + timedelta(hours=lifetime_hours),
-        )
 
 
 class PasswordResetToken(models.Model):
@@ -138,7 +109,7 @@ class PasswordResetToken(models.Model):
         on_delete=models.CASCADE,
         related_name='password_reset_tokens',
     )
-    token = models.CharField(max_length=64, unique=True, db_index=True)
+    token = models.CharField(max_length=64, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     used_at = models.DateTimeField(null=True, blank=True)
@@ -150,14 +121,6 @@ class PasswordResetToken(models.Model):
         self.used_at = timezone.now()
         self.save(update_fields=['used_at'])
 
-    @classmethod
-    def generate_for_user(cls, user, *, lifetime_hours: int = 1):
-        token = secrets.token_urlsafe(32)
-        return cls.objects.create(
-            user=user,
-            token=token,
-            expires_at=timezone.now() + timedelta(hours=lifetime_hours),
-        )
 
 
 class EmailLog(models.Model):
@@ -172,38 +135,28 @@ class EmailLog(models.Model):
     def __str__(self):
         return f"Email to {self.to_address} at {self.created_at:%Y-%m-%d %H:%M}"
 
+class HouseholdGroupManager(models.Manager):
+    """Default manager — excludes personal groups from all household-facing queries."""
+    def get_queryset(self):
+        return super().get_queryset().filter(is_personal=False)
+
+
 class Group(models.Model):
     """Represents a household or team coordinating chores."""
+
+    objects     = HouseholdGroupManager()  # default: household groups only
+    all_objects = models.Manager()         # escape hatch: includes personal groups
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100, verbose_name='Group Name')
     group_code = models.CharField(max_length=100, unique=True)
+    is_personal = models.BooleanField(default=False, db_index=True)
 
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         related_name='owned_groups',
-    )
-
-    reassignment_rule = models.CharField(
-        max_length=50,
-        choices=[
-            ('on_create', 'Every time a new task is created'),
-            ('after_n_tasks', 'After x tasks are created'),
-            ('after_n_weeks', 'After x weeks pass'),
-        ],
-        default='on_create',
-    )
-    reassignment_value = models.PositiveIntegerField(
-        null=True,
-        blank=True,
-        help_text="Used to store n for n_tasks and n_weeks",
-    )
-    last_reassigned_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text='Timestamp of last reassignment',
     )
 
     GROUP_TYPE_CHOICES = [
@@ -255,20 +208,7 @@ class GroupMembership(models.Model):
 class TaskTemplate(models.Model):
     """Describes a chore scheduled for a group with optional recurrence."""
 
-    IMPORTANCE_CHOICES = [
-        ('core', 'Core'),
-        ('additional', 'Additional'),
-    ]
 
-    importance = models.CharField(
-        max_length=20,
-        choices=IMPORTANCE_CHOICES,
-        default='core',
-        help_text=(
-            "Core tasks are considered essential for new members; "
-            "additional tasks can be bulk-set to neutral on join."
-        ),
-    )
 
     # Recurrence
     recurring_choice = models.CharField(
@@ -355,12 +295,44 @@ class TaskTemplate(models.Model):
 
 
     def get_next_due_date(self, from_date=None):
-        """Compute the next due date for this task template."""
-        from_date = from_date or self.next_due
-        recur_value = int(self.recur_value or 0)
+        """Compute the next due date for this task template.
 
-        if self.recurring_choice == 'every_n_days' and recur_value > 0:
-            return from_date + timedelta(days=recur_value)
+        Returns the datetime immediately following from_date (or self.next_due)
+        according to the template's recurrence rule. Returns None for one-off
+        tasks (recurring_choice='none').
+        """
+        from_date = from_date or self.next_due
+        choice = self.recurring_choice
+
+        if choice == 'none':
+            return None
+
+        if choice == 'every_n_days':
+            return from_date + timedelta(days=int(self.recur_value or 1))
+
+        if choice == 'weekly':
+            return from_date + timedelta(weeks=1)
+
+        if choice == 'monthly':
+            month = from_date.month + 1
+            year = from_date.year
+            if month > 12:
+                month, year = 1, year + 1
+            max_day = _cal.monthrange(year, month)[1]
+            return from_date.replace(year=year, month=month, day=min(from_date.day, max_day))
+
+        if choice == 'custom':
+            day_map = {'mon': 0, 'tue': 1, 'wed': 2, 'thu': 3, 'fri': 4, 'sat': 5, 'sun': 6}
+            target_days = {day_map[d] for d in (self.days_of_week or [])}
+            if not target_days:
+                return None
+            candidate = from_date + timedelta(days=1)
+            for _ in range(7):
+                if candidate.weekday() in target_days:
+                    return candidate
+                candidate += timedelta(days=1)
+            return None  # no matching day configured (shouldn't happen after clean())
+
         return None
 
     def __str__(self):
@@ -368,6 +340,17 @@ class TaskTemplate(models.Model):
 
 
 class TaskOccurrence(models.Model):
+    STATUS_CHOICES = [
+        ('suggested', 'Suggested'),
+        ('pending', 'Pending'),
+        ('in_progress', 'In Progress'),
+        ('snoozed', 'Snoozed'),
+        ('completed', 'Completed'),
+        ('overdue', 'Overdue'),
+        ('reassigned', 'Reassigned'),
+        ('cancelled', 'Cancelled'),  # terminal state when parent template is soft-deleted
+    ]
+
     template = models.ForeignKey(
         TaskTemplate,
         on_delete=models.CASCADE,
@@ -383,28 +366,15 @@ class TaskOccurrence(models.Model):
         help_text="Current assignee for the task",
     )
     deadline = models.DateTimeField()
-    status_choices = [
-        ('suggested', 'Suggested'),
-        ('pending', 'Pending'),
-        ('in_progress', 'In Progress'),
-        ('snoozed', 'Snoozed'),
-        ('completed', 'Completed'),
-        ('overdue', 'Overdue'),
-        ('reassigned', 'Reassigned'),
-        ('cancelled', 'Cancelled'),  # terminal state when parent template is soft-deleted
-    ]
     status = models.CharField(
-        choices=status_choices,
+        choices=STATUS_CHOICES,
         max_length=20,
         default='suggested',
     )
     completed_at = models.DateTimeField(null=True, blank=True)
 
     snoozed_until = models.DateTimeField(null=True, blank=True)
-    snooze_count = models.PositiveIntegerField(
-        default=0,
-        validators=[MaxValueValidator(2)]
-    )
+    snooze_count = models.PositiveIntegerField(default=0)
     original_assignee = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -466,7 +436,7 @@ class TaskOccurrence(models.Model):
         ordering = ['deadline']
         constraints = [
             models.CheckConstraint(
-                check=Q(snooze_count__lte=2),
+                condition=Q(snooze_count__lte=2),
                 name='snooze_count_max_2',
             )
         ]
@@ -509,13 +479,6 @@ class ExternalCredential(models.Model):
         help_text="Email of the provider account if available",
     )
 
-    # Space-separated or JSON list of scopes granted
-    scopes = models.TextField(
-        null=True,
-        blank=True,
-        help_text="Scopes granted during OAuth login (for debugging or extension)",
-    )
-
     expires_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -524,7 +487,7 @@ class ExternalCredential(models.Model):
 
     last_refreshed_at = models.DateTimeField(
         auto_now=True,
-        help_text="When the token was last refreshed",
+        help_text="Timestamp of the last save on this credential (auto-updated on every save, not just token refreshes).",
     )
 
     created_at = models.DateTimeField(
@@ -574,7 +537,6 @@ class Calendar(models.Model):
         null=True,
         blank=True,
         help_text="ID used by external provider to identify the calendar",
-        default=None,
     )
     name = models.CharField(
         max_length=255,
@@ -601,17 +563,6 @@ class Calendar(models.Model):
         null=True,
         blank=True,
         help_text="When this calendar was last synced",
-    )
-
-    sync_window_days = models.PositiveIntegerField(
-        default=365,
-        help_text="Sync events within X days from now",
-    )
-
-    default_reminder_minutes = models.IntegerField(
-        null=True,
-        blank=True,
-        help_text="Default reminder time in minutes before event start",
     )
 
     timezone = models.CharField(
@@ -787,16 +738,6 @@ class Event(models.Model):
         help_text="confirmed / cancelled / tentative / etc.",
     )
 
-    # Debug-only: original provider payload
-    raw_payload = models.JSONField(
-        null=True,
-        blank=True,
-        help_text=(
-            "Optional raw provider payload for debugging and edge cases. "
-            "Only populated in DEBUG for external events."
-        ),
-    )
-
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -918,10 +859,7 @@ class TaskSwap(models.Model):
         help_text="When the swap was accepted/rejected/cancelled (if applicable).",
     )
 
-    def default_swap_expiry():
-        return timezone.now() + timedelta(hours=48)
-
-    expires_at = models.DateTimeField(default=default_swap_expiry)
+    expires_at = models.DateTimeField(default=_swap_expiry_default)
     swap_type = models.CharField(
         choices=[
             ('direct_swap', 'Direct swap'),
@@ -948,10 +886,11 @@ class TaskSwap(models.Model):
 
 
 class TaskProposal(models.Model):
-    """Captures a suggested chore awaiting moderator approval."""
+    """Captures a suggested chore awaiting moderator approval or group vote."""
 
     STATE_CHOICES = [
         ('pending', 'Pending'),
+        ('voting', 'Voting'),
         ('approved', 'Approved'),
         ('rejected', 'Rejected'),
         ('expired', 'Expired'),
@@ -962,6 +901,17 @@ class TaskProposal(models.Model):
         choices=STATE_CHOICES,
         default='pending',
         help_text="Current approval state of the proposal.",
+    )
+
+    # ── Vote-mode fields ────────────────────────────────────────────────
+    vote_mode = models.BooleanField(
+        default=False,
+        help_text="When True the proposal goes to a group vote rather than moderator review.",
+    )
+    vote_deadline = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the voting window closes. Computed at submission time.",
     )
 
     proposed_by = models.ForeignKey(
@@ -1040,7 +990,15 @@ class TaskProposal(models.Model):
 
     @property
     def is_open(self) -> bool:
-        return self.state == 'pending'
+        return self.state in ('pending', 'voting')
+
+    @property
+    def is_vote_open(self) -> bool:
+        return (
+            self.state == 'voting'
+            and self.vote_deadline is not None
+            and self.vote_deadline > timezone.now()
+        )
 
     @property
     def effective_payload(self) -> dict:
@@ -1063,6 +1021,68 @@ class TaskProposal(models.Model):
         name = self.proposed_payload.get('name', f'Proposal #{self.pk}')
         return f"Proposal '{name}' in {self.group.name} [{self.state}]"
 
+
+class TaskVote(models.Model):
+    """A group member's vote on a TaskProposal in vote_mode."""
+
+    CHOICE_CHOICES = [
+        ('yes',     'Yes'),
+        ('no',      'No'),
+        ('abstain', 'Abstain'),
+    ]
+
+    proposal = models.ForeignKey(
+        TaskProposal,
+        on_delete=models.CASCADE,
+        related_name='votes',
+    )
+    voter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='task_votes',
+    )
+    choice = models.CharField(max_length=10, choices=CHOICE_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('proposal', 'voter')
+
+    def __str__(self):
+        return f"{self.voter} voted {self.choice} on proposal {self.proposal_id}"
+
+
+class GroupInvitation(models.Model):
+    """Pending invitation for a user to join a group."""
+
+    STATUS_CHOICES = [
+        ('pending',  'Pending'),
+        ('accepted', 'Accepted'),
+        ('declined', 'Declined'),
+    ]
+    ROLE_CHOICES = [
+        ('member',    'Member'),
+        ('moderator', 'Moderator'),
+    ]
+
+    group = models.ForeignKey(
+        'Group', on_delete=models.CASCADE, related_name='invitations',
+    )
+    invitee = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='group_invitations',
+    )
+    invited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='sent_invitations',
+    )
+    role       = models.CharField(max_length=20, choices=ROLE_CHOICES, default='member')
+    status     = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('group', 'invitee')
+
+    def __str__(self):
+        return f"{self.invitee} invited to {self.group.name} [{self.status}]"
 
 
 class TaskPreference(models.Model):
@@ -1116,10 +1136,8 @@ class TaskPreference(models.Model):
 class Notification(models.Model):
     """Generic in-app notification dispatched to a user."""
 
-    title = models.CharField(max_length=255, default = '')
+    title = models.CharField(max_length=255, default='')
     action_url = models.CharField(max_length=255, blank=True, default='', help_text="Optional deep-link path or URL for this notification.")
-    sent_at = models.DateTimeField(default=timezone.now)
-
 
     TYPE_CHOICES = [
         ('task_assigned', 'Task assigned'),
@@ -1134,8 +1152,8 @@ class Notification(models.Model):
         ('suggestion_pattern', 'Smart suggestion: pattern'),
         ('suggestion_availability', 'Smart suggestion: availability'),
         ('suggestion_preference', 'Smart suggestion: preference'),
-        ('suggestion_streak', 'Smart suggestion: streak'),  # emitted by SmartSuggestionService
-        # suggestion_fairness intentionally omitted — backend method is not yet implemented
+        ('suggestion_streak', 'Smart suggestion: streak'),
+        ('suggestion_fairness', 'Smart suggestion: fairness'),
         ('calendar_sync_complete', 'Calendar sync complete'),  # emitted by background sync tasks
         # Legacy — declared in old schema but not currently emitted; kept for data compatibility
         ('task_suggestion', 'Task pre-assignment suggestion'),
@@ -1149,12 +1167,13 @@ class Notification(models.Model):
 
     type = models.CharField(
         max_length=50,
+        choices=TYPE_CHOICES,
     )
 
     # Generic target fields for deep-linking later
     group = models.ForeignKey(
         Group,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name='notifications',
         null=True,
         blank=True,
@@ -1162,14 +1181,14 @@ class Notification(models.Model):
     )
     task_occurrence = models.ForeignKey(
         TaskOccurrence,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='notifications',
     )
     task_proposal = models.ForeignKey(
         TaskProposal,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='notifications',
@@ -1183,7 +1202,7 @@ class Notification(models.Model):
     )
     message = models.ForeignKey(
         Message,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='notifications',
@@ -1214,25 +1233,27 @@ class UserStats(models.Model):
         on_delete=models.CASCADE,
         related_name='stats',
     )
-    household = models.ForeignKey(
+    group = models.ForeignKey(
         Group,
         on_delete=models.CASCADE,
         related_name='member_stats',
     )
     current_streak_days = models.PositiveIntegerField(default=0)
     longest_streak_days = models.PositiveIntegerField(default=0)
+    last_streak_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date on which the streak was last updated for this group.",
+    )
 
     total_tasks_completed = models.PositiveIntegerField(default=0)
     total_points = models.PositiveIntegerField(default=0)
-
-    tasks_completed_this_week = models.PositiveIntegerField(default=0)
-    tasks_completed_this_month = models.PositiveIntegerField(default=0)
 
     on_time_completion_rate = models.FloatField(default=0.0)
     last_updated = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ('user', 'household')
+        unique_together = ('user', 'group')
 
 class Badge(models.Model):
     """Represents an earned badge for a user."""
@@ -1261,7 +1282,7 @@ class UserBadge(models.Model):
         on_delete=models.CASCADE,
         related_name='earned_by',
     )
-    household = models.ForeignKey(
+    group = models.ForeignKey(
         Group,
         on_delete=models.CASCADE,
         related_name='badges',
@@ -1269,7 +1290,7 @@ class UserBadge(models.Model):
     awarded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('user', 'badge', 'household')
+        unique_together = ('user', 'badge', 'group')
 
 
 class MarketplaceListing(models.Model):
@@ -1282,11 +1303,6 @@ class MarketplaceListing(models.Model):
     )
     listed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='marketplace_listings',
-    )
-    group = models.ForeignKey(
-        Group,
         on_delete=models.CASCADE,
         related_name='marketplace_listings',
     )
@@ -1351,8 +1367,6 @@ class TaskAssignmentHistory(models.Model):
         related_name='assignment_history',
     )
     assigned_at     = models.DateTimeField(auto_now_add=True)
-    completed       = models.BooleanField(default=False)
-    completed_at    = models.DateTimeField(null=True, blank=True)
     was_swapped     = models.BooleanField(default=False)
     was_emergency   = models.BooleanField(default=False)
     was_marketplace = models.BooleanField(default=False)
@@ -1386,7 +1400,7 @@ class ChatbotSession(models.Model):
         on_delete=models.CASCADE,
         related_name='chatbot_sessions',
     )
-    # Messages passed to Ollama: [{"role": "user"|"assistant", "content": "..."}]
+    # Conversation messages: [{"role": "user"|"assistant", "content": "..."}]
     messages = models.JSONField(default=list)
     # Pending multi-turn action: e.g. {"intent": "CANT_DO_TASK", "occurrence_id": 42}
     pending_action = models.JSONField(null=True, blank=True)
@@ -1420,3 +1434,88 @@ class UserPushToken(models.Model):
 
     def __str__(self):
         return f"PushToken(user={self.user_id}, platform={self.platform})"
+
+
+class AuthEvent(models.Model):
+    """Append-only log of authentication and security-relevant actions.
+
+    Covers events that are not model saves (login, logout, password change, etc.)
+    and therefore cannot be captured by django-auditlog's model signals.
+    """
+
+    ACTION_CHOICES = [
+        ('register', 'Account registered'),
+        ('login_success', 'Login success'),
+        ('login_failed', 'Login failed'),
+        ('logout', 'Logout'),
+        ('email_verified', 'Email verified'),
+        ('email_updated', 'Email updated'),
+        ('password_reset_requested', 'Password reset requested'),
+        ('password_reset_used', 'Password reset used'),
+        ('password_changed', 'Password changed'),
+        ('google_sso_login', 'Google SSO login'),
+        ('microsoft_sso_login', 'Microsoft SSO login'),
+        ('google_calendar_connected', 'Google Calendar connected'),
+        ('microsoft_calendar_connected', 'Microsoft Calendar connected'),
+        ('token_refreshed', 'JWT token refreshed'),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='auth_events',
+    )
+    action = models.CharField(max_length=40, choices=ACTION_CHOICES, db_index=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True, default='')
+    extra = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Auth Event'
+        verbose_name_plural = 'Auth Events'
+
+    def __str__(self):
+        who = self.user.email if self.user else self.extra.get('email', 'anonymous')
+        return f"{self.action} — {who}"
+
+    @classmethod
+    def log(cls, action: str, *, ip: str | None = None, user_agent: str = '', user=None, **extra) -> None:
+        """Core logging method. Accepts pre-extracted ip and user_agent strings."""
+        try:
+            cls.objects.create(
+                user=user, action=action,
+                ip_address=ip, user_agent=user_agent[:512], extra=extra,
+            )
+        except Exception:
+            pass  # Never let audit logging break a request
+
+    @classmethod
+    def log_from_request(cls, action: str, request, user=None, **extra) -> None:
+        """Convenience wrapper for views: extracts ip/user_agent from request then calls log()."""
+        forwarded = request.META.get('HTTP_X_FORWARDED_FOR', '')
+        ip = forwarded.split(',')[0].strip() if forwarded else request.META.get('REMOTE_ADDR') or None
+        ua = request.META.get('HTTP_USER_AGENT', '') or ''
+        cls.log(action, ip=ip, user_agent=ua, user=user, **extra)
+
+
+# ── Auditlog registrations ─────────────────────────────────────────────────
+# Captures create/update/delete with actor, timestamp, and field-level diffs.
+# Excluded: Event, Notification, UserStats, ChatbotSession (high-volume / low-value).
+auditlog.register(User, exclude_fields=['password', 'last_login'])
+auditlog.register(Group)
+auditlog.register(GroupMembership)
+auditlog.register(TaskTemplate)
+auditlog.register(TaskOccurrence)
+auditlog.register(TaskSwap)
+auditlog.register(TaskProposal, exclude_fields=['approved_payload'])
+auditlog.register(MarketplaceListing)
+auditlog.register(ExternalCredential, exclude_fields=['secret'])
+auditlog.register(GroupInvitation)
+auditlog.register(Calendar)
+auditlog.register(TaskVote)
+auditlog.register(UserBadge)
+auditlog.register(TaskAssignmentHistory)

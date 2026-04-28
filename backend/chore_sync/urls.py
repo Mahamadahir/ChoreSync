@@ -17,6 +17,7 @@ Including another URLconf
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
+from django.http import JsonResponse
 from django.urls import path
 
 from chore_sync.api.task_template_router import (
@@ -26,7 +27,6 @@ from chore_sync.api.task_template_router import (
 from chore_sync.api.task_router import (
     UserTaskListAPIView,
     GroupTaskListAPIView,
-    GenerateOccurrencesAPIView,
     TaskOccurrenceDetailAPIView,
     TaskCompleteAPIView,
     TaskSnoozeAPIView,
@@ -39,6 +39,9 @@ from chore_sync.api.task_router import (
     TaskAcceptSuggestionAPIView,
     TaskDeclineSuggestionAPIView,
     TaskOccurrenceAssignmentBreakdownAPIView,
+    MyAssignmentHistoryAPIView,
+    PersonalTaskCreateAPIView,
+    TaskDeleteAPIView,
 )
 from chore_sync.api.marketplace_router import (
     TaskListMarketplaceAPIView,
@@ -55,13 +58,15 @@ from chore_sync.api.proposal_router import (
     GroupProposalListCreateAPIView,
     ProposalApproveAPIView,
     ProposalRejectAPIView,
+    ProposalVoteAPIView,
 )
 from chore_sync.api.messaging_router import GroupMessageListAPIView, MarkReadAPIView
 from chore_sync.api.preference_router import GroupPreferenceListAPIView, TaskPreferenceAPIView
+from chore_sync.api.invitation_router import InvitationListAPIView, InvitationRespondAPIView
 from chore_sync.api.notification_router import (
     NotificationListAPIView,
-    NotificationHistoryAPIView,
     NotificationReadAPIView,
+    NotificationReadAllAPIView,
     NotificationDismissAPIView,
     NotificationPreferenceAPIView,
     PushTokenAPIView,
@@ -80,7 +85,6 @@ from chore_sync.api.jwt_views import (
     GoogleMobileLoginAPIView,
     MicrosoftMobileLoginAPIView,
     TokenRefreshView,
-    TokenVerifyView,
 )
 
 from chore_sync.api.group_router import (
@@ -119,6 +123,7 @@ from chore_sync.api.views import (
     EventStreamAPIView,
     CalendarStatusAPIView,
     UserCalendarListAPIView,
+    UserCalendarUpdateAPIView,
 )
 
 urlpatterns = [
@@ -126,7 +131,8 @@ urlpatterns = [
     # JWT auth — React Native mobile client
     path('api/auth/token/', JWTObtainTokenAPIView.as_view(), name='jwt-obtain'),
     path('api/auth/token/refresh/', TokenRefreshView.as_view(), name='jwt-refresh'),
-    path('api/auth/token/verify/', TokenVerifyView.as_view(), name='jwt-verify'),
+    # dev-only: token verification (clients rely on 401→refresh flow in production)
+    # path('api/auth/token/verify/', TokenVerifyView.as_view(), name='jwt-verify'),
     # Session auth — Vue web app
     path('api/auth/signup/', SignupAPIView.as_view(), name='signup'),
     path('api/auth/login/', LoginAPIView.as_view(), name='login'),
@@ -160,6 +166,7 @@ urlpatterns = [
     path('api/calendar/outlook/webhook/', OutlookCalendarWebhookAPIView.as_view(), name='outlook-cal-webhook'),
     path('api/calendar/status/', CalendarStatusAPIView.as_view(), name='calendar-status'),
     path('api/calendars/', UserCalendarListAPIView.as_view(), name='user-calendars'),
+    path('api/calendars/<int:pk>/', UserCalendarUpdateAPIView.as_view(), name='user-calendar-update'),
     path('api/events/stream/', EventStreamAPIView.as_view(), name='event-stream'),
     path('api/groups/', GroupListCreateAPIView.as_view(), name='group-list-create'),
     path('api/groups/join/', GroupJoinByCodeAPIView.as_view(), name='group-join-by-code'),
@@ -172,7 +179,10 @@ urlpatterns = [
     path('api/groups/<uuid:pk>/leave/', GroupLeaveAPIView.as_view(), name='group-leave'),
     path('api/groups/<uuid:pk>/task-templates/', GroupTaskTemplateListCreateAPIView.as_view(), name='group-task-templates'),
     path('api/task-templates/<int:pk>/', TaskTemplateDetailAPIView.as_view(), name='task-template-detail'),
-    path('api/task-templates/<int:pk>/generate-occurrences/', GenerateOccurrencesAPIView.as_view(), name='task-template-generate-occurrences'),
+    # dev-only: manual occurrence backfill (auto-generated on template create; no UI surface)
+    # path('api/task-templates/<int:pk>/generate-occurrences/', GenerateOccurrencesAPIView.as_view(), name='task-template-generate-occurrences'),
+    path('api/tasks/personal/', PersonalTaskCreateAPIView.as_view(), name='personal-task-create'),
+    path('api/tasks/<int:pk>/delete/', TaskDeleteAPIView.as_view(), name='task-delete'),
     path('api/users/me/tasks/', UserTaskListAPIView.as_view(), name='user-tasks'),
     path('api/groups/<uuid:pk>/tasks/', GroupTaskListAPIView.as_view(), name='group-tasks'),
     path('api/tasks/<int:pk>/', TaskOccurrenceDetailAPIView.as_view(), name='task-detail'),
@@ -186,6 +196,7 @@ urlpatterns = [
     path('api/tasks/<int:pk>/accept-suggestion/', TaskAcceptSuggestionAPIView.as_view(), name='task-accept-suggestion'),
     path('api/tasks/<int:pk>/decline-suggestion/', TaskDeclineSuggestionAPIView.as_view(), name='task-decline-suggestion'),
     path('api/tasks/<int:pk>/assignment-breakdown/', TaskOccurrenceAssignmentBreakdownAPIView.as_view(), name='task-assignment-breakdown'),
+    path('api/groups/<uuid:group_id>/my-assignment-history/', MyAssignmentHistoryAPIView.as_view(), name='my-assignment-history'),
     path('api/users/me/pending-swaps/', PendingSwapsAPIView.as_view(), name='user-pending-swaps'),
     path('api/tasks/<int:pk>/list-marketplace/', TaskListMarketplaceAPIView.as_view(), name='task-list-marketplace'),
     path('api/groups/<uuid:pk>/marketplace/', GroupMarketplaceListAPIView.as_view(), name='group-marketplace'),
@@ -197,8 +208,11 @@ urlpatterns = [
     path('api/groups/<uuid:pk>/proposals/', GroupProposalListCreateAPIView.as_view(), name='group-proposals'),
     path('api/proposals/<int:pk>/approve/', ProposalApproveAPIView.as_view(), name='proposal-approve'),
     path('api/proposals/<int:pk>/reject/', ProposalRejectAPIView.as_view(), name='proposal-reject'),
+    path('api/proposals/<int:pk>/vote/', ProposalVoteAPIView.as_view(), name='proposal-vote'),
     path('api/notifications/', NotificationListAPIView.as_view(), name='notification-list'),
-    path('api/notifications/history/', NotificationHistoryAPIView.as_view(), name='notification-history'),
+    # dev-only: full paginated notification history (no UI built for this yet)
+    # path('api/notifications/history/', NotificationHistoryAPIView.as_view(), name='notification-history'),
+    path('api/notifications/read-all/', NotificationReadAllAPIView.as_view(), name='notification-read-all'),
     path('api/notifications/<int:pk>/read/', NotificationReadAPIView.as_view(), name='notification-read'),
     path('api/notifications/<int:pk>/dismiss/', NotificationDismissAPIView.as_view(), name='notification-dismiss'),
     path('api/users/me/notification-preferences/', NotificationPreferenceAPIView.as_view(), name='notification-preferences'),
@@ -209,4 +223,8 @@ urlpatterns = [
     path('api/assistant/sessions/', ChatbotSessionListAPIView.as_view(), name='assistant-sessions'),
     path('api/groups/<uuid:pk>/my-preferences/', GroupPreferenceListAPIView.as_view(), name='group-my-preferences'),
     path('api/task-templates/<int:pk>/my-preference/', TaskPreferenceAPIView.as_view(), name='task-template-my-preference'),
+    path('api/invitations/', InvitationListAPIView.as_view(), name='invitation-list'),
+    path('api/invitations/<int:pk>/accept/', InvitationRespondAPIView.as_view(), {'action': 'accept'}, name='invitation-accept'),
+    path('api/invitations/<int:pk>/decline/', InvitationRespondAPIView.as_view(), {'action': 'decline'}, name='invitation-decline'),
+    path('health/', lambda r: JsonResponse({'status': 'ok'})),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

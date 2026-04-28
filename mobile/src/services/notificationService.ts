@@ -5,6 +5,8 @@ export const notificationService = {
 
   markRead: (id: string | number) => api.post(`/api/notifications/${id}/read/`),
 
+  markAllRead: () => api.post('/api/notifications/read-all/'),
+
   dismiss: (id: string | number) => api.post(`/api/notifications/${id}/dismiss/`),
 
   getPrefs: () => api.get('/api/users/me/notification-preferences/'),

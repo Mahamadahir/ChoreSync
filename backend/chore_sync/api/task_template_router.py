@@ -22,7 +22,7 @@ _svc = TaskTemplateService()
 
 TEMPLATE_FIELDS = ('name', 'details', 'recurring_choice', 'difficulty',
                    'estimated_mins', 'category', 'next_due', 'days_of_week',
-                   'recur_value', 'recur_end', 'importance', 'photo_proof_required')
+                   'recur_value', 'recur_end', 'photo_proof_required')
 
 
 def _serialize(t: TaskTemplate) -> dict:
@@ -39,7 +39,6 @@ def _serialize(t: TaskTemplate) -> dict:
         "recur_end": t.recur_end,
         "next_due": t.next_due,
         "active": t.active,
-        "importance": t.importance,
         "photo_proof_required": t.photo_proof_required,
         "group_id": str(t.group_id),
         "creator_id": str(t.creator_id) if t.creator_id else None,

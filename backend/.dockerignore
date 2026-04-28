@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.env
+*.env
+secrets.env
+secrets.prod.env
+.git
+.gitignore
+staticfiles/
+media/

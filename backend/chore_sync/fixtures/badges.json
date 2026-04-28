@@ -1,0 +1,381 @@
+[
+  {
+    "model": "chore_sync.badge",
+    "pk": 1,
+    "fields": {
+      "name": "First Step",
+      "description": "Complete your very first chore.",
+      "emoji": "\ud83d\udc23",
+      "icon_url": "",
+      "criteria": {
+        "tasks_completed": 1
+      },
+      "points_value": 10
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 2,
+    "fields": {
+      "name": "Getting Started",
+      "description": "Complete 10 chores.",
+      "emoji": "\u2705",
+      "icon_url": "",
+      "criteria": {
+        "tasks_completed": 10
+      },
+      "points_value": 25
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 3,
+    "fields": {
+      "name": "Reliable",
+      "description": "Complete 50 chores.",
+      "emoji": "\ud83d\udcaa",
+      "icon_url": "",
+      "criteria": {
+        "tasks_completed": 50
+      },
+      "points_value": 75
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 4,
+    "fields": {
+      "name": "Chore Champion",
+      "description": "Complete 100 chores.",
+      "emoji": "\ud83c\udfc6",
+      "icon_url": "",
+      "criteria": {
+        "tasks_completed": 100
+      },
+      "points_value": 150
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 5,
+    "fields": {
+      "name": "Century Club",
+      "description": "Complete 250 chores.",
+      "emoji": "\ud83d\udcaf",
+      "icon_url": "",
+      "criteria": {
+        "tasks_completed": 250
+      },
+      "points_value": 300
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 6,
+    "fields": {
+      "name": "On a Roll",
+      "description": "Maintain a 3-day on-time streak.",
+      "emoji": "\ud83d\udd25",
+      "icon_url": "",
+      "criteria": {
+        "streak_days": 3
+      },
+      "points_value": 20
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 7,
+    "fields": {
+      "name": "Week Warrior",
+      "description": "Maintain a 7-day on-time streak.",
+      "emoji": "\u26a1",
+      "icon_url": "",
+      "criteria": {
+        "streak_days": 7
+      },
+      "points_value": 50
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 8,
+    "fields": {
+      "name": "Fortnight Fighter",
+      "description": "Maintain a 14-day on-time streak.",
+      "emoji": "\ud83c\udf1f",
+      "icon_url": "",
+      "criteria": {
+        "streak_days": 14
+      },
+      "points_value": 100
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 9,
+    "fields": {
+      "name": "Monthly Master",
+      "description": "Maintain a 30-day on-time streak.",
+      "emoji": "\ud83e\udd47",
+      "icon_url": "",
+      "criteria": {
+        "streak_days": 30
+      },
+      "points_value": 200
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 10,
+    "fields": {
+      "name": "Unstoppable",
+      "description": "Maintain a 100-day on-time streak.",
+      "emoji": "\ud83d\ude80",
+      "icon_url": "",
+      "criteria": {
+        "streak_days": 100
+      },
+      "points_value": 500
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 11,
+    "fields": {
+      "name": "Point Collector",
+      "description": "Earn 100 points.",
+      "emoji": "\u2b50",
+      "icon_url": "",
+      "criteria": {
+        "total_points": 100
+      },
+      "points_value": 15
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 12,
+    "fields": {
+      "name": "High Scorer",
+      "description": "Earn 500 points.",
+      "emoji": "\ud83d\udc8e",
+      "icon_url": "",
+      "criteria": {
+        "total_points": 500
+      },
+      "points_value": 50
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 13,
+    "fields": {
+      "name": "Points Millionaire",
+      "description": "Earn 1000 points.",
+      "emoji": "\ud83d\udc51",
+      "icon_url": "",
+      "criteria": {
+        "total_points": 1000
+      },
+      "points_value": 100
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 14,
+    "fields": {
+      "name": "Punctual",
+      "description": "Maintain an 80% on-time completion rate.",
+      "emoji": "\u23f0",
+      "icon_url": "",
+      "criteria": {
+        "on_time_rate": 0.8
+      },
+      "points_value": 50
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 15,
+    "fields": {
+      "name": "Perfectionist",
+      "description": "Maintain a 95% on-time completion rate.",
+      "emoji": "\ud83c\udfaf",
+      "icon_url": "",
+      "criteria": {
+        "on_time_rate": 0.95
+      },
+      "points_value": 100
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 16,
+    "fields": {
+      "name": "Chef in Training",
+      "description": "Complete 10 cooking-related chores.",
+      "emoji": "\ud83c\udf73",
+      "icon_url": "",
+      "criteria": {
+        "category_count": {
+          "category": "cooking",
+          "count": 10
+        }
+      },
+      "points_value": 40
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 17,
+    "fields": {
+      "name": "Clean Freak",
+      "description": "Complete 10 cleaning-related chores.",
+      "emoji": "\ud83e\uddf9",
+      "icon_url": "",
+      "criteria": {
+        "category_count": {
+          "category": "cleaning",
+          "count": 10
+        }
+      },
+      "points_value": 40
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 18,
+    "fields": {
+      "name": "Laundry Legend",
+      "description": "Complete 10 laundry-related chores.",
+      "emoji": "\ud83e\uddfa",
+      "icon_url": "",
+      "criteria": {
+        "category_count": {
+          "category": "laundry",
+          "count": 10
+        }
+      },
+      "points_value": 40
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 19,
+    "fields": {
+      "name": "Green Thumb",
+      "description": "Complete 10 gardening-related chores.",
+      "emoji": "\ud83c\udf31",
+      "icon_url": "",
+      "criteria": {
+        "category_count": {
+          "category": "gardening",
+          "count": 10
+        }
+      },
+      "points_value": 40
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 20,
+    "fields": {
+      "name": "Errand Runner",
+      "description": "Complete 10 errand-related chores.",
+      "emoji": "\ud83d\uded2",
+      "icon_url": "",
+      "criteria": {
+        "category_count": {
+          "category": "errands",
+          "count": 10
+        }
+      },
+      "points_value": 40
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 21,
+    "fields": {
+      "name": "Early Bird",
+      "description": "Complete 10 tasks before their deadline.",
+      "emoji": "\ud83d\udc26",
+      "icon_url": "",
+      "criteria": {
+        "early_completions": 10
+      },
+      "points_value": 60
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 22,
+    "fields": {
+      "name": "Always Early",
+      "description": "Complete 50 tasks before their deadline.",
+      "emoji": "\u23f1\ufe0f",
+      "icon_url": "",
+      "criteria": {
+        "early_completions": 50
+      },
+      "points_value": 150
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 23,
+    "fields": {
+      "name": "Team Player",
+      "description": "Accept 5 emergency task reassignments from housemates.",
+      "emoji": "\ud83e\udd1d",
+      "icon_url": "",
+      "criteria": {
+        "emergency_accepts": 5
+      },
+      "points_value": 80
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 24,
+    "fields": {
+      "name": "Hero of the House",
+      "description": "Accept 20 emergency task reassignments from housemates.",
+      "emoji": "\ud83e\uddb8",
+      "icon_url": "",
+      "criteria": {
+        "emergency_accepts": 20
+      },
+      "points_value": 200
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 25,
+    "fields": {
+      "name": "Negotiator",
+      "description": "Complete 10 tasks acquired through swaps.",
+      "emoji": "\ud83d\udd04",
+      "icon_url": "",
+      "criteria": {
+        "swap_completions": 10
+      },
+      "points_value": 50
+    }
+  },
+  {
+    "model": "chore_sync.badge",
+    "pk": 26,
+    "fields": {
+      "name": "Dealmaker",
+      "description": "Complete 30 tasks acquired through swaps.",
+      "emoji": "\ud83e\udd1c",
+      "icon_url": "",
+      "criteria": {
+        "swap_completions": 30
+      },
+      "points_value": 120
+    }
+  }
+]

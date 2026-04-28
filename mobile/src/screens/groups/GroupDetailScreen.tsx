@@ -19,10 +19,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import Constants from 'expo-constants';
 import { groupService } from '../../services/groupService';
 import { taskService } from '../../services/taskService';
-import { tokenStorage } from '../../services/tokenStorage';
+import { socketService } from '../../services/MobileSocketService';
 import { useAuthStore } from '../../stores/authStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import type { Group, GroupMember, LeaderboardEntry } from '../../types/group';
@@ -315,6 +314,10 @@ export default function GroupDetailScreen() {
   const [groupStats, setGroupStats] = useState<any>(null);
   const [assignmentMatrix, setAssignmentMatrix] = useState<Record<string, number> | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState(false);
+
+  // Per-tab section errors
+  const [tabErrors, setTabErrors] = useState<{ tasks?: boolean; members?: boolean; leaderboard?: boolean }>({});
 
   // ── Chat state ────────────────────────────────────────────────
   type ChatMsg = {
@@ -330,12 +333,10 @@ export default function GroupDetailScreen() {
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
-  const [chatDisconnected, setChatDisconnected] = useState(false);
   // KAV offset = height of everything above the chat area (topBar + hero + tabs)
   const [chatKvOffset, setChatKvOffset] = useState(0);
   const [receiptModal, setReceiptModal] = useState<{ visible: boolean; msg: ChatMsg | null }>({ visible: false, msg: null });
   const flatListRef = useRef<ScrollView>(null);
-  const wsRef = useRef<WebSocket | null>(null);
   const myUserId = String(user?.id ?? '');
 
   const load = useCallback(async (isRefresh = false) => {
@@ -354,10 +355,11 @@ export default function GroupDetailScreen() {
     if (membersRes.status === 'fulfilled') setMembers(membersRes.value.data.results ?? membersRes.value.data);
     if (lbRes.status === 'fulfilled') setLeaderboard(lbRes.value.data.results ?? lbRes.value.data);
 
-    const failed = [grpRes, tasksRes, membersRes, lbRes].filter((r) => r.status === 'rejected').length;
-    if (failed > 0) {
-      Alert.alert('Some sections failed to load', 'Pull down to retry.');
-    }
+    setTabErrors({
+      tasks: tasksRes.status === 'rejected',
+      members: membersRes.status === 'rejected',
+      leaderboard: lbRes.status === 'rejected',
+    });
 
     setLoading(false);
     setRefreshing(false);
@@ -365,17 +367,9 @@ export default function GroupDetailScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  // ── Load chat history + connect WS when Chat tab becomes active ──
+  // ── Load chat history when Chat tab becomes active ──
   useEffect(() => {
     if (activeTab !== 'chat') return;
-
-    let destroyed = false;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    const reconnectAttempts = { count: 0 };
-
-    function clearTimer() {
-      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-    }
 
     async function fetchHistory() {
       setChatLoading(true);
@@ -391,83 +385,49 @@ export default function GroupDetailScreen() {
       setChatLoading(false);
     }
 
-    async function connectSocket() {
-      if (destroyed) return;
-      const token = await tokenStorage.getAccess();
-      if (!token || destroyed) return;
-
-      const baseUrl = (Constants.expoConfig?.extra?.apiBaseUrl ?? 'http://localhost:8000')
-        .replace(/^http/, 'ws');
-      const ws = new WebSocket(`${baseUrl}/ws/chores/?token=${encodeURIComponent(token)}`);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        reconnectAttempts.count = 0;
-        setChatDisconnected(false);
-      };
-
-      ws.onmessage = (ev) => {
-        try {
-          const data = JSON.parse(ev.data);
-
-          if (data.type === 'chat_message' && data.group_id === groupId) {
-            const msg: ChatMsg = {
-              id: data.id,
-              group_id: data.group_id,
-              sender_id: data.sender_id,
-              username: data.username,
-              body: data.body,
-              sent_at: data.sent_at,
-              read_by: [],
-              all_read: false,
-            };
-            setChatMessages(prev => [...prev, msg]);
-            if (data.sender_id !== myUserId) {
-              groupService.markRead(groupId, [data.id]).catch(() => {});
-              ws.send(JSON.stringify({ type: 'mark_read', group_id: groupId, message_ids: [data.id] }));
-            }
-          }
-
-          if (data.type === 'receipts_update') {
-            setChatMessages(prev => prev.map(m => {
-              if (!data.message_ids.includes(m.id)) return m;
-              if (data.user_id === myUserId) return m;
-              const alreadyHas = m.read_by.some(r => r.user_id === data.user_id);
-              const newReadBy = alreadyHas
-                ? m.read_by
-                : [...m.read_by, { user_id: data.user_id, username: data.username, seen_at: data.seen_at }];
-              return { ...m, read_by: newReadBy };
-            }));
-          }
-        } catch { /* ignore malformed frames */ }
-      };
-
-      ws.onerror = () => ws.close();
-
-      ws.onclose = () => {
-        if (destroyed) return;
-        setChatDisconnected(true);
-        // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.count), 30000);
-        reconnectAttempts.count += 1;
-        reconnectTimer = setTimeout(async () => {
-          // Backfill any missed messages before reconnecting
-          await fetchHistory();
-          connectSocket();
-        }, delay);
-      };
-    }
-
-    fetchHistory().then(() => connectSocket());
-
-    return () => {
-      destroyed = true;
-      clearTimer();
-      wsRef.current?.close();
-      wsRef.current = null;
-      setChatDisconnected(false);
-    };
+    fetchHistory();
   }, [activeTab, groupId]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Subscribe to chat + receipts via the global socket ──
+  useEffect(() => {
+    const unsubChat = socketService.onChat((data) => {
+      if (data.group_id !== groupId) return;
+      const msg: ChatMsg = {
+        id: data.id,
+        group_id: data.group_id,
+        sender_id: data.sender_id,
+        username: data.username,
+        body: data.body,
+        sent_at: data.sent_at,
+        read_by: [],
+        all_read: false,
+      };
+      setChatMessages(prev => [...prev, msg]);
+      if (data.sender_id !== myUserId) {
+        groupService.markRead(groupId, [data.id]).catch(() => {});
+        socketService.sendMarkRead(groupId, [data.id]);
+      }
+    });
+
+    const unsubReceipts = socketService.onReceiptsUpdate((data) => {
+      if (data.user_id === myUserId) return;
+      setChatMessages(prev => prev.map(m => {
+        if (!data.message_ids.includes(m.id)) return m;
+        const alreadyHas = m.read_by.some(r => r.user_id === data.user_id);
+        const newReadBy = alreadyHas
+          ? m.read_by
+          : [...m.read_by, { user_id: data.user_id, username: data.username, seen_at: data.seen_at }];
+        return { ...m, read_by: newReadBy };
+      }));
+    });
+
+    const unsubTasks = socketService.onTaskUpdate((data) => {
+      if (data.group_id !== groupId) return;
+      if (data.subtype === 'task_updated') load();
+    });
+
+    return () => { unsubChat(); unsubReceipts(); unsubTasks(); };
+  }, [groupId, myUserId, load]);
 
   async function handleComplete(task: TaskOccurrence) {
     setCompleting((p) => ({ ...p, [task.id]: true }));
@@ -508,20 +468,21 @@ export default function GroupDetailScreen() {
   function sendChatMessage() {
     const body = chatInput.trim();
     if (!body) return;
-    if (wsRef.current?.readyState !== WebSocket.OPEN) {
+    if (!socketService.isConnected) {
       Alert.alert('Not connected', 'Chat is not connected. Pull down to refresh and try again.');
       return;
     }
-    wsRef.current.send(JSON.stringify({ type: 'chat_message', group_id: groupId, body }));
+    socketService.sendChatMessage(groupId, body);
     setChatInput('');
   }
 
-  // Load analytics lazily when the tab is first opened
+  // Load analytics lazily when the tab is first opened (or after an error retry)
   useEffect(() => {
-    if (activeTab !== 'analytics' || groupStats !== null) return;
+    if (activeTab !== 'analytics' || (groupStats !== null && !analyticsError)) return;
     let cancelled = false;
     (async () => {
       setAnalyticsLoading(true);
+      setAnalyticsError(false);
       try {
         const [statsRes, matrixRes] = await Promise.allSettled([
           groupService.stats(groupId),
@@ -530,12 +491,13 @@ export default function GroupDetailScreen() {
         if (cancelled) return;
         if (statsRes.status === 'fulfilled') setGroupStats(statsRes.value.data);
         if (matrixRes.status === 'fulfilled') setAssignmentMatrix(matrixRes.value.data);
+        if (statsRes.status === 'rejected' && matrixRes.status === 'rejected') setAnalyticsError(true);
       } finally {
         if (!cancelled) setAnalyticsLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [activeTab, groupId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeTab, groupId, analyticsError]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Milestone stats
   const activeTasks = tasks.filter((t) => t.status !== 'completed');
@@ -554,6 +516,15 @@ export default function GroupDetailScreen() {
   // ── Render tab content ───────────────────────────────────
   function renderTasks() {
     if (loading) return <ActivityIndicator color={C.primary} size="large" style={{ paddingVertical: 40 }} />;
+    if (tabErrors.tasks) return (
+      <View style={[styles.tabContent, styles.emptyState]}>
+        <Text style={[styles.msIcon, { fontSize: 36, color: C.onSurfaceVariant }]}>sync_problem</Text>
+        <Text style={styles.emptyTitle}>Couldn't load tasks</Text>
+        <TouchableOpacity onPress={() => load()} activeOpacity={0.7} style={styles.retryBtn}>
+          <Text style={styles.retryBtnText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
 
     return (
       <View style={styles.tabContent}>
@@ -651,13 +622,6 @@ export default function GroupDetailScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? chatKvOffset : 0}
       >
-        {chatDisconnected && (
-          <View style={styles.chatReconnectBanner}>
-            <ActivityIndicator size="small" color={C.onSurfaceVariant} style={{ marginRight: 8 }} />
-            <Text style={styles.chatReconnectText}>Reconnecting…</Text>
-          </View>
-        )}
-
         <ScrollView
           ref={flatListRef}
           style={styles.chatScroll}
@@ -762,6 +726,15 @@ export default function GroupDetailScreen() {
 
   function renderPeople() {
     if (loading) return <ActivityIndicator color={C.primary} size="large" style={{ paddingVertical: 40 }} />;
+    if (tabErrors.members) return (
+      <View style={[styles.tabContent, styles.emptyState]}>
+        <Text style={[styles.msIcon, { fontSize: 36, color: C.onSurfaceVariant }]}>sync_problem</Text>
+        <Text style={styles.emptyTitle}>Couldn't load members</Text>
+        <TouchableOpacity onPress={() => load()} activeOpacity={0.7} style={styles.retryBtn}>
+          <Text style={styles.retryBtnText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
 
     // Build sorted leaderboard for podium (top 3)
     const sorted = [...leaderboard].sort((a, b) => b.total_points - a.total_points);
@@ -828,6 +801,20 @@ export default function GroupDetailScreen() {
           )}
         </View>
 
+        {/* ── My Assignment History ──────────────── */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('AssignmentHistory', { groupId, groupName: group?.name })}
+          style={styles.discoverCard}
+        >
+          <Text style={[styles.msIcon, { color: C.primary, fontSize: 28 }]}>history_edu</Text>
+          <View style={styles.discoverCardText}>
+            <Text style={styles.discoverCardTitle}>My Assignment History</Text>
+            <Text style={styles.discoverCardSub}>See why each task was assigned to you</Text>
+          </View>
+          <Text style={[styles.msIcon, { color: C.onSurfaceVariant, fontSize: 20 }]}>chevron_right</Text>
+        </TouchableOpacity>
+
         {/* ── Danger zone ────────────────────────── */}
         <View style={styles.dangerZone}>
           <TouchableOpacity activeOpacity={0.7} onPress={handleLeaveGroup}>
@@ -874,6 +861,15 @@ export default function GroupDetailScreen() {
 
   function renderAnalytics() {
     if (analyticsLoading) return <ActivityIndicator color={C.primary} size="large" style={{ paddingVertical: 40 }} />;
+    if (analyticsError) return (
+      <View style={[styles.tabContent, styles.emptyState]}>
+        <Text style={[styles.msIcon, { fontSize: 36, color: C.onSurfaceVariant }]}>sync_problem</Text>
+        <Text style={styles.emptyTitle}>Couldn't load analytics</Text>
+        <TouchableOpacity onPress={() => { setGroupStats(null); setAnalyticsError(true); }} activeOpacity={0.7} style={styles.retryBtn}>
+          <Text style={styles.retryBtnText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
     if (!groupStats) return (
       <View style={[styles.tabContent, styles.emptyState]}>
         <Text style={[styles.msIcon, { fontSize: 40, color: C.outlineVariant }]}>bar_chart</Text>
@@ -888,6 +884,22 @@ export default function GroupDetailScreen() {
     const matrixSorted = assignmentMatrix
       ? Object.entries(assignmentMatrix).sort((a, b) => a[1] - b[1])
       : [];
+
+    // Compute fairness rows from points share
+    const dist: any[] = groupStats.fairness_distribution ?? [];
+    const totalPoints = dist.reduce((s: number, r: any) => s + r.total_points, 0);
+    const fairShare = dist.length > 0 ? 100 / dist.length : 100;
+    const fairnessRows = dist
+      .map((r: any) => {
+        const pointsShare = totalPoints > 0 ? (r.total_points / totalPoints) * 100 : fairShare;
+        const deviation = pointsShare - fairShare;
+        const absDev = Math.abs(deviation);
+        const status = absDev < fairShare * 0.15 ? 'fair'
+          : absDev < fairShare * 0.30 ? 'amber'
+          : deviation > 0 ? 'over' : 'under';
+        return { ...r, pointsShare, deviation, fairShare, status };
+      })
+      .sort((a: any, b: any) => b.pointsShare - a.pointsShare);
 
     return (
       <View style={styles.tabContent}>
@@ -915,32 +927,72 @@ export default function GroupDetailScreen() {
           )}
         </View>
 
-        {/* ── Workload distribution ──────────────── */}
-        <Text style={styles.analyticsSectionTitle}>Workload Distribution</Text>
+        {/* ── Fairness ──────────────────────────── */}
+        <Text style={styles.analyticsSectionTitle}>Fairness</Text>
+        <Text style={styles.analyticsSectionSub}>
+          Share of total group points — accounts for task difficulty and time. The line marks an equal split.
+        </Text>
         <View style={[styles.analyticsTable, { marginBottom: 24 }]}>
-          {groupStats.fairness_distribution.map((row: any, idx: number) => (
-            <View key={row.user_id} style={styles.analyticsTableRow}>
-              <View style={styles.analyticsRankBadge}>
-                <Text style={styles.analyticsRankText}>{idx + 1}</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.analyticsRowName}>{row.username}</Text>
-                <View style={styles.analyticsRowMeta}>
-                  <Text style={styles.analyticsMetaText}>✅ {row.total_tasks_completed}</Text>
-                  <Text style={styles.analyticsMetaText}>⭐ {row.total_points} pts</Text>
-                  <Text style={styles.analyticsMetaText}>🔥 {row.current_streak_days}d</Text>
+          {fairnessRows.map((row: any) => {
+            const barColor = row.status === 'fair' ? C.secondary
+              : row.status === 'amber' ? '#f59e0b'
+              : row.status === 'over'  ? C.primary
+              : C.error;
+            const badgeBg = row.status === 'fair' ? C.secondaryContainer
+              : row.status === 'amber' ? '#fef3c7'
+              : row.status === 'over'  ? C.primaryContainer
+              : C.errorContainer;
+            const badgeFg = row.status === 'fair' ? C.onSecondaryContainer
+              : row.status === 'amber' ? '#92400e'
+              : row.status === 'over'  ? C.primary
+              : C.error;
+            const badgeLabel = row.status === 'fair' ? 'FAIR'
+              : row.status === 'over'  ? `+${Math.round(row.deviation)}%`
+              : `${Math.round(row.deviation)}%`;
+
+            return (
+              <View key={row.user_id} style={[styles.analyticsTableRow, { flexDirection: 'column', alignItems: 'stretch', gap: 8 }]}>
+                {/* Name + badge */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <View style={styles.analyticsRankBadge}>
+                    <Text style={styles.analyticsRankText}>{row.username[0].toUpperCase()}</Text>
+                  </View>
+                  <Text style={[styles.analyticsRowName, { flex: 1 }]} numberOfLines={1}>{row.username}</Text>
+                  <View style={{ backgroundColor: badgeBg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 }}>
+                    <Text style={{ fontSize: 10, fontFamily: 'PlusJakartaSans-Bold', color: badgeFg, letterSpacing: 0.6 }}>
+                      {badgeLabel}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Points share bar with fair-share marker */}
+                <View style={{ position: 'relative', height: 10, backgroundColor: C.surfaceContainerHigh, borderRadius: 5, overflow: 'visible' }}>
+                  <View style={{
+                    position: 'absolute', top: 0, left: 0,
+                    width: `${Math.min(row.pointsShare, 100)}%` as any,
+                    height: '100%', borderRadius: 5, backgroundColor: barColor,
+                  }} />
+                  {/* Fair share marker */}
+                  <View style={{
+                    position: 'absolute',
+                    left: `${row.fairShare}%` as any,
+                    top: -3, bottom: -3,
+                    width: 2, backgroundColor: C.outlineVariant, borderRadius: 1,
+                  }} />
+                </View>
+
+                {/* Supporting stats */}
+                <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
+                  <Text style={styles.analyticsMetaText}>{Math.round(row.pointsShare)}% of group pts</Text>
+                  <Text style={styles.analyticsMetaText}>· {row.total_tasks_completed} tasks</Text>
+                  <Text style={styles.analyticsMetaText}>· {Math.round(row.on_time_completion_rate * 100)}% on-time</Text>
+                  {row.current_streak_days > 0 && (
+                    <Text style={styles.analyticsMetaText}>· 🔥 {row.current_streak_days}d</Text>
+                  )}
                 </View>
               </View>
-              {/* On-time bar */}
-              <View style={styles.analyticsBar}>
-                <View style={[styles.analyticsBarFill, {
-                  width: `${Math.round(row.on_time_completion_rate * 100)}%` as any,
-                  backgroundColor: C.secondary,
-                }]} />
-              </View>
-              <Text style={styles.analyticsBarPct}>{Math.round(row.on_time_completion_rate * 100)}%</Text>
-            </View>
-          ))}
+            );
+          })}
         </View>
 
         {/* ── Assignment priority matrix ─────────── */}
@@ -1497,6 +1549,13 @@ const styles = StyleSheet.create({
   emptySub: {
     fontFamily: 'PlusJakartaSans-Regular', fontSize: 12, color: C.onSurfaceVariant,
     opacity: 0.7, textAlign: 'center',
+  },
+  retryBtn: {
+    marginTop: 4, paddingHorizontal: 20, paddingVertical: 8,
+    backgroundColor: C.surfaceContainerHigh, borderRadius: 8,
+  },
+  retryBtnText: {
+    fontFamily: 'PlusJakartaSans-SemiBold', fontSize: 13, color: C.primary,
   },
 
   // Shared

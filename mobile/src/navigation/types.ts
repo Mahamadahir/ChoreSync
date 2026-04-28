@@ -31,6 +31,8 @@ export type GroupsStackParamList = {
   InviteMember: { groupId: string; groupType?: string };
   Marketplace: { groupId: string };
   Proposals: { groupId: string; myRole?: string };
+  Invitation: { invitationId: number };
+  AssignmentHistory: { groupId: string; groupName?: string };
 };
 
 // ── Assistant tab stack ──────────────────────────────────────────────

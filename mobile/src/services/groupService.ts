@@ -44,7 +44,7 @@ export const groupService = {
   // Proposals
   proposals: (groupId: string) => api.get(`/api/groups/${groupId}/proposals/`),
 
-  createProposal: (groupId: string, payload: { payload: Record<string, unknown>; reason?: string }) =>
+  createProposal: (groupId: string, payload: { payload: Record<string, unknown>; reason?: string; vote_mode?: boolean }) =>
     api.post(`/api/groups/${groupId}/proposals/`, payload),
 
   approveProposal: (proposalId: number, body: { edited_payload?: Record<string, unknown> | null; approval_note?: string }) =>
@@ -52,6 +52,9 @@ export const groupService = {
 
   rejectProposal: (proposalId: number, body: { note?: string }) =>
     api.post(`/api/proposals/${proposalId}/reject/`, body),
+
+  voteOnProposal: (proposalId: number, choice: string) =>
+    api.post(`/api/proposals/${proposalId}/vote/`, { choice }),
 
   // Marketplace
   marketplace: (groupId: string) => api.get(`/api/groups/${groupId}/marketplace/`),

@@ -24,6 +24,7 @@ import type { TaskOccurrence } from '../../types/task';
 import type { Group } from '../../types/group';
 import { Palette as C } from '../../theme';
 import AppHeader from '../../components/common/AppHeader';
+import { socketService } from '../../services/MobileSocketService';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const H_PAD = 24;
@@ -166,10 +167,12 @@ export default function HomeScreen() {
   const [stats, setStats] = useState<{ streak: number; points: number; done_this_week: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [sectionErrors, setSectionErrors] = useState<{ tasks?: boolean; groups?: boolean; stats?: boolean }>({});
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
+    setSectionErrors({});
 
     const results = await Promise.allSettled([
       taskService.myTasks(),
@@ -177,7 +180,8 @@ export default function HomeScreen() {
       api.get('/api/users/me/stats/'),
     ]);
 
-    // Tasks
+    const errs: typeof sectionErrors = {};
+
     if (results[0].status === 'fulfilled') {
       const all: TaskOccurrence[] = results[0].value.data.results ?? results[0].value.data;
       setTodayTasks(
@@ -185,14 +189,12 @@ export default function HomeScreen() {
           .filter((t) => isDueToday(t.deadline) && t.status !== 'completed')
           .sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime()),
       );
-    }
+    } else { errs.tasks = true; }
 
-    // Groups
     if (results[1].status === 'fulfilled') {
       setAllGroups(results[1].value.data.results ?? results[1].value.data);
-    }
+    } else { errs.groups = true; }
 
-    // Stats endpoint returns a per-household array; aggregate across all households.
     if (results[2].status === 'fulfilled') {
       const raw = results[2].value.data;
       const list: any[] = Array.isArray(raw) ? raw : (raw?.results ?? [raw]);
@@ -205,19 +207,21 @@ export default function HomeScreen() {
         { streak: 0, points: 0, done_this_week: 0 },
       );
       setStats(aggregated);
-    }
+    } else { errs.stats = true; }
 
-    // Surface any partial failures so the user knows something went wrong
-    const failed = results.filter((r) => r.status === 'rejected').length;
-    if (failed > 0) {
-      Alert.alert('Some data failed to load', 'Pull down to retry.');
-    }
-
+    setSectionErrors(errs);
     setLoading(false);
     setRefreshing(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const unsub = socketService.onTaskUpdate((data) => {
+      if (data.subtype === 'task_updated') load();
+    });
+    return unsub;
+  }, [load]);
 
   // Household pulse from first group + today's tasks
   const primaryGroup = allGroups[0] ?? null;
@@ -278,6 +282,12 @@ export default function HomeScreen() {
         </View>
 
         {/* ── Stats row ────────────────────────── */}
+        {sectionErrors.stats ? (
+          <TouchableOpacity onPress={() => load()} activeOpacity={0.7} style={styles.sectionError}>
+            <Text style={[styles.msIcon, { color: C.onSurfaceVariant, fontSize: 16 }]}>sync_problem</Text>
+            <Text style={styles.sectionErrorText}>Couldn't load stats · Tap to retry</Text>
+          </TouchableOpacity>
+        ) : (
         <View style={styles.statsRow}>
           <StatCard
             icon="local_fire_department"
@@ -301,6 +311,7 @@ export default function HomeScreen() {
             labelColor={`${C.secondary}b3`}
           />
         </View>
+        )}
 
         {/* ── Smart Suggestion Card ────────────── */}
         {suggestionNotif && (
@@ -328,6 +339,11 @@ export default function HomeScreen() {
             <View style={styles.loadingBox}>
               <ActivityIndicator color={C.primary} size="small" />
             </View>
+          ) : sectionErrors.tasks ? (
+            <TouchableOpacity onPress={() => load()} activeOpacity={0.7} style={styles.sectionError}>
+              <Text style={[styles.msIcon, { color: C.onSurfaceVariant, fontSize: 16 }]}>sync_problem</Text>
+              <Text style={styles.sectionErrorText}>Couldn't load tasks · Tap to retry</Text>
+            </TouchableOpacity>
           ) : todayTasks.length === 0 ? (
             <View style={styles.emptyTasks}>
               <Text style={[styles.msIcon, { color: C.outlineVariant, fontSize: 32 }]}>task_alt</Text>
@@ -572,6 +588,8 @@ const styles = StyleSheet.create({
 
   // Loading / empty
   loadingBox: { paddingVertical: 32, alignItems: 'center' },
+  sectionError: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 4 },
+  sectionErrorText: { fontFamily: 'PlusJakartaSans-Medium', fontSize: 13, color: C.onSurfaceVariant },
   emptyTasks: {
     backgroundColor: C.surfaceContainerLow,
     borderRadius: 18,

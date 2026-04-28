@@ -9,7 +9,7 @@ from datetime import timedelta
 logger = logging.getLogger(__name__)
 
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Max, Q
 from django.utils import timezone
 
 from chore_sync.models import (
@@ -356,12 +356,56 @@ class TaskLifecycleService:
             for uid in stage1
         }
 
-        winner_id = min(final_scores, key=final_scores.get)
+        # Tiebreaker: whoever was assigned a task least recently goes first.
+        # Falls back to membership join date so new-group assignments don't
+        # always land on the same person (e.g. group creator).
+        last_assigned: dict[str, float] = {uid: 0.0 for uid in stage1}
+        history_rows = (
+            TaskAssignmentHistory.objects
+            .filter(user_id__in=list(stage1.keys()), task_template__group=occurrence.template.group)
+            .values('user_id')
+            .annotate(last=Max('assigned_at'))
+        )
+        for row in history_rows:
+            last_assigned[str(row['user_id'])] = row['last'].timestamp()
+
+        # Members with no history keep 0.0 — they sort before anyone with history,
+        # meaning they get priority when all pipeline scores are equal.
+        joined_at: dict[str, float] = {}
+        for m in GroupMembership.objects.filter(
+            group=occurrence.template.group, user_id__in=list(stage1.keys())
+        ).values('user_id', 'joined_at'):
+            joined_at[str(m['user_id'])] = m['joined_at'].timestamp()
+
+        def _sort_key(uid: str) -> tuple:
+            return (final_scores[uid], last_assigned[uid], joined_at.get(uid, 0.0))
+
+        winner_id = min(stage1, key=_sort_key)
         winner = User.objects.get(id=winner_id)
+
+        # Detect whether the tiebreaker actually decided the outcome — i.e. at
+        # least one other candidate had the same final_score as the winner.
+        winner_score = final_scores[winner_id]
+        tied_uids = [uid for uid, s in final_scores.items() if uid != winner_id and s == winner_score]
+        tiebreaker_used = len(tied_uids) > 0
+
+        # Determine which tiebreaker dimension broke the tie for the winner.
+        if tiebreaker_used:
+            winner_last = last_assigned[winner_id]
+            if winner_last == 0.0 and any(last_assigned[uid] > 0.0 for uid in tied_uids):
+                tiebreaker_reason = 'no_prior_assignments'
+            elif winner_last < min(last_assigned[uid] for uid in tied_uids):
+                tiebreaker_reason = 'least_recently_assigned'
+            else:
+                tiebreaker_reason = 'joined_most_recently'
+        else:
+            tiebreaker_reason = None
 
         # Build score_breakdown blob for persistence
         breakdown = {
             'winner_id': winner_id,
+            'tiebreaker_used': tiebreaker_used,
+            'tiebreaker_reason': tiebreaker_reason,
             'candidates': [
                 {
                     'user_id': uid,
@@ -371,6 +415,7 @@ class TaskLifecycleService:
                     'time_score': round(time_norm[uid], 4),
                     'points_score': round(points_norm[uid], 4),
                     'pref_multiplier': pref_mult[uid],
+                    'preference': preferences.get(uid),
                     'affinity_multiplier': affinity_mult[uid],
                     'calendar_penalty': cal_penalty[uid],
                     'final_score': round(final_scores[uid], 4),
@@ -530,6 +575,7 @@ class TaskLifecycleService:
                 user=winner,
                 task_template=template,
                 task_occurrence=locked,
+                score_breakdown={'assigned_via': 'streak_suggestion'},
             )
 
         try:
@@ -647,17 +693,21 @@ class TaskLifecycleService:
             occurrence.status = 'completed'
             occurrence.completed_at = now
 
-            # Calculate points via GamificationService (includes bonuses/penalties)
             from chore_sync.services.gamification_service import GamificationService
             gsvc = GamificationService()
-            points = gsvc.calculate_points(occurrence)
-            occurrence.points_earned = points
-
-            with transaction.atomic():
-                occurrence.save(update_fields=['status', 'completed_at', 'points_earned'])
-                self._update_stats(user_id=actor_id, group=group, points=points)
-                gsvc.update_streak(user_id=actor_id, group_id=str(group.id))
-                gsvc.update_on_time_rate(user_id=actor_id, group_id=str(group.id))
+            if group.is_personal:
+                # Personal tasks don't earn points or affect group stats
+                occurrence.points_earned = 0
+                with transaction.atomic():
+                    occurrence.save(update_fields=['status', 'completed_at', 'points_earned'])
+            else:
+                points = gsvc.calculate_points(occurrence)
+                occurrence.points_earned = points
+                with transaction.atomic():
+                    occurrence.save(update_fields=['status', 'completed_at', 'points_earned'])
+                    self._update_stats(user_id=actor_id, group=group, points=points)
+                    gsvc.update_streak(user_id=actor_id, group_id=str(group.id))
+                    gsvc.update_on_time_rate(user_id=actor_id, group_id=str(group.id))
                 TaskAssignmentHistory.objects.filter(
                     user_id=actor_id,
                     task_occurrence=occurrence,
@@ -679,8 +729,6 @@ class TaskLifecycleService:
 
             from chore_sync.tasks import evaluate_badges, spawn_next_occurrence
             evaluate_badges.delay(user_id=actor_id, group_id=str(group.id))
-            # Advance next_due and create the next occurrence asynchronously so
-            # the completion response is not delayed by assignment logic.
             spawn_next_occurrence.delay(template_id=str(occurrence.template_id))
         else:
             with transaction.atomic():
@@ -689,12 +737,17 @@ class TaskLifecycleService:
                 occurrence.points_earned = None
                 occurrence.save(update_fields=['status', 'completed_at', 'points_earned'])
 
+        _notif_svc.push_household_event(
+            group_id=str(group.id),
+            subtype='task_updated',
+            occurrence_id=occurrence.id,
+        )
         return occurrence
 
     @staticmethod
     def _update_stats(*, user_id: str, group, points: int) -> None:
         """Increment UserStats totals. Streak and rate updates handled by GamificationService."""
-        stats, _ = UserStats.objects.get_or_create(user_id=user_id, household=group)
+        stats, _ = UserStats.objects.get_or_create(user_id=user_id, group=group)
         stats.total_tasks_completed += 1
         stats.total_points += points
         stats.save(update_fields=['total_tasks_completed', 'total_points'])
@@ -767,9 +820,14 @@ class TaskLifecycleService:
             occurrence.status = 'snoozed'
             occurrence.snoozed_until = snooze_until
             occurrence.snooze_count += 1
-            occurrence.reminder_sent_at = None  # allow reminder to re-fire
+            occurrence.reminder_sent_at = None
             occurrence.save(update_fields=['status', 'snoozed_until', 'snooze_count', 'reminder_sent_at'])
 
+        _notif_svc.push_household_event(
+            group_id=str(occurrence.template.group_id),
+            subtype='task_updated',
+            occurrence_id=occurrence.id,
+        )
         return occurrence
 
     # ------------------------------------------------------------------ #
@@ -844,6 +902,11 @@ class TaskLifecycleService:
                     action_url=f"/tasks/{occurrence.id}",
                 )
 
+        _notif_svc.push_household_event(
+            group_id=str(occurrence.template.group_id),
+            subtype='task_updated',
+            occurrence_id=occurrence.id,
+        )
         return swap
 
     def respond_to_swap_request(self, *, swap_id: str, accept: bool, actor_id: str) -> TaskSwap:
@@ -945,6 +1008,11 @@ class TaskLifecycleService:
                 action_url=f"/tasks/{swap.task_id}",
             )
 
+        _notif_svc.push_household_event(
+            group_id=str(swap.task.template.group_id),
+            subtype='task_updated',
+            occurrence_id=swap.task_id,
+        )
         return swap
 
     # ------------------------------------------------------------------ #
@@ -1099,5 +1167,12 @@ class TaskLifecycleService:
                 task_occurrence_id=occurrence.id,
                 action_url=f"/tasks/{occurrence.id}",
             )
+
+        # Tell all household members to hide the emergency accept banner for this task
+        _notif_svc.push_household_event(
+            group_id=str(occurrence.template.group_id),
+            subtype='emergency_accepted',
+            occurrence_id=occurrence.id,
+        )
 
         return occurrence

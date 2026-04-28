@@ -47,8 +47,12 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework_simplejwt',
+    # TikTok dev tip: enable blacklisting so rotated refresh tokens can't be reused if stolen
+    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'django_celery_beat',
+    'django_celery_results',
+    'auditlog',
     'chore_sync.django_app.ChoreSyncConfig',
     'channels',
 ]
@@ -61,6 +65,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'auditlog.middleware.AuditlogMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -161,6 +166,11 @@ FRONTEND_RESET_PASSWORD_URL = env(
 FRONTEND_APP_URL = env('FRONTEND_APP_URL', default='http://localhost:5173')
 # ---------------------------
 
+# AI Assistant (Gemini)
+GEMINI_API_KEY = env('GEMINI_API_KEY', default='')
+GEMINI_MODEL = env('GEMINI_MODEL', default='gemma-4-31b-it')
+GEMINI_FALLBACK_MODEL = env('GEMINI_FALLBACK_MODEL', default='gemma-3-27b-it')
+
 # CORS / DRF
 CORS_ALLOWED_ORIGINS = env.list(
     'CORS_ALLOWED_ORIGINS',
@@ -202,6 +212,8 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=90),
     # Rotate refresh tokens on every refresh call so each token is single-use
     "ROTATE_REFRESH_TOKENS": True,
+    # TikTok dev tip: blacklist the old refresh token after rotation — stolen tokens become useless after first use
+    "BLACKLIST_AFTER_ROTATION": True,
     "AUTH_HEADER_TYPES": ("Bearer",),
     "USER_ID_FIELD": "id",
     "USER_ID_CLAIM": "user_id",
@@ -214,7 +226,9 @@ SECURE_CROSS_ORIGIN_OPENER_POLICY = None
 
 # Celery
 CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = 'django-db'
+CELERY_CACHE_BACKEND = 'django-cache'
+CELERY_TASK_TRACK_STARTED = True
 
 from celery.schedules import crontab  # noqa: E402
 
@@ -271,6 +285,15 @@ CELERY_BEAT_SCHEDULE = {
     'cleanup-stale-chatbot-sessions': {
         'task': 'chore_sync.tasks.cleanup_stale_chatbot_sessions',
         'schedule': crontab(hour=3, minute=30),  # daily at 03:30
+    },
+    'close-expired-vote-windows': {
+        'task': 'chore_sync.tasks.close_expired_vote_windows',
+        'schedule': 900,  # every 15 minutes
+    },
+    # TikTok dev tip: prune the OutstandingToken table nightly or it grows forever
+    'flush-expired-jwt-tokens': {
+        'task': 'chore_sync.tasks.flush_expired_jwt_tokens',
+        'schedule': crontab(hour=4, minute=0),  # daily at 04:00
     },
 }
 

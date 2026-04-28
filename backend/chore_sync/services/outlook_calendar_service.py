@@ -298,14 +298,15 @@ class OutlookCalendarService:
         if sync_state.delta_link:
             url = sync_state.delta_link
         else:
-            # Initial sync — get all events within sync window
+            # Initial sync — calendarView/delta supports startDateTime/endDateTime (events/delta does not).
             from django.utils.timezone import now
             import datetime as dt
-            start = (now() - dt.timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
-            end = (now() + dt.timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            today = now()
+            start = today.replace(year=today.year - 2, month=1, day=1).strftime("%Y-%m-%dT00:00:00Z")
+            end = today.replace(year=today.year + 2, month=12, day=31).strftime("%Y-%m-%dT23:59:59Z")
             cal_id = calendar.external_id or "primary"
             url = (
-                f"{GRAPH_BASE}/me/calendars/{cal_id}/events/delta"
+                f"{GRAPH_BASE}/me/calendars/{cal_id}/calendarView/delta"
                 f"?startDateTime={start}&endDateTime={end}&$top=50"
             )
 

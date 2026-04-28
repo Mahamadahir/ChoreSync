@@ -157,6 +157,21 @@ class NotificationService:
                 recipient_id, notification.id, exc_info=True,
             )
 
+    def push_household_event(self, *, group_id: str, subtype: str, **extra) -> None:
+        """Broadcast an ephemeral UI event to all connected members of a household.
+
+        No DB record is created — this is purely for live UI state updates
+        (e.g. removing a marketplace listing or hiding an emergency banner).
+        """
+        layer = get_channel_layer()
+        if layer is None:
+            return
+        payload = {'type': 'task_update_broadcast', 'subtype': subtype, 'group_id': group_id, **extra}
+        try:
+            async_to_sync(layer.group_send)(f'household_{group_id}', payload)
+        except Exception:
+            logger.exception("push_household_event: group_send failed for group_id=%s subtype=%s", group_id, subtype)
+
     def fan_out_realtime(self, *, recipient_id: str, notification_id: str) -> None:
         """Push a notification to the user's WebSocket channel group."""
         layer = get_channel_layer()
@@ -264,6 +279,16 @@ class NotificationService:
             notification.read = True
             notification.save(update_fields=['read'])
         return notification
+
+    def mark_all_read(self, *, actor_id: str) -> int:
+        """Mark all unread notifications for a user as read in a single query.
+
+        Returns the number of notifications updated.
+        """
+        count, _ = Notification.objects.filter(
+            recipient_id=actor_id, read=False
+        ).update(read=True)
+        return count
 
     def dismiss_notification(self, *, notification_id: str, actor_id: str) -> Notification:
         """Mark a notification as dismissed (hidden from inbox, kept for history).

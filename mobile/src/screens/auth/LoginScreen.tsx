@@ -23,6 +23,7 @@ import { authService } from '../../services/authService';
 import { tokenStorage } from '../../services/tokenStorage';
 import { useAuthStore } from '../../stores/authStore';
 import { Palette as C } from '../../theme';
+import LegalFooter from '../../components/common/LegalFooter';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -40,18 +41,28 @@ export default function LoginScreen() {
   const [error, setError] = useState('');
 
   // ── Google OAuth (Authorization Code + PKCE) ─────────────────────
-  // ResponseType.IdToken triggers implicit flow — rejected by Google for Android clients.
-  // We use Code+PKCE and exchange the code client-side to get the id_token.
+  // Force the reverse-domain redirect URI that Google's Android OAuth client expects.
+  // expo-auth-session v6 generates com.choresync.app:/oauthredirect by default, which
+  // Google rejects for Android clients. The intent filter for this scheme is registered
+  // in app.json → android.intentFilters so Android intercepts the redirect back.
+  const _androidId = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '';
+  const _iosId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '';
+  const googleRedirectUri = Platform.select({
+    android: _androidId ? `${_androidId.split('.').reverse().join('.')}:/oauth2redirect` : undefined,
+    ios: _iosId ? `${_iosId.split('.').reverse().join('.')}:/oauth2redirect` : undefined,
+  }) ?? makeRedirectUri({ scheme: 'choresync' });
+
   const [googleRequest, googleResponse, promptGoogle] = Google.useAuthRequest({
     clientId: process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? '',
     iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
     androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+    redirectUri: googleRedirectUri,
     responseType: ResponseType.Code,
     usePKCE: true,
     scopes: ['openid', 'email', 'profile'],
+    shouldAutoExchangeCode: false,
   });
-  // Capture request data in a ref so it remains accessible when the useEffect fires
-  // even if the hook returns a new request object on re-render.
+  // Capture codeVerifier at prompt-time — the hook may return a new object on re-render.
   const googlePKCERef = useRef<{ redirectUri: string; codeVerifier?: string } | null>(null);
 
   // ── Microsoft OAuth (Authorization Code + PKCE) ───────────────────
@@ -83,8 +94,7 @@ export default function LoginScreen() {
       android: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
       ios: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
     }) ?? process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? '';
-    // Prefer the ref captured at prompt-time; fall back to current request value
-    const redirectUri = googlePKCERef.current?.redirectUri ?? googleRequest?.redirectUri ?? '';
+    const redirectUri = googleRedirectUri;
     const codeVerifier = googlePKCERef.current?.codeVerifier ?? googleRequest?.codeVerifier;
     setSsoLoading(true);
     setError('');
@@ -189,8 +199,6 @@ export default function LoginScreen() {
   }
 
   function handleGoogleSSO() {
-    // Snapshot PKCE data before the browser opens — the request hook may
-    // return a new object on re-render while the browser is open.
     googlePKCERef.current = googleRequest
       ? { redirectUri: googleRequest.redirectUri, codeVerifier: googleRequest.codeVerifier }
       : null;
@@ -327,6 +335,7 @@ export default function LoginScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+      <LegalFooter />
     </SafeAreaView>
   );
 }

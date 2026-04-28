@@ -205,10 +205,7 @@ async function handleSave() {
         timezone: null,
       }));
     const resp = await calendarService.selectOutlookCalendars(payload);
-    const syncing: string[] = resp.data?.syncing ?? [];
-    successMessage.value = syncing.length
-      ? `Saved. Syncing ${syncing.length} calendar(s) in the background…`
-      : 'Outlook calendars saved.';
+    router.push({ name: 'calendar', query: { sync: 'started', provider: 'outlook' } });
   } catch (err: any) {
     errorMessage.value = err?.response?.data?.detail || 'Failed to save selection. Please try again.';
   } finally {

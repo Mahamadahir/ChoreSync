@@ -48,6 +48,7 @@ from chore_sync.domain_errors import (
 )
 from django.contrib.auth import login, logout
 from django.conf import settings
+from chore_sync.models import AuthEvent
 from django.utils.dateparse import parse_datetime
 from googleapiclient.discovery import build as google_build
 from googleapiclient.errors import HttpError
@@ -61,16 +62,16 @@ logger = logging.getLogger(__name__)
 
 
 class CsrfExemptSessionAuthentication(SessionAuthentication):
-    """Session auth with CSRF enforcement re-enabled.
+    """SessionAuthentication with CSRF skipped.
 
-    DRF's APIView.as_view() marks all views as csrf_exempt at the Django middleware
-    level, so CSRF protection for session-authenticated requests relies entirely on
-    SessionAuthentication.enforce_csrf().  This class re-enables that check so that
-    cookie-based (Vue web) requests must supply a valid X-CSRFToken header.
-
-    JWT-authenticated (mobile) requests are unaffected — enforce_csrf() is only
-    called when session auth is the authenticating class for the request.
+    The SPA is on a different subdomain so it cannot read the csrftoken cookie
+    via document.cookie. CSRF protection is provided by the CORS allowlist
+    (CORS_ALLOWED_ORIGINS) instead — only our own origins can make credentialed
+    cross-origin requests. JWT-authenticated (mobile) requests are unaffected.
     """
+
+    def enforce_csrf(self, request):
+        pass
 
 
 class SSERenderer(renderers.BaseRenderer):
@@ -110,6 +111,7 @@ class SignupAPIView(APIView):
         except RegistrationError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+        AuthEvent.log_from_request('register', request, email=user_dto.email)
         return Response(
             {
                 **user_dto_to_dict(user_dto),
@@ -134,11 +136,14 @@ class LoginAPIView(APIView):
                 password=serializer.validated_data["password"],
             )
         except InvalidCredentials as exc:
+            AuthEvent.log_from_request('login_failed', request, email=serializer.validated_data.get('identifier', ''))
             return Response({"detail": str(exc)}, status=status.HTTP_401_UNAUTHORIZED)
         except InactiveAccount as exc:
+            AuthEvent.log_from_request('login_failed', request, email=serializer.validated_data.get('identifier', ''), reason='inactive')
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
 
         login(request, user)  # issue session cookie
+        AuthEvent.log_from_request('login_success', request, user=user)
         return Response(
             {
                 "email_verified": getattr(user_dto, "email_verified", False),
@@ -158,7 +163,16 @@ class LogoutAPIView(APIView):
     authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
 
     def post(self, request):
+        AuthEvent.log_from_request('logout', request, user=request.user)
         logout(request)
+        # TikTok dev tip: blacklist the refresh token on logout so it can't be reused even before it expires
+        refresh_token = request.data.get("refresh")
+        if refresh_token:
+            try:
+                from rest_framework_simplejwt.tokens import RefreshToken
+                RefreshToken(refresh_token).blacklist()
+            except Exception:
+                pass
         return Response({"detail": "Logged out."}, status=status.HTTP_200_OK)
 
 
@@ -205,6 +219,7 @@ class VerifyEmailAPIView(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except VerificationTokenExpired as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_410_GONE)
+        AuthEvent.log_from_request('email_verified', request, email=getattr(user, 'email', ''))
         return Response(
             {
                 "detail": "Email verified.",
@@ -240,6 +255,7 @@ class UpdateEmailAPIView(APIView):
         except (InvalidEmail, EmailAlreadyTaken, RegistrationError) as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        AuthEvent.log_from_request('email_updated', request, new_email=new_email)
         return Response(
             {
                 "detail": "Email updated. Check your inbox for a new verification link.",
@@ -362,6 +378,7 @@ class ForgotPasswordAPIView(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
         except InvalidEmail as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        AuthEvent.log_from_request('password_reset_requested', request, email=email)
         return Response({"detail": "If this account exists, a reset link was sent."}, status=status.HTTP_200_OK)
 
 
@@ -387,6 +404,7 @@ class ResetPasswordAPIView(APIView):
         except WeakPassword as exc:
             return Response({"detail": exc.messages if hasattr(exc, 'messages') else str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        AuthEvent.log_from_request('password_reset_used', request, email=getattr(user_dto, 'email', ''))
         return Response(
             {
                 "detail": "Password reset successful.",
@@ -417,6 +435,7 @@ class ChangePasswordAPIView(APIView):
         except WeakPassword as exc:
             return Response({"detail": exc.messages if hasattr(exc, 'messages') else str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        AuthEvent.log_from_request('password_changed', request, user=request.user)
         return Response({"detail": "Password changed successfully."}, status=status.HTTP_200_OK)
 
 
@@ -432,9 +451,11 @@ class GoogleLoginAPIView(APIView):
         try:
             user, user_dto = svc.sign_in_with_google(id_token=serializer.validated_data["id_token"])
         except (InvalidCredentials, InvalidEmail, RegistrationError, InactiveAccount) as exc:
+            AuthEvent.log_from_request('login_failed', request, provider='google', reason=str(exc))
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         login(request, user)
+        AuthEvent.log_from_request('google_sso_login', request, user=user)
         return Response(
             {
                 "detail": "Login via Google successful.",
@@ -463,9 +484,11 @@ class MicrosoftLoginAPIView(APIView):
         try:
             user, user_dto = svc.sign_in_with_microsoft(id_token=serializer.validated_data["id_token"])
         except (InvalidCredentials, InvalidEmail, RegistrationError, InactiveAccount) as exc:
+            AuthEvent.log_from_request('login_failed', request, provider='microsoft', reason=str(exc))
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         login(request, user)
+        AuthEvent.log_from_request('microsoft_sso_login', request, user=user)
         return Response(
             {
                 "detail": "Login via Microsoft successful.",
@@ -709,15 +732,18 @@ class GoogleCalendarSelectAPIView(APIView):
             .order_by("-last_refreshed_at")
             .first()
         )
+        from celery import chain as celery_chain
         from chore_sync.models import GoogleCalendarSync
         from chore_sync.tasks import initial_google_sync_task
         selected_ids = []
         queued_ids = []
+        sync_calendar_ids = []
         for item in selections:
             defaults = {
                 "name": item["name"],
                 "include_in_availability": item["include_in_availability"],
                 "push_enabled": item["writable"],
+                "is_task_writeback": item["writable"],
             }
             if "color" in item:
                 defaults["color"] = item["color"]
@@ -737,15 +763,17 @@ class GoogleCalendarSelectAPIView(APIView):
                 sync_state.oauth_writable = item["writable"]
                 sync_state.save(update_fields=["oauth_writable"])
             selected_ids.append(cal.external_id)
-            # Queue initial full sync only for newly created calendars with no prior sync.
-            # Watch channel is registered by the task after sync completes (avoids race).
-            if created or not cal.last_synced_at:
-                if not sync_state.active_task_id:
-                    initial_google_sync_task.apply_async(
-                        args=[cal.id],
-                        queue='calendar_sync',
-                    )
-                    queued_ids.append(cal.external_id)
+            # Collect calendars needing initial sync — dispatched as a chain below.
+            if (created or not cal.last_synced_at) and not sync_state.active_task_id:
+                sync_calendar_ids.append(cal.id)
+                queued_ids.append(cal.external_id)
+
+        # Chain syncs so they run sequentially — prevents Google rate limit errors.
+        if sync_calendar_ids:
+            celery_chain(
+                initial_google_sync_task.si(cal_id).set(queue='calendar_sync')
+                for cal_id in sync_calendar_ids
+            ).apply_async()
         qs = Calendar.objects.filter(user=request.user, provider="google")
         if selected_ids:
             for cal in qs.exclude(external_id__in=selected_ids):
@@ -991,7 +1019,9 @@ class GoogleCalendarCallbackAPIView(APIView):
 
         try:
             svc = GoogleCalendarService(user)
-            svc.exchange_code(code, code_verifier=code_verifier)
+            cred = svc.exchange_code(code, code_verifier=code_verifier)
+            AuthEvent.log_from_request('google_calendar_connected', request, user=user,
+                          account_email=getattr(cred, 'account_email', ''))
             if is_mobile:
                 return redirect(f"{mobile_redirect_uri}?provider=google")
             return redirect(f"{frontend_url}/home?google_sync=success")
@@ -1069,3 +1099,37 @@ class UserCalendarListAPIView(APIView):
             }
             for c in cals
         ])
+
+
+class UserCalendarUpdateAPIView(APIView):
+    """PATCH /api/calendars/<id>/ — toggle per-calendar flags for the requesting user."""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+
+    ALLOWED_FIELDS = {"push_enabled", "is_task_writeback", "include_in_availability"}
+
+    def patch(self, request, pk: int):
+        from chore_sync.models import Calendar
+        try:
+            cal = Calendar.objects.get(pk=pk, user=request.user)
+        except Calendar.DoesNotExist:
+            return Response({"detail": "Not found."}, status=404)
+
+        updates = {k: v for k, v in request.data.items() if k in self.ALLOWED_FIELDS}
+        if not updates:
+            return Response({"detail": "No valid fields provided."}, status=400)
+
+        for field, value in updates.items():
+            if not isinstance(value, bool):
+                return Response({"detail": f"{field} must be a boolean."}, status=400)
+            setattr(cal, field, value)
+        cal.save(update_fields=list(updates.keys()))
+
+        return Response({
+            "id": cal.id,
+            "name": cal.name,
+            "provider": cal.provider,
+            "push_enabled": cal.push_enabled,
+            "is_task_writeback": cal.is_task_writeback,
+            "include_in_availability": cal.include_in_availability,
+        })

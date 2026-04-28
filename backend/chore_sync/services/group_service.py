@@ -35,7 +35,6 @@ class GroupOrchestrator:
         *,
         owner: User,
         name: str,
-        reassignment_rule: str | None = None,
         group_type: str = 'custom',
     ) -> Group:
         """Provision a new group and default configuration.
@@ -43,24 +42,18 @@ class GroupOrchestrator:
         Inputs:
             owner: User creating the group (initial admin).
             name: Human-friendly group name.
-            reassignment_rule: Initial fairness/rotation setting identifier.
         Output:
             Group DTO (id, slug, invite code) ready for UI consumption.
         """
-        valid_rules = [c[0] for c in Group._meta.get_field('reassignment_rule').choices]
         if name is None or len(name) == 0:
             raise ValueError("Group name cannot be empty.")
         if len(name) > 100:
             raise ValueError("Group name cannot exceed 100 characters.")
 
-        if reassignment_rule is not None and reassignment_rule not in valid_rules:
-            raise ValueError(f"Invalid reassignment rule: {reassignment_rule}")
-
         with transaction.atomic():
             group = Group.objects.create(
                 name=name,
                 owner=owner,
-                reassignment_rule=reassignment_rule,
                 group_code=secrets.token_urlsafe(6).upper(),
                 group_type=group_type,
             )
@@ -124,18 +117,29 @@ class GroupOrchestrator:
         if invitee is not None:
             if group.members.filter(user=invitee).exists():
                 raise ValueError("User is already a member of the group.")
-            with transaction.atomic():
-                GroupMembership.objects.create(user=invitee, group=group, role=role)
-            # Use the full notification pipeline so the invite gets realtime WS/SSE
-            # delivery and respects the invitee's notification preferences.
+            from chore_sync.models import GroupInvitation
+            invitation, created = GroupInvitation.objects.get_or_create(
+                group=group,
+                invitee=invitee,
+                defaults={'invited_by': requestor, 'role': role, 'status': 'pending'},
+            )
+            if not created:
+                if invitation.status == 'pending':
+                    raise ValueError("An invitation has already been sent to this user.")
+                # Re-invite after a previous decline
+                invitation.status = 'pending'
+                invitation.role = role
+                invitation.invited_by = requestor
+                invitation.save(update_fields=['status', 'role', 'invited_by'])
+
             from chore_sync.services.notification_service import NotificationService
             NotificationService().emit_notification(
                 recipient_id=str(invitee.id),
                 notification_type='group_invite',
                 title="Group Invitation",
-                content=f"You have been invited to join the group '{group.name}' as a {role}.",
+                content=f"{requestor.first_name or requestor.username} invited you to join '{group.name}' as a {role}.",
                 group_id=str(group.id),
-                action_url=f"/groups/{group.id}",
+                action_url=f"/invitations/{invitation.id}",
             )
             AccountService()._send_and_log_email(
                 to_address=invitee.email,
@@ -143,11 +147,10 @@ class GroupOrchestrator:
                 message=(
                     f"Hi {invitee.first_name or invitee.username},\n\n"
                     f"{requestor.first_name or requestor.username} has invited you to join "
-                    f"'{group.name}' on ChoreSync as a {role}.\n"
-                    f"Use this code to join: {group.group_code}\n\n"
-                    f"Or visit: {settings.FRONTEND_APP_URL}/join/{group.group_code}"
+                    f"'{group.name}' on ChoreSync as a {role}.\n\n"
+                    f"Open the app to accept or decline."
                 ),
-                context={"type": "group_invite", "group_id": str(group.id)},
+                context={"type": "group_invite", "group_id": str(group.id), "invitation_id": invitation.id},
             )
         else:
             # No account yet — send signup link with group code embedded
@@ -288,7 +291,7 @@ class GroupOrchestrator:
         for membership in members:
             user = membership.user
             uid = str(user.id)
-            stats = UserStats.objects.filter(user=user, household=group).first()
+            stats = UserStats.objects.filter(user=user, group=group).first()
             tasks_raw[uid] = float(stats.total_tasks_completed if stats else 0)
             time_raw[uid] = float(time_by_user.get(user.id) or 0)
             points_raw[uid] = float(stats.total_points if stats else 0)

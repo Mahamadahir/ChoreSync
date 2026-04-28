@@ -30,6 +30,7 @@
         <data android:scheme="choresync"/>
         <data android:scheme="com.choresync.app"/>
         <data android:scheme="exp+choresync"/>
+        <data android:scheme="com.googleusercontent.apps.718861309094-02gtpjd8pnjb5glljmhiermtcloduov6"/>
       </intent-filter>
     </activity>
   </application>

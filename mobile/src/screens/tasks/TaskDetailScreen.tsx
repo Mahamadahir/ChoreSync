@@ -14,7 +14,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { taskService } from '../../services/taskService';
 import { groupService } from '../../services/groupService';
@@ -407,6 +407,8 @@ export default function TaskDetailScreen() {
   }, [taskId, myUserId]);
 
   useEffect(() => { load(); }, [load]);
+  // Re-fetch when navigating back to this screen so emergency status stays current
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   async function handleComplete() {
     if (!task) return;

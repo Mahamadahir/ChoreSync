@@ -1,0 +1,17 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: choresync
+  annotations:
+    # Allow WebSocket connections to stay open for up to 1 hour.
+    # Without this the HAProxy default (30s) kills long-lived WS connections.
+    haproxy.router.openshift.io/timeout: "3600s"
+spec:
+  to:
+    kind: Service
+    name: choresync-web
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

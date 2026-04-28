@@ -56,6 +56,10 @@
           <span class="material-symbols-outlined" style="font-size:15px;vertical-align:-3px">bar_chart</span>
           Analytics
         </button>
+        <button :class="['cs-filter-tab', { 'cs-filter-tab--active': tab === 'history' }]" @click="tab = 'history'; loadAssignmentHistory()">
+          <span class="material-symbols-outlined" style="font-size:15px;vertical-align:-3px">history_edu</span>
+          My History
+        </button>
       </div>
 
       <!-- ── TASKS ──────────────────────────────────────────── -->
@@ -129,9 +133,7 @@
                 v-if="(t.status === 'pending' || t.status === 'snoozed') && String(t.assigned_to_id) === String(myUserId)"
                 class="cs-btn-primary"
                 style="padding:6px 14px;font-size:13px;gap:4px"
-                :disabled="t.photo_proof_required && !t.photo_proof"
-                :title="t.photo_proof_required && !t.photo_proof ? 'Upload photo proof first' : 'Mark complete'"
-                @click="completeTask(t.id)"
+                @click="openCompleteDialog(t)"
               >
                 <span class="material-symbols-outlined" style="font-size:16px">check_circle</span>
                 Complete
@@ -180,43 +182,62 @@
             </div>
             <!-- Breakdown panel (lazy loaded, shown inline below the task row) -->
             <div v-if="expandedBreakdown === t.id" style="margin-top:10px;border-top:1px solid var(--cs-outline-variant);padding-top:10px">
-              <div v-if="breakdownLoading[t.id]" style="font-size:12px;color:var(--cs-muted);padding:4px 0">Loading breakdown…</div>
+              <div v-if="breakdownLoading[t.id]" style="font-size:12px;color:var(--cs-muted);padding:4px 0">Loading…</div>
               <template v-else-if="breakdownCache[t.id]">
-                <template v-if="breakdownCache[t.id].breakdown_available">
-                  <div style="font-size:11px;font-weight:700;letter-spacing:0.8px;color:var(--cs-muted);margin-bottom:8px">ASSIGNMENT SCORES — lower = higher priority</div>
+                <template v-if="breakdownCache[t.id].assigned_via === 'emergency_cover'">
+                  <div style="font-size:12px;color:var(--cs-on-surface-variant);line-height:1.5">
+                    <strong style="color:var(--cs-error)">Emergency cover</strong> —
+                    {{ breakdownCache[t.id].original_assignee ?? 'The original assignee' }} requested help and
+                    {{ breakdownCache[t.id].covered_by ?? 'a group member' }} volunteered to take over.
+                  </div>
+                </template>
+                <template v-else-if="breakdownCache[t.id].assigned_via === 'streak_suggestion'">
+                  <div style="font-size:12px;color:var(--cs-on-surface-variant);line-height:1.5">
+                    Assigned based on a <strong>streak</strong> — you've done this task consistently and were offered first pick.
+                  </div>
+                </template>
+                <template v-else-if="breakdownCache[t.id].breakdown_available">
+                  <!-- Candidate workload bars -->
+                  <div style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:var(--cs-muted);margin-bottom:10px;text-transform:uppercase">Relative workload</div>
                   <div
                     v-for="c in breakdownCache[t.id].candidates"
                     :key="c.user_id"
-                    style="margin-bottom:8px"
+                    style="display:flex;align-items:center;gap:8px;margin-bottom:7px"
                   >
-                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
-                      <div style="width:18px;height:18px;border-radius:50%;background:var(--cs-surface-high);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:var(--cs-muted);flex-shrink:0">
-                        {{ c.username[0].toUpperCase() }}
-                      </div>
-                      <span style="font-size:13px;font-weight:600;color:var(--cs-on-surface)">{{ c.username }}<span v-if="c.is_me"> (you)</span></span>
-                      <span v-if="c.is_winner" style="font-size:9px;font-weight:700;letter-spacing:0.8px;padding:2px 6px;border-radius:4px;background:var(--cs-secondary);color:#fff">ASSIGNED</span>
+                    <div style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0"
+                      :style="{ background: c.is_winner ? 'var(--cs-secondary)' : 'var(--cs-surface-high)', color: c.is_winner ? '#fff' : 'var(--cs-muted)' }">
+                      {{ c.username[0].toUpperCase() }}
                     </div>
-                    <div style="display:flex;align-items:center;gap:8px">
-                      <div style="flex:1;height:8px;background:var(--cs-surface-high);border-radius:4px;overflow:hidden">
-                        <div :style="{
-                          width: Math.round(c.final_score / Math.max(...breakdownCache[t.id].candidates.map(x => x.final_score), 1) * 100) + '%',
-                          height: '100%',
-                          borderRadius: '4px',
-                          background: c.is_winner ? 'var(--cs-secondary)' : 'var(--cs-primary-container)',
-                        }" />
-                      </div>
-                      <span style="font-size:12px;font-weight:700;color:var(--cs-muted);width:28px;text-align:right">{{ c.final_score }}</span>
+                    <span style="font-size:12px;font-weight:600;width:96px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+                      :style="{ color: c.is_winner ? 'var(--cs-on-surface)' : 'var(--cs-muted)' }">
+                      {{ c.username }}<span v-if="c.is_me" style="color:var(--cs-muted);font-weight:400"> (you)</span>
+                    </span>
+                    <div style="flex:1;height:6px;background:var(--cs-surface-high);border-radius:3px;overflow:hidden">
+                      <div :style="{
+                        width: Math.round(c.final_score / Math.max(...breakdownCache[t.id].candidates.map((x:any) => x.final_score), 1) * 100) + '%',
+                        height: '100%',
+                        borderRadius: '3px',
+                        background: c.is_winner ? 'var(--cs-secondary)' : 'var(--cs-primary-container)',
+                      }" />
                     </div>
-                    <!-- My components (only for own row) -->
-                    <div v-if="c.is_me && c.components" style="margin-top:6px;padding:10px;background:var(--cs-surface-low);border-radius:8px;border:1px solid var(--cs-outline-variant);font-size:11px;color:var(--cs-on-surface-variant);display:flex;flex-direction:column;gap:4px">
-                      <div><strong>Fairness score:</strong> {{ c.components.stage1_score }} — task count (40%), difficulty-weighted time (35%), points (25%)</div>
-                      <div><strong>Preference:</strong> {{ c.components.pref_multiplier <= 0.85 ? 'Prefer ×0.8' : c.components.pref_multiplier >= 1.15 ? 'Avoid ×1.2' : 'Neutral ×1.0' }}</div>
-                      <div><strong>History affinity:</strong> {{ c.components.affinity_multiplier <= 0.9 ? 'High completion ×0.88' : c.components.affinity_multiplier >= 1.1 ? 'Low completion ×1.12' : 'No adjustment' }}</div>
-                      <div><strong>Calendar penalty:</strong> +{{ c.components.calendar_penalty }}</div>
-                    </div>
+                    <span v-if="c.is_winner" style="font-size:9px;font-weight:700;letter-spacing:0.6px;padding:2px 6px;border-radius:4px;background:var(--cs-secondary);color:#fff;flex-shrink:0">ASSIGNED</span>
                   </div>
+
+                  <!-- Plain-English reasons (own row only) -->
+                  <template v-if="breakdownCache[t.id].candidates.some((c:any) => c.is_me && c.components)">
+                    <div style="margin-top:12px;padding:10px 12px;background:var(--cs-surface-low);border-radius:8px;border-left:3px solid var(--cs-secondary)">
+                      <div style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:var(--cs-muted);margin-bottom:6px;text-transform:uppercase">Why you?</div>
+                      <ul style="margin:0;padding:0 0 0 16px;display:flex;flex-direction:column;gap:4px">
+                        <li
+                          v-for="(reason, i) in breakdownReasons(breakdownCache[t.id])"
+                          :key="i"
+                          style="font-size:12px;color:var(--cs-on-surface-variant);line-height:1.5"
+                        >{{ reason }}</li>
+                      </ul>
+                    </div>
+                  </template>
                 </template>
-                <div v-else style="font-size:12px;color:var(--cs-muted);font-style:italic">Score history not available for assignments made before this feature was added.</div>
+                <div v-else style="font-size:12px;color:var(--cs-muted);font-style:italic">No breakdown available for this assignment.</div>
               </template>
             </div>
           </div>
@@ -397,7 +418,10 @@
                   Suggested by {{ p.proposed_by }} · {{ formatDate(p.created_at) }}
                 </div>
               </div>
-              <span class="cs-chip" :class="proposalChipClass(p.state)">{{ p.state }}</span>
+              <div style="display:flex;gap:4px;align-items:center">
+                <span v-if="p.vote_mode" class="cs-chip" style="background:var(--cs-primary-container);color:var(--cs-on-primary-container);font-size:10px">vote</span>
+                <span class="cs-chip" :class="proposalChipClass(p.state)">{{ p.state }}</span>
+              </div>
             </div>
 
             <!-- Proposer details -->
@@ -423,8 +447,50 @@
               Note: "{{ p.approval_note }}"
             </div>
 
-            <!-- Moderator approve/reject actions -->
-            <div v-if="p.state === 'pending' && group.role === 'moderator'" style="display:flex;gap:8px;flex-wrap:wrap">
+            <!-- Vote mode: open window -->
+            <template v-if="p.vote_mode && p.is_vote_open">
+              <div style="background:var(--cs-surface-container);border-radius:10px;padding:10px 14px;margin-bottom:8px">
+                <div style="font-size:12px;font-weight:600;color:var(--cs-on-surface-variant);margin-bottom:6px">
+                  Voting open · closes {{ formatDate(p.vote_deadline) }}
+                </div>
+                <div style="font-size:12px;color:var(--cs-muted);margin-bottom:8px">Votes are hidden until the window closes.</div>
+                <div style="display:flex;gap:8px">
+                  <button
+                    :class="['cs-btn-primary', { 'cs-btn-primary--active': p.my_vote === 'yes' }]"
+                    style="padding:5px 14px;font-size:12px;background:var(--cs-secondary);border-color:var(--cs-secondary)"
+                    :disabled="!!proposalVoting[p.id]"
+                    @click="castVote(p, 'yes')"
+                  >{{ p.my_vote === 'yes' ? '✓ Voted Yes' : 'Yes' }}</button>
+                  <button
+                    class="cs-btn-outline"
+                    style="padding:5px 14px;font-size:12px;border-color:var(--cs-error);color:var(--cs-error)"
+                    :disabled="!!proposalVoting[p.id]"
+                    @click="castVote(p, 'no')"
+                  >{{ p.my_vote === 'no' ? '✓ Voted No' : 'No' }}</button>
+                  <button
+                    class="cs-btn-outline"
+                    style="padding:5px 14px;font-size:12px"
+                    :disabled="!!proposalVoting[p.id]"
+                    @click="castVote(p, 'abstain')"
+                  >{{ p.my_vote === 'abstain' ? '✓ Abstained' : 'Abstain' }}</button>
+                </div>
+              </div>
+            </template>
+
+            <!-- Vote mode: closed — show tally -->
+            <template v-else-if="p.vote_mode && !p.is_vote_open && p.vote_counts">
+              <div style="background:var(--cs-surface-container);border-radius:10px;padding:10px 14px;margin-bottom:8px;font-size:12px">
+                <div style="font-weight:600;margin-bottom:4px;color:var(--cs-on-surface-variant)">Final vote result</div>
+                <div style="display:flex;gap:12px">
+                  <span style="color:var(--cs-secondary)">✓ Yes: {{ p.vote_counts.yes }}</span>
+                  <span style="color:var(--cs-error)">✗ No: {{ p.vote_counts.no }}</span>
+                  <span style="color:var(--cs-muted)">Abstain: {{ p.vote_counts.abstain }}</span>
+                </div>
+              </div>
+            </template>
+
+            <!-- Moderator approve/reject actions (non-vote proposals only) -->
+            <div v-if="p.state === 'pending' && !p.vote_mode && group.role === 'moderator'" style="display:flex;gap:8px;flex-wrap:wrap">
               <button
                 class="cs-btn-primary"
                 style="padding:6px 16px;font-size:13px"
@@ -447,13 +513,32 @@
         <!-- Group settings (moderator only) -->
         <template v-if="group.role === 'moderator'">
           <div class="cs-section-title">Group Configuration</div>
-          <div class="cs-card" style="max-width:440px;margin-bottom:20px">
-            <div style="margin-top:16px">
+          <div class="cs-card" style="max-width:440px;margin-bottom:20px;display:flex;flex-direction:column;gap:16px">
+
+            <!-- Group name -->
+            <div>
+              <label style="font-size:11px;font-weight:700;letter-spacing:.6px;color:var(--cs-muted);text-transform:uppercase;display:block;margin-bottom:6px">Group Name</label>
+              <input v-model="settingsName" class="cs-form-input" placeholder="Group name" maxlength="100" />
+            </div>
+
+            <!-- Read-only info -->
+            <div style="display:flex;gap:16px;flex-wrap:wrap">
+              <div>
+                <div style="font-size:11px;font-weight:700;letter-spacing:.6px;color:var(--cs-muted);text-transform:uppercase;margin-bottom:4px">Invite Code</div>
+                <span style="font-family:monospace;font-weight:700;font-size:15px;color:var(--cs-on-surface)">{{ group.group_code }}</span>
+              </div>
+              <div>
+                <div style="font-size:11px;font-weight:700;letter-spacing:.6px;color:var(--cs-muted);text-transform:uppercase;margin-bottom:4px">Group Type</div>
+                <span style="font-size:14px;color:var(--cs-on-surface);text-transform:capitalize">{{ group.group_type?.replace('_', ' ') }}</span>
+              </div>
+            </div>
+
+            <div>
               <button class="cs-btn-primary" :disabled="settings.loading" @click="saveSettings">
                 {{ settings.loading ? 'Saving…' : 'Save Settings' }}
               </button>
             </div>
-            <div v-if="settings.message" style="margin-top:8px;font-size:12px" :style="settings.error ? 'color:var(--cs-error)' : 'color:var(--cs-secondary)'">
+            <div v-if="settings.message" style="font-size:12px" :style="settings.error ? 'color:var(--cs-error)' : 'color:var(--cs-secondary)'">
               {{ settings.message }}
             </div>
           </div>
@@ -511,30 +596,71 @@
           </div>
 
           <!-- Fairness distribution -->
-          <div class="cs-section-title">Workload Distribution</div>
+          <div class="cs-section-title">Fairness</div>
+          <div style="font-size:12px;color:var(--cs-muted);margin-bottom:10px">
+            Each member's share of total group points — a fair split would be equal. Points account for task difficulty and time.
+          </div>
           <div class="cs-card" style="padding:0;overflow:hidden;margin-bottom:24px">
             <div
-              v-for="(row, idx) in groupStats.fairness_distribution"
+              v-for="row in fairnessRows"
               :key="row.user_id"
-              style="display:flex;align-items:center;gap:14px;padding:14px 16px;border-bottom:1px solid var(--cs-outline-variant)"
+              style="padding:14px 16px;border-bottom:1px solid var(--cs-outline-variant)"
             >
-              <div style="width:28px;height:28px;border-radius:50%;background:var(--cs-surface-high);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--cs-muted);flex-shrink:0">
-                {{ (idx as number) + 1 }}
-              </div>
-              <div style="flex:1;min-width:0">
-                <div style="font-size:14px;font-weight:600;color:var(--cs-on-surface);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ row.username }}</div>
-                <div style="display:flex;gap:10px;margin-top:3px;flex-wrap:wrap">
-                  <span style="font-size:11px;color:var(--cs-muted)">✅ {{ row.total_tasks_completed }}</span>
-                  <span style="font-size:11px;color:var(--cs-muted)">⭐ {{ row.total_points }} pts</span>
-                  <span style="font-size:11px;color:var(--cs-muted)">🔥 {{ row.current_streak_days }}d streak</span>
-                  <span style="font-size:11px;color:var(--cs-muted)">⏱ {{ Math.round(row.on_time_completion_rate * 100) }}% on-time</span>
+              <!-- Name row + status badge -->
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                <div style="width:28px;height:28px;border-radius:50%;background:var(--cs-surface-high);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--cs-muted);flex-shrink:0">
+                  {{ row.username[0].toUpperCase() }}
                 </div>
+                <span style="font-size:14px;font-weight:600;color:var(--cs-on-surface);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ row.username }}</span>
+                <span
+                  :style="{
+                    fontSize: '10px', fontWeight: '700', letterSpacing: '0.6px',
+                    padding: '2px 8px', borderRadius: '4px', flexShrink: 0,
+                    background: row.status === 'fair' ? 'var(--cs-secondary-container)'
+                      : row.status === 'amber' ? '#fff3cd'
+                      : row.status === 'over'  ? 'var(--cs-primary-container)'
+                      : 'var(--cs-error-container)',
+                    color: row.status === 'fair' ? 'var(--cs-on-secondary-container)'
+                      : row.status === 'amber' ? '#856404'
+                      : row.status === 'over'  ? 'var(--cs-primary)'
+                      : 'var(--cs-error)',
+                  }"
+                >
+                  {{ row.status === 'fair' ? 'FAIR'
+                    : row.status === 'over' ? `+${Math.round(row.deviation)}% ABOVE`
+                    : row.status === 'under' ? `${Math.round(row.deviation)}% BELOW`
+                    : row.deviation > 0 ? `+${Math.round(row.deviation)}%` : `${Math.round(row.deviation)}%` }}
+                </span>
               </div>
-              <!-- Mini bar: on-time rate -->
-              <div style="width:64px;flex-shrink:0">
-                <div style="height:6px;background:var(--cs-surface-high);border-radius:3px;overflow:hidden">
-                  <div :style="{ width: Math.round(row.on_time_completion_rate * 100) + '%', height: '100%', background: 'var(--cs-secondary)', borderRadius: '3px' }" />
-                </div>
+
+              <!-- Points share bar with fair-share marker -->
+              <div style="position:relative;height:10px;background:var(--cs-surface-high);border-radius:5px;overflow:visible;margin-bottom:6px">
+                <div
+                  :style="{
+                    width: Math.min(row.pointsShare, 100) + '%',
+                    height: '100%',
+                    borderRadius: '5px',
+                    background: row.status === 'fair' ? 'var(--cs-secondary)'
+                      : row.status === 'amber' ? '#ffc107'
+                      : row.status === 'over'  ? 'var(--cs-primary)'
+                      : 'var(--cs-error)',
+                  }"
+                  style="position:absolute;top:0;left:0"
+                />
+                <!-- Fair share marker line -->
+                <div
+                  :style="{ left: row.fairShare + '%' }"
+                  style="position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--cs-outline-variant);border-radius:1px"
+                  title="Fair share"
+                />
+              </div>
+
+              <!-- Supporting stats -->
+              <div style="display:flex;gap:12px;flex-wrap:wrap">
+                <span style="font-size:11px;color:var(--cs-muted)">{{ Math.round(row.pointsShare) }}% of group pts</span>
+                <span style="font-size:11px;color:var(--cs-muted)">· {{ row.total_tasks_completed }} tasks</span>
+                <span style="font-size:11px;color:var(--cs-muted)">· {{ Math.round(row.on_time_completion_rate * 100) }}% on-time</span>
+                <span v-if="row.current_streak_days > 0" style="font-size:11px;color:var(--cs-muted)">· 🔥 {{ row.current_streak_days }}d streak</span>
               </div>
             </div>
           </div>
@@ -612,6 +738,114 @@
             </div>
           </template>
         </template>
+      </div>
+
+      <!-- ── MY HISTORY ───────────────────────────────────────── -->
+      <div v-if="tab === 'history'">
+        <div v-if="historyLoading" style="display:flex;justify-content:center;padding:40px">
+          <span class="material-symbols-outlined" style="animation:spin .8s linear infinite;color:var(--cs-primary)">refresh</span>
+        </div>
+        <div v-else-if="historyError" style="text-align:center;padding:40px;color:var(--cs-muted)">
+          <span class="material-symbols-outlined" style="font-size:32px;display:block;margin-bottom:8px">sync_problem</span>
+          Couldn't load history —
+          <button class="cs-link-btn" @click="loadAssignmentHistory()">retry</button>
+        </div>
+        <div v-else-if="assignmentHistory.length === 0" style="text-align:center;padding:40px;color:var(--cs-muted)">
+          <span class="material-symbols-outlined" style="font-size:36px;display:block;margin-bottom:8px;opacity:.35">history_edu</span>
+          No assignments yet
+        </div>
+        <div v-else>
+          <p style="font-size:11px;font-weight:700;letter-spacing:.8px;color:var(--cs-muted);text-transform:uppercase;margin-bottom:12px">
+            {{ assignmentHistory.length }} assignment{{ assignmentHistory.length !== 1 ? 's' : '' }}
+          </p>
+          <div v-for="entry in assignmentHistory" :key="entry.occurrence_id" class="cs-card" style="margin-bottom:10px">
+            <!-- Header row -->
+            <div
+              style="display:flex;align-items:flex-start;justify-content:space-between;cursor:pointer;gap:12px"
+              @click="expandedHistoryId = expandedHistoryId === entry.occurrence_id ? null : entry.occurrence_id"
+            >
+              <div style="flex:1">
+                <div style="font-weight:700;font-size:15px;margin-bottom:4px">{{ entry.template_name }}</div>
+                <div style="font-size:12px;color:var(--cs-muted)">
+                  {{ historyAssignedViaLabel(entry) }} · {{ entry.assigned_at ? formatHistoryDate(entry.assigned_at) : '—' }}
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                <span
+                  :style="{
+                    display:'inline-block', padding:'2px 10px', borderRadius:'999px', fontSize:'11px',
+                    fontWeight:700, letterSpacing:'.5px',
+                    background: entry.occurrence_status === 'completed' ? 'var(--cs-secondary-container)' : entry.occurrence_status === 'overdue' ? 'var(--cs-error-container)' : 'var(--cs-tertiary-fixed)',
+                    color: entry.occurrence_status === 'completed' ? 'var(--cs-secondary)' : entry.occurrence_status === 'overdue' ? 'var(--cs-error)' : 'var(--cs-on-tertiary-fixed)',
+                  }"
+                >{{ entry.occurrence_status.charAt(0).toUpperCase() + entry.occurrence_status.slice(1) }}</span>
+                <span class="material-symbols-outlined" style="font-size:18px;color:var(--cs-muted)">
+                  {{ expandedHistoryId === entry.occurrence_id ? 'expand_less' : 'expand_more' }}
+                </span>
+              </div>
+            </div>
+            <!-- Dates row -->
+            <div style="display:flex;gap:16px;margin-top:8px;font-size:11px;color:var(--cs-muted)">
+              <span v-if="entry.deadline">
+                <span class="material-symbols-outlined" style="font-size:12px;vertical-align:-2px">event</span>
+                Due {{ formatHistoryDate(entry.deadline) }}
+              </span>
+              <span v-if="entry.completed_at" style="color:var(--cs-secondary)">
+                <span class="material-symbols-outlined" style="font-size:12px;vertical-align:-2px">check_circle</span>
+                Done {{ formatHistoryDate(entry.completed_at) }}
+              </span>
+            </div>
+            <!-- Expanded breakdown -->
+            <template v-if="expandedHistoryId === entry.occurrence_id">
+              <hr style="margin:14px 0;border:none;border-top:1px solid var(--cs-outline-variant)" />
+              <!-- breakdown_available=false states -->
+              <div v-if="!entry.breakdown_available" style="font-size:13px;color:var(--cs-muted);display:flex;gap:8px;align-items:flex-start">
+                <span class="material-symbols-outlined" style="font-size:16px;flex-shrink:0">info</span>
+                <span v-if="entry.assigned_via === 'emergency_cover'">
+                  Emergency cover —
+                  {{ entry.original_assignee ? entry.original_assignee + ' requested cover' : 'original assignee requested cover' }}
+                  {{ entry.covered_by ? ' and ' + entry.covered_by + ' volunteered.' : '.' }}
+                </span>
+                <span v-else-if="entry.assigned_via === 'streak_suggestion'">Assigned via streak suggestion.</span>
+                <span v-else>Score history unavailable for older assignments.</span>
+              </div>
+              <!-- Candidate bars -->
+              <template v-else>
+                <p style="font-size:10px;font-weight:700;letter-spacing:.8px;color:var(--cs-muted);text-transform:uppercase;margin-bottom:10px">Relative Workload</p>
+                <div v-for="c in entry.candidates" :key="c.user_id" style="margin-bottom:10px">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                    <div
+                      :style="{
+                        width:'24px',height:'24px',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',
+                        fontSize:'11px',fontWeight:700,
+                        background: c.is_winner ? 'var(--cs-secondary)' : c.is_me ? 'var(--cs-primary-container)' : 'var(--cs-surface-container-high)',
+                        color: c.is_winner ? '#fff' : c.is_me ? 'var(--cs-primary)' : 'var(--cs-on-surface-variant)',
+                      }"
+                    >{{ c.username[0].toUpperCase() }}</div>
+                    <span style="font-size:13px;font-weight:600">{{ c.username }}{{ c.is_me ? ' (you)' : '' }}</span>
+                    <span v-if="c.is_winner" style="font-size:9px;font-weight:700;letter-spacing:.6px;background:var(--cs-secondary);color:#fff;padding:2px 6px;border-radius:4px">ASSIGNED</span>
+                  </div>
+                  <div style="height:8px;background:var(--cs-surface-container-high);border-radius:4px;overflow:hidden">
+                    <div
+                      :style="{
+                        height:'100%', borderRadius:'4px',
+                        width: Math.max(4, (c.final_score / Math.max(...entry.candidates.map(x => x.final_score), 1)) * 100) + '%',
+                        background: c.is_winner ? 'var(--cs-secondary)' : c.is_me ? 'var(--cs-primary-container)' : 'var(--cs-surface-container-highest)',
+                      }"
+                    />
+                  </div>
+                </div>
+                <!-- Tiebreaker note -->
+                <div v-if="entry.tiebreaker_used" style="margin-top:10px;font-size:12px;color:var(--cs-muted);display:flex;gap:6px;align-items:flex-start">
+                  <span class="material-symbols-outlined" style="font-size:14px;flex-shrink:0;color:var(--cs-secondary)">info</span>
+                  <span v-if="entry.tiebreaker_reason === 'no_prior_assignments'">All members had equal workloads — you were selected because you haven't been assigned a task yet.</span>
+                  <span v-else-if="entry.tiebreaker_reason === 'least_recently_assigned'">All members had equal workloads — you were selected because you haven't had a task in the longest time.</span>
+                  <span v-else>All members had equal workloads — you were selected as the most recently joined member.</span>
+                </div>
+              </template>
+            </template>
+          </div>
+        </div>
       </div>
 
       <!-- ── CHAT ───────────────────────────────────────────── -->
@@ -760,7 +994,9 @@
       <q-card style="min-width:400px;max-width:520px;background:var(--cs-surface-low)">
         <q-card-section>
           <div style="font-size:16px;font-weight:700">Suggest a Task</div>
-          <div style="font-size:13px;color:var(--cs-muted)">A moderator will review and approve your suggestion.</div>
+          <div style="font-size:13px;color:var(--cs-muted)">
+            {{ proposalForm.vote_mode ? 'Group members will vote — task is created if 50%+ say yes.' : 'A moderator will review and approve your suggestion.' }}
+          </div>
         </q-card-section>
         <q-card-section class="q-gutter-sm">
           <q-input v-model="proposalForm.name" label="Task name *" outlined />
@@ -780,10 +1016,18 @@
             outlined
           />
           <q-input v-model="proposalForm.reason" label="Why is this needed? (optional)" outlined type="textarea" rows="2" />
+          <!-- Vote mode toggle -->
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid var(--cs-outline-variant);margin-top:4px">
+            <div>
+              <div style="font-size:13px;font-weight:600">Put to group vote</div>
+              <div style="font-size:11px;color:var(--cs-muted)">Let members vote yes/no instead of moderator review</div>
+            </div>
+            <q-toggle v-model="proposalForm.vote_mode" color="primary" />
+          </div>
         </q-card-section>
         <q-card-actions align="right">
           <q-btn flat label="Cancel" v-close-popup />
-          <q-btn color="primary" label="Submit Suggestion" :loading="proposalForm.loading" @click="submitProposal" />
+          <q-btn color="primary" :label="proposalForm.vote_mode ? 'Start Vote' : 'Submit Suggestion'" :loading="proposalForm.loading" @click="submitProposal" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -842,8 +1086,8 @@
           <q-input v-model="templateForm.name" label="Name" outlined />
           <q-select v-model="templateForm.category" :options="categoryOptions" label="Category" outlined emit-value map-options />
           <q-select v-model="templateForm.recurring_choice" :options="recurrenceOptions" label="Recurrence" outlined emit-value map-options />
-          <q-select v-model="templateForm.importance" :options="importanceOptions" label="Importance" outlined emit-value map-options />
           <q-input v-model.number="templateForm.difficulty" type="number" label="Difficulty (1–5)" outlined min="1" max="5" />
+          <q-input v-model.number="templateForm.estimated_mins" type="number" label="Estimated minutes" outlined min="5" />
           <q-input
             v-model="templateForm.due_datetime"
             type="datetime-local"
@@ -876,6 +1120,64 @@
     </q-dialog>
 
     <!-- ── Post-completion preference nudge ─────────────────── -->
+    <!-- ── Complete Task Dialog ─────────────────────────────── -->
+    <q-dialog v-model="completeDialog.show" persistent>
+      <q-card style="min-width:360px;max-width:480px;border-radius:20px;padding:8px">
+        <q-card-section>
+          <div style="font-size:20px;font-weight:800;margin-bottom:4px">Mark Complete</div>
+          <div style="font-size:13px;color:var(--cs-muted)">{{ completeDialog.task?.template_name }}</div>
+        </q-card-section>
+
+        <!-- Photo proof -->
+        <q-card-section v-if="completeDialog.task?.photo_proof_required && !completeDialog.task?.photo_proof" style="padding-top:0">
+          <div style="font-size:13px;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px">
+            <span class="material-symbols-outlined" style="font-size:16px;color:var(--cs-primary)">camera_alt</span>
+            Photo proof required
+          </div>
+          <div v-if="completeDialog.photoPreview" style="width:100%;height:140px;border-radius:10px;overflow:hidden;margin-bottom:8px">
+            <img :src="completeDialog.photoPreview" style="width:100%;height:100%;object-fit:cover" />
+          </div>
+          <button
+            class="cs-btn-outline"
+            style="width:100%;padding:10px;gap:6px;justify-content:center"
+            @click="($refs.completeProofInput as HTMLInputElement).click()"
+          >
+            <span class="material-symbols-outlined" style="font-size:16px">{{ completeDialog.photoFile ? 'check_circle' : 'upload' }}</span>
+            {{ completeDialog.photoFile ? 'Change Photo' : 'Upload Photo' }}
+          </button>
+          <input ref="completeProofInput" type="file" accept="image/*" style="display:none" @change="handleCompleteDialogPhoto" />
+        </q-card-section>
+
+        <!-- Feedback -->
+        <q-card-section style="padding-top:0">
+          <div style="font-size:13px;font-weight:700;margin-bottom:10px">How was this task? <span style="font-weight:400;color:var(--cs-muted)">(optional)</span></div>
+          <div style="display:flex;gap:8px">
+            <button
+              v-for="opt in PREF_OPTS"
+              :key="opt.value"
+              class="cs-btn-outline"
+              :style="completeDialog.feedback === opt.value ? 'background:var(--cs-primary-container);border-color:var(--cs-primary);color:var(--cs-primary);font-weight:700;flex:1;flex-direction:column;padding:10px 6px;gap:4px;align-items:center' : 'flex:1;flex-direction:column;padding:10px 6px;gap:4px;align-items:center'"
+              @click="completeDialog.feedback = completeDialog.feedback === opt.value ? null : opt.value as any"
+            >
+              <span style="font-size:22px">{{ opt.emoji }}</span>
+              <span style="font-size:11px">{{ opt.label }}</span>
+            </button>
+          </div>
+          <div style="font-size:11px;color:var(--cs-muted);margin-top:6px">Your answer shapes future assignments</div>
+        </q-card-section>
+
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" :disable="completeDialog.uploading" @click="completeDialog.show = false" />
+          <q-btn
+            unelevated color="primary"
+            :label="completeDialog.uploading ? 'Completing…' : 'Mark Complete'"
+            :disable="(completeDialog.task?.photo_proof_required && !completeDialog.task?.photo_proof && !completeDialog.photoFile) || completeDialog.uploading"
+            @click="submitComplete"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
     <q-dialog v-model="prefNudge.show" persistent>
       <q-card style="min-width:320px;max-width:420px;border-radius:20px;padding:8px">
         <q-card-section>
@@ -980,16 +1282,111 @@ const prefNudge = ref<{
   saving: boolean;
 }>({ show: false, templateId: null, taskName: '', choice: null, saving: false });
 
+const completeDialog = ref<{
+  show: boolean;
+  task: any | null;
+  photoFile: File | null;
+  photoPreview: string | null;
+  uploading: boolean;
+  feedback: 'prefer' | 'neutral' | 'avoid' | null;
+}>({ show: false, task: null, photoFile: null, photoPreview: null, uploading: false, feedback: null });
+
 // Analytics
 const groupStats = ref<any>(null);
 const assignmentMatrix = ref<Record<string, number> | null>(null);
 const analyticsLoading = ref(false);
 const analyticsError = ref<string | null>(null);
 
+// Assignment history tab
+const assignmentHistory = ref<any[]>([]);
+const historyLoading = ref(false);
+const historyError = ref(false);
+const expandedHistoryId = ref<number | null>(null);
+
+async function loadAssignmentHistory() {
+  if (historyLoading.value) return;
+  historyLoading.value = true;
+  historyError.value = false;
+  try {
+    const res = await api.get(`/api/groups/${groupId}/my-assignment-history/`);
+    assignmentHistory.value = Array.isArray(res.data) ? res.data : [];
+  } catch {
+    historyError.value = true;
+  } finally {
+    historyLoading.value = false;
+  }
+}
+
+function formatHistoryDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function historyAssignedViaLabel(entry: any): string {
+  if (entry.assigned_via === 'emergency_cover') return 'Emergency cover';
+  if (entry.assigned_via === 'streak_suggestion') return 'Streak suggestion';
+  if (entry.breakdown_available) return 'Pipeline assigned';
+  return 'Assigned';
+}
+
 // Task assignment breakdown ("Why assigned?")
 const expandedBreakdown = ref<number | null>(null);
 const breakdownCache = ref<Record<number, any>>({});
 const breakdownLoading = ref<Record<number, boolean>>({});
+
+function breakdownReasons(bd: any): string[] {
+  const me = bd.candidates.find((c: any) => c.is_me);
+  if (!me?.components) return [];
+  const reasons: string[] = [];
+  const comp = me.components;
+  const others = bd.candidates.filter((c: any) => !c.is_me);
+
+  // Tiebreaker — scores were equal, explain what broke the tie
+  if (bd.tiebreaker_used && me.is_winner) {
+    if (bd.tiebreaker_reason === 'no_prior_assignments')
+      reasons.push('All members had equal workloads — you were selected because you haven\'t been assigned a task yet');
+    else if (bd.tiebreaker_reason === 'least_recently_assigned')
+      reasons.push('All members had equal workloads — you were selected because you haven\'t had a task assigned in the longest time');
+    else
+      reasons.push('All members had equal workloads — you were selected as the most recently joined member');
+    return reasons;
+  }
+
+  // Workload
+  const avgOtherTasks = others.length
+    ? others.reduce((s: number, c: any) => s + (c.components?.tasks_score ?? comp.tasks_score), 0) / others.length
+    : comp.tasks_score;
+  if (comp.tasks_score < avgOtherTasks * 0.9)
+    reasons.push('You\'ve completed fewer tasks than others in the group recently');
+  else if (comp.tasks_score <= avgOtherTasks * 1.1)
+    reasons.push('Your workload is similar to the rest of the group');
+
+  // Time burden
+  const avgOtherTime = others.length
+    ? others.reduce((s: number, c: any) => s + (c.components?.time_score ?? comp.time_score), 0) / others.length
+    : comp.time_score;
+  if (comp.time_score < avgOtherTime * 0.85)
+    reasons.push('You\'ve spent less time on tasks than others recently');
+
+  // Preference
+  if (comp.pref_multiplier <= 0.85)
+    reasons.push('You marked this type of task as preferred');
+  else if (comp.pref_multiplier >= 1.15)
+    reasons.push('Note: you marked this type of task as something to avoid');
+
+  // History affinity
+  if (comp.affinity_multiplier <= 0.9)
+    reasons.push('You have a strong completion history with this task');
+  else if (comp.affinity_multiplier >= 1.1)
+    reasons.push('Others tend to complete this task more consistently than you');
+
+  // Calendar
+  if (comp.calendar_penalty === 0)
+    reasons.push('Your calendar is free during the task window');
+  else if (comp.calendar_penalty >= 25)
+    reasons.push('You have some calendar conflicts during the task window — still the best available option');
+
+  return reasons;
+}
 
 const memberNameMap = computed(() => {
   const m: Record<string, string> = {};
@@ -1000,6 +1397,25 @@ const memberNameMap = computed(() => {
 const matrixSorted = computed(() => {
   if (!assignmentMatrix.value) return [];
   return Object.entries(assignmentMatrix.value).sort((a, b) => (a[1] as number) - (b[1] as number));
+});
+
+const fairnessRows = computed(() => {
+  const dist = groupStats.value?.fairness_distribution ?? [];
+  if (!dist.length) return [];
+  const totalPoints = dist.reduce((s: number, r: any) => s + r.total_points, 0);
+  const fairShare = 100 / dist.length;
+  return dist
+    .map((r: any) => {
+      const pointsShare = totalPoints > 0 ? (r.total_points / totalPoints) * 100 : fairShare;
+      const deviation = pointsShare - fairShare;
+      const absDev = Math.abs(deviation);
+      const status = absDev < fairShare * 0.15 ? 'fair'
+        : absDev < fairShare * 0.30 ? 'amber'
+        : deviation > 0 ? 'over'
+        : 'under';
+      return { ...r, pointsShare, deviation, fairShare, status };
+    })
+    .sort((a: any, b: any) => b.pointsShare - a.pointsShare);
 });
 
 // Marketplace
@@ -1065,9 +1481,11 @@ async function handleProofFile(event: Event) {
 
 // Proposal / suggestion form
 const showProposalForm = ref(false);
+const proposalVoting = ref<Record<number, boolean>>({});
 const proposalForm = ref({
   name: '', category: 'other', recurring_choice: 'none', recur_value: 3,
-  difficulty: 1, estimated_mins: 30, due_datetime: '', reason: '', loading: false,
+  difficulty: 1, estimated_mins: 30, due_datetime: '', reason: '',
+  vote_mode: false, loading: false,
 });
 
 // Per-proposal action state for optimistic loading
@@ -1092,8 +1510,8 @@ const rejectDialog = ref<{ show: boolean; proposalId: number | null; note: strin
 // Template form
 const showTemplateForm = ref(false);
 const templateForm = ref({
-  name: '', category: 'cleaning', recurring_choice: 'none', importance: 'core',
-  difficulty: 3, due_datetime: '', photo_proof_required: false,
+  name: '', category: 'cleaning', recurring_choice: 'none',
+  difficulty: 3, estimated_mins: 30, due_datetime: '', photo_proof_required: false,
   recur_value: 7, days_of_week: [] as string[], loading: false,
 });
 
@@ -1101,6 +1519,7 @@ const templateForm = ref({
 const settings = ref({
   loading: false, message: '', error: false,
 });
+const settingsName = ref('');
 
 // Context-aware invite role picker
 const inviteRoleLabel = computed(() => {
@@ -1146,10 +1565,6 @@ const categoryOptions = [
   { label: 'Other', value: 'other' },
 ];
 
-const importanceOptions = [
-  { label: 'Core', value: 'core' },
-  { label: 'Additional', value: 'additional' },
-];
 
 const templateOptions = computed(() =>
   templates.value.map(t => ({ label: t.name, value: t.id }))
@@ -1165,6 +1580,7 @@ async function loadAll() {
       taskApi.groupTasks(groupId),
     ]);
     group.value = gRes.data;
+    settingsName.value = gRes.data.name ?? '';
     members.value = mRes.data;
     tasks.value = tRes.data;
     // Set sensible default invite role based on group type
@@ -1351,24 +1767,44 @@ async function submitListMarketplace() {
   }
 }
 
-async function completeTask(id: number) {
+function openCompleteDialog(task: any) {
+  completeDialog.value = { show: true, task, photoFile: null, photoPreview: null, uploading: false, feedback: null };
+}
+
+function handleCompleteDialogPhoto(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  (event.target as HTMLInputElement).value = '';
+  completeDialog.value.photoFile = file;
+  completeDialog.value.photoPreview = URL.createObjectURL(file);
+}
+
+async function submitComplete() {
+  const d = completeDialog.value;
+  if (!d.task) return;
+  d.uploading = true;
   try {
-    await taskApi.complete(id, true);
-    tasks.value = (await taskApi.groupTasks(groupId)).data;
-    // Show preference nudge for the completed task
-    const completed = tasks.value.find((t: any) => t.id === id)
-      ?? (await taskApi.get(id)).data;
-    if (completed?.template_id) {
-      prefNudge.value = {
-        show: true,
-        templateId: completed.template_id,
-        taskName: completed.template_name ?? 'this task',
-        choice: null,
-        saving: false,
-      };
+    let photoProofUrl: string | undefined;
+    if (d.photoFile) {
+      const form = new FormData();
+      form.append('photo', d.photoFile);
+      const res = await api.post(`/api/tasks/${d.task.id}/upload-proof/`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      photoProofUrl = res.data.photo_url;
     }
+    await taskApi.complete(d.task.id, true, photoProofUrl ? { photo_proof_url: photoProofUrl } : undefined);
+    tasks.value = (await taskApi.groupTasks(groupId)).data;
+    if (d.feedback && d.task.template_id) {
+      try {
+        await api.put(`/api/task-templates/${d.task.template_id}/my-preference/`, { preference: d.feedback });
+      } catch { /* best-effort */ }
+    }
+    completeDialog.value.show = false;
   } catch (e: any) {
     error.value = e?.response?.data?.detail ?? 'Failed to complete task.';
+  } finally {
+    d.uploading = false;
   }
 }
 
@@ -1417,7 +1853,7 @@ async function submitProposal() {
   if (!proposalForm.value.due_datetime) { error.value = 'Please select a start date.'; return; }
   proposalForm.value.loading = true;
   try {
-    const { name, category, recurring_choice, recur_value, difficulty, estimated_mins, due_datetime, reason } = proposalForm.value;
+    const { name, category, recurring_choice, recur_value, difficulty, estimated_mins, due_datetime, reason, vote_mode } = proposalForm.value;
     await groupApi.createProposal(groupId, {
       payload: {
         name: name.trim(),
@@ -1429,14 +1865,29 @@ async function submitProposal() {
         next_due: new Date(due_datetime).toISOString(),
       },
       reason: reason.trim(),
+      vote_mode,
     });
     showProposalForm.value = false;
-    proposalForm.value = { name: '', category: 'other', recurring_choice: 'none', recur_value: 3, difficulty: 1, estimated_mins: 30, due_datetime: '', reason: '', loading: false };
+    proposalForm.value = { name: '', category: 'other', recurring_choice: 'none', recur_value: 3, difficulty: 1, estimated_mins: 30, due_datetime: '', reason: '', vote_mode: false, loading: false };
     await loadProposals();
   } catch (e: any) {
     error.value = e?.response?.data?.detail ?? 'Failed to submit suggestion.';
   } finally {
     proposalForm.value.loading = false;
+  }
+}
+
+async function castVote(p: any, choice: 'yes' | 'no' | 'abstain') {
+  proposalVoting.value[p.id] = true;
+  try {
+    const res = await groupApi.voteOnProposal(p.id, choice);
+    // Replace proposal in list with updated data from server
+    const idx = proposals.value.findIndex((x: any) => x.id === p.id);
+    if (idx !== -1) proposals.value[idx] = res.data;
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail ?? 'Failed to cast vote.';
+  } finally {
+    delete proposalVoting.value[p.id];
   }
 }
 
@@ -1507,11 +1958,14 @@ async function submitTemplate() {
   templateForm.value.loading = true;
   try {
     const { api } = await import('../services/api');
-    const { loading: _loading, due_datetime, ...rest } = templateForm.value;
+    const { loading: _loading, due_datetime, recur_value, days_of_week, ...rest } = templateForm.value;
     const next_due = new Date(due_datetime).toISOString();
-    const res = await api.post(`/api/groups/${groupId}/task-templates/`, { ...rest, next_due });
+    const payload: Record<string, any> = { ...rest, next_due };
+    if (rest.recurring_choice === 'every_n_days') payload.recur_value = recur_value;
+    if (rest.recurring_choice === 'custom') payload.days_of_week = days_of_week;
+    const res = await api.post(`/api/groups/${groupId}/task-templates/`, payload);
     showTemplateForm.value = false;
-    templateForm.value = { name: '', category: 'cleaning', recurring_choice: 'none', importance: 'core', difficulty: 3, due_datetime: '', photo_proof_required: false, recur_value: 7, days_of_week: [], loading: false };
+    templateForm.value = { name: '', category: 'cleaning', recurring_choice: 'none', difficulty: 3, estimated_mins: 30, due_datetime: '', photo_proof_required: false, recur_value: 7, days_of_week: [], loading: false };
     const created = res.data.occurrences_created ?? 0;
     if (created > 0) {
       tasks.value = (await (await import('../services/api')).taskApi.groupTasks(groupId)).data;
@@ -1529,7 +1983,8 @@ async function saveSettings() {
   settings.value.loading = true;
   settings.value.message = '';
   try {
-    await groupApi.settings(groupId, { name: group.value?.name ?? '' });
+    const res = await groupApi.settings(groupId, { name: settingsName.value.trim() || group.value?.name });
+    group.value = { ...group.value, name: res.data.name };
     settings.value.message = 'Settings saved.';
     settings.value.error = false;
   } catch (e: any) {
@@ -1649,10 +2104,11 @@ function statusChipClass(status: string) {
 
 function proposalChipClass(state: string) {
   const map: Record<string, string> = {
-    pending: 'cs-chip--pending',
+    pending:  'cs-chip--pending',
+    voting:   'cs-chip--pending',
     approved: 'cs-chip--done',
     rejected: 'cs-chip--overdue',
-    expired: 'cs-chip--snoozed',
+    expired:  'cs-chip--snoozed',
   };
   return map[state] ?? 'cs-chip--snoozed';
 }
@@ -1686,12 +2142,36 @@ onMounted(() => {
       m.all_read = nonSenderCount > 0 && m.read_by.length >= nonSenderCount;
     });
   });
+  socketSvc.onTaskUpdate((data) => {
+    if (data.subtype === 'marketplace_claimed' && data.listing_id != null) {
+      marketplaceListings.value = marketplaceListings.value.filter(l => l.id !== data.listing_id);
+    }
+    if (data.subtype === 'task_updated' && String(data.group_id) === String(groupId)) {
+      loadTasks();
+      loadSwaps();
+      loadMarketplace();
+    }
+    if (data.subtype === 'proposal_updated' && String(data.group_id) === String(groupId)) {
+      loadProposals();
+    }
+  });
   socketSvc.connect();
 });
 onUnmounted(() => socketSvc.disconnect());
 </script>
 
 <style scoped>
+.cs-link-btn {
+  background: none;
+  border: none;
+  color: var(--cs-primary);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+.cs-link-btn:hover { opacity: 0.8; }
+
 .cs-chat-messages {
   height: 320px;
   overflow-y: auto;

@@ -423,8 +423,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  max-width: 860px;
-  padding: 0 24px;
+  padding: 0 32px;
 }
 
 .chatbot-header {
@@ -551,7 +550,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: 70%;
+  max-width: 80%;
 }
 .chatbot-msg--user .chatbot-msg-body { align-items: flex-end; }
 .chatbot-msg--user .chatbot-bubble {

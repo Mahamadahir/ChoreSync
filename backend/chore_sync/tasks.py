@@ -23,10 +23,6 @@ def send_verification_email_task(user_id: int) -> None:
     svc.start_email_verification(user)
 
 
-# ------------------------------------------------------------------ #
-#  Step 7: Periodic tasks
-# ------------------------------------------------------------------ #
-
 @shared_task
 def confirm_suggested_assignment(occurrence_id: int) -> dict:
     """Auto-confirm a streak suggestion if the user has not responded within the window.
@@ -274,25 +270,29 @@ def dispatch_deadline_reminders() -> dict:
 @shared_task
 def mark_overdue_tasks() -> dict:
     """Mark pending tasks past their deadline as overdue and notify assignees."""
+    from django.db import transaction
     from django.utils import timezone
     from chore_sync.models import TaskOccurrence
+    from chore_sync.services.notification_service import NotificationService
 
     now = timezone.now()
-    overdue = TaskOccurrence.objects.select_related('template', 'assigned_to').filter(
-        status='pending',
-        deadline__lt=now,
-        assigned_to__isnull=False,
-    )
-
-    from chore_sync.services.notification_service import NotificationService
     nsvc = NotificationService()
 
-    occurrences = list(overdue)
-    ids_to_update = [o.id for o in occurrences]
-
-    # Atomically mark overdue BEFORE notifying so a second concurrent worker
-    # sees status='overdue' and skips these rows entirely.
-    TaskOccurrence.objects.filter(id__in=ids_to_update).update(status='overdue')
+    with transaction.atomic():
+        occurrences = list(
+            TaskOccurrence.objects
+            .select_related('template', 'assigned_to')
+            .select_for_update(skip_locked=True)
+            .filter(
+                status='pending',
+                deadline__lt=now,
+                assigned_to__isnull=False,
+            )
+        )
+        if occurrences:
+            TaskOccurrence.objects.filter(
+                id__in=[o.id for o in occurrences]
+            ).update(status='overdue')
 
     for occurrence in occurrences:
         nsvc.emit_notification(
@@ -326,7 +326,7 @@ def cleanup_expired_swaps() -> dict:
 
 @shared_task
 def recalculate_leaderboard() -> dict:
-    """Recalculate UserStats totals from TaskOccurrence aggregates for all households."""
+    """Recalculate UserStats totals from TaskOccurrence aggregates for all groups."""
     from django.db.models import Count, Sum
     from chore_sync.models import Group, TaskOccurrence, UserStats
 
@@ -345,7 +345,7 @@ def recalculate_leaderboard() -> dict:
                 total_points=Sum('points_earned'),
             )
 
-            stats, _ = UserStats.objects.get_or_create(user=user, household=group)
+            stats, _ = UserStats.objects.get_or_create(user=user, group=group)
             stats.total_tasks_completed = agg['total_completed'] or 0
             stats.total_points = agg['total_points'] or 0
             stats.save(update_fields=['total_tasks_completed', 'total_points'])
@@ -362,10 +362,6 @@ def evaluate_badges(user_id: str, group_id: str) -> dict:
     awarded = GamificationService().evaluate_badges(user_id=user_id, group_id=group_id)
     return {'badges_awarded': len(awarded), 'badges': awarded}
 
-
-# ------------------------------------------------------------------ #
-#  Step 17: Google Calendar sync tasks
-# ------------------------------------------------------------------ #
 
 @shared_task(bind=True, max_retries=8, default_retry_delay=120)
 def initial_google_sync_task(self, calendar_id: int) -> dict:
@@ -402,14 +398,16 @@ def initial_google_sync_task(self, calendar_id: int) -> dict:
     svc = GoogleCalendarService(user=cal.user)
 
     try:
-        # Monthly chunking from checkpoint (or year 2000) up to today.
+        # Monthly chunking: 2 years back → 2 years ahead.
         # Each successfully processed month advances the checkpoint so that a
         # retry or crash can resume rather than restart from scratch.
-        checkpoint = sync_state.checkpoint_date or datetime.date(2000, 1, 1)
         today = timezone.now().date()
+        sync_start = today.replace(year=today.year - 2, month=1, day=1)
+        sync_end = today.replace(year=today.year + 2, month=12, day=31)
+        checkpoint = sync_state.checkpoint_date or sync_start
 
         current = checkpoint
-        while current <= today:
+        while current <= sync_end:
             # Compute the start of the next calendar month.
             if current.month == 12:
                 next_month = current.replace(year=current.year + 1, month=1, day=1)
@@ -420,7 +418,7 @@ def initial_google_sync_task(self, calendar_id: int) -> dict:
                 current.year, current.month, current.day,
                 tzinfo=datetime.timezone.utc,
             ).isoformat()
-            chunk_end = min(next_month, today + datetime.timedelta(days=1))
+            chunk_end = min(next_month, sync_end + datetime.timedelta(days=1))
             time_max = datetime.datetime(
                 chunk_end.year, chunk_end.month, chunk_end.day,
                 tzinfo=datetime.timezone.utc,
@@ -429,7 +427,11 @@ def initial_google_sync_task(self, calendar_id: int) -> dict:
             try:
                 svc._sync_chunk(cal, sync_state, time_min=time_min, time_max=time_max)
             except HttpError as exc:
-                if exc.resp is not None and exc.resp.status == 429:
+                status = exc.resp.status if exc.resp is not None else None
+                is_rate_limit = status in (429, 403) and (
+                    status == 429 or 'rateLimitExceeded' in str(exc) or 'userRateLimitExceeded' in str(exc)
+                )
+                if is_rate_limit:
                     # Rate limited: persist checkpoint and retry with back-off.
                     sync_state.checkpoint_date = current
                     sync_state.save(update_fields=['checkpoint_date'])
@@ -451,9 +453,10 @@ def initial_google_sync_task(self, calendar_id: int) -> dict:
 
         svc.ensure_watch_channel(cal)
 
-        # Notify the user that their calendar has finished syncing.
+        # Notify the user and push an SSE event so the calendar view reloads automatically.
         try:
             from chore_sync.services.notification_service import NotificationService
+            from chore_sync import sse as sse_module
             NotificationService().emit_notification(
                 recipient_id=str(cal.user_id),
                 notification_type="calendar_sync_complete",
@@ -461,6 +464,7 @@ def initial_google_sync_task(self, calendar_id: int) -> dict:
                 content=f'"{cal.name}" finished syncing with Google Calendar.',
                 action_url="/calendar",
             )
+            sse_module.publish(cal.user_id, {"type": "calendar_sync", "calendar_id": cal.id})
         except Exception:
             pass  # Non-critical — don't fail the task if notification creation fails
 
@@ -473,10 +477,6 @@ def initial_google_sync_task(self, calendar_id: int) -> dict:
         sync_state.save(update_fields=['paused', 'active_task_id'])
         raise
 
-
-# ------------------------------------------------------------------ #
-#  Step 17e: Periodic calendar maintenance jobs
-# ------------------------------------------------------------------ #
 
 @shared_task
 def renew_google_watch_channels() -> dict:
@@ -554,10 +554,6 @@ def catchup_google_calendar_sync() -> dict:
     return {'synced': synced, 'failed': failed}
 
 
-# ------------------------------------------------------------------ #
-#  Step 14: Outlook Calendar sync tasks
-# ------------------------------------------------------------------ #
-
 @shared_task(bind=True, max_retries=5, default_retry_delay=60)
 def initial_outlook_sync_task(self, calendar_id: int) -> dict:
     """
@@ -580,15 +576,49 @@ def initial_outlook_sync_task(self, calendar_id: int) -> dict:
     try:
         svc = OutlookCalendarService(user=cal.user)
         count = svc.sync_events(calendar=cal)
+        try:
+            from chore_sync.services.notification_service import NotificationService
+            from chore_sync import sse as sse_module
+            NotificationService().emit_notification(
+                recipient_id=str(cal.user_id),
+                notification_type="calendar_sync_complete",
+                title="Calendar synced",
+                content=f'"{cal.name}" finished syncing with Outlook.',
+                action_url="/calendar",
+            )
+            sse_module.publish(cal.user_id, {"type": "calendar_sync", "calendar_id": cal.id})
+        except Exception:
+            pass
         return {'status': 'complete', 'calendar_id': calendar_id, 'events_synced': count}
     except Exception as exc:
-        import requests as req_lib
         # Retry on 429 or 503 with back-off.
         status_code = getattr(getattr(exc, 'response', None), 'status_code', None)
         if status_code in (429, 503):
             retries = self.request.retries
             backoff = 60 * (2 ** retries)
             raise self.retry(exc=exc, countdown=backoff)
+        raise
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def incremental_outlook_sync_task(self, calendar_id: int) -> dict:
+    """Incremental delta sync for an Outlook calendar, triggered by Graph webhooks."""
+    from chore_sync.models import Calendar
+    from chore_sync.services.outlook_calendar_service import OutlookCalendarService
+    from chore_sync import sse as sse_module
+
+    cal = Calendar.objects.select_related('user').filter(id=calendar_id).first()
+    if not cal:
+        return {'error': 'calendar_not_found', 'calendar_id': calendar_id}
+    try:
+        svc = OutlookCalendarService(user=cal.user)
+        count = svc.sync_events(calendar=cal)
+        sse_module.publish(cal.user_id, {"type": "calendar_sync", "calendar_id": cal.id})
+        return {'status': 'complete', 'calendar_id': calendar_id, 'events_synced': count}
+    except Exception as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', None)
+        if status_code in (429, 503):
+            raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries))
         raise
 
 
@@ -610,15 +640,15 @@ def renew_outlook_subscriptions() -> dict:
         Q(subscription_expires_at__lt=threshold) | Q(subscription_expires_at__isnull=True)
     )
 
+    from django.conf import settings as _s
+    if not getattr(_s, 'BACKEND_BASE_URL', ''):
+        return {'renewed': 0}
+
     renewed = 0
     for sync_state in due:
         cal = sync_state.calendar
         if not cal or not cal.user:
             continue
-        # Only renew if BACKEND_BASE_URL is configured (webhooks need a public URL)
-        from django.conf import settings as _s
-        if not getattr(_s, 'BACKEND_BASE_URL', ''):
-            break
         try:
             svc = OutlookCalendarService(user=cal.user)
             svc.renew_subscription(cal)
@@ -669,16 +699,45 @@ def refresh_outlook_tokens() -> dict:
 
 
 @shared_task
+def close_expired_vote_windows() -> dict:
+    """Close voting-mode proposals whose deadline has passed without a majority. Runs every 15 min."""
+    from django.utils import timezone
+    from chore_sync.models import TaskProposal
+    from chore_sync.services.proposal_service import ProposalService
+
+    expired_ids = list(
+        TaskProposal.objects.filter(
+            state='voting',
+            vote_deadline__lte=timezone.now(),
+        ).values_list('id', flat=True)
+    )
+
+    svc = ProposalService()
+    closed = 0
+    failed = 0
+    for pid in expired_ids:
+        try:
+            svc.close_vote_window(proposal_id=pid)
+            closed += 1
+        except Exception:
+            logger.exception('close_expired_vote_windows: failed for proposal_id=%s', pid)
+            failed += 1
+
+    return {'closed': closed, 'failed': failed}
+
+
+@shared_task
 def generate_smart_suggestions() -> dict:
     """Daily at 08:00 — generate personalised smart suggestions for all active groups."""
     from chore_sync.models import Group
     from chore_sync.services.smart_suggestion_service import SmartSuggestionService
 
     svc = SmartSuggestionService()
-    groups = Group.objects.all()
     total = 0
+    processed = 0
     failed = 0
-    for group in groups:
+    for group in Group.objects.all():
+        processed += 1
         try:
             total += svc.generate_for_group(group)
         except Exception:
@@ -686,7 +745,7 @@ def generate_smart_suggestions() -> dict:
                 "generate_smart_suggestions: failed for group_id=%s", group.id
             )
             failed += 1
-    return {'groups_processed': groups.count(), 'suggestions_created': total, 'failed': failed}
+    return {'groups_processed': processed, 'suggestions_created': total, 'failed': failed}
 
 
 @shared_task
@@ -744,3 +803,11 @@ def catchup_outlook_calendar_sync() -> dict:
             failed += 1
 
     return {'synced': synced, 'failed': failed}
+
+
+@shared_task
+def flush_expired_jwt_tokens():
+    """Prune expired entries from the JWT blacklist/outstanding token tables."""
+    from rest_framework_simplejwt.token_blacklist.management.commands.flushexpiredtokens import Command
+    Command().handle()
+    return 'flushed'

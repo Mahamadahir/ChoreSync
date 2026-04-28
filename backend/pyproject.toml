@@ -10,7 +10,9 @@ requires-python = ">=3.11"
 dependencies = [
      "django>=5.1.0",
      "channels>=4.0.0",
-     "daphne>=4.0.0"
+     "daphne>=4.0.0",
+     "django-celery-results>=2.5.0",
+     "django-auditlog>=3.0.0",
 ]
 
 [project.optional-dependencies]

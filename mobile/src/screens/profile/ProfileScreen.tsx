@@ -12,6 +12,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Linking,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -155,13 +156,15 @@ export default function ProfileScreen() {
     .map((w: string) => w[0]?.toUpperCase() ?? '')
     .join('');
 
-  // Hydrate calendar connection status from backend on mount
+  // Hydrate calendar connection status from backend on mount.
+  // Uses /api/calendar/status/ (OAuth credential check) not /api/calendars/
+  // (Calendar rows) so a stale row without a valid token doesn't show as connected.
   useEffect(() => {
-    api.get('/api/calendars/').then((res) => {
-      const cals: { provider: string }[] = Array.isArray(res.data) ? res.data : [];
-      setGoogleConnected(cals.some((c) => c.provider === 'google'));
-      setOutlookConnected(cals.some((c) => c.provider === 'outlook'));
-    }).catch(() => {});
+    api.get<{ google: { connected: boolean }; outlook: { connected: boolean } }>('/api/calendar/status/')
+      .then((res) => {
+        setGoogleConnected(res.data?.google?.connected ?? false);
+        setOutlookConnected(res.data?.outlook?.connected ?? false);
+      }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -567,6 +570,15 @@ export default function ProfileScreen() {
           >
             <Text style={styles.logoutBtnText}>Log Out</Text>
           </TouchableOpacity>
+          <View style={styles.legalRow}>
+            <TouchableOpacity onPress={() => Linking.openURL('https://choresync-app.mahamadahir.com/privacy')}>
+              <Text style={styles.legalLink}>Privacy Policy</Text>
+            </TouchableOpacity>
+            <Text style={styles.legalDot}>·</Text>
+            <TouchableOpacity onPress={() => Linking.openURL('https://choresync-app.mahamadahir.com/terms')}>
+              <Text style={styles.legalLink}>Terms of Service</Text>
+            </TouchableOpacity>
+          </View>
           <Text style={styles.versionText}>
             CHORESYNC VERSION {Constants.expoConfig?.version ?? '1.0.0'}
           </Text>
@@ -1051,6 +1063,23 @@ const styles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans-Bold',
     fontSize: 16,
     color: C.primary,
+  },
+  legalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 14,
+  },
+  legalLink: {
+    fontFamily: 'PlusJakartaSans-Medium',
+    fontSize: 12,
+    color: C.onSurfaceVariant,
+    opacity: 0.75,
+  },
+  legalDot: {
+    fontSize: 12,
+    color: C.onSurfaceVariant,
+    opacity: 0.4,
   },
   versionText: {
     fontFamily: 'PlusJakartaSans-Bold',

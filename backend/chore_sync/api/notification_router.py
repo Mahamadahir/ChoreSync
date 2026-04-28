@@ -70,6 +70,16 @@ class NotificationReadAPIView(APIView):
         return Response(_serialize(notification))
 
 
+class NotificationReadAllAPIView(APIView):
+    """POST /api/notifications/read-all/ — mark every unread notification as read."""
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        count = _svc.mark_all_read(actor_id=str(request.user.id))
+        return Response({'marked_read': count})
+
+
 class NotificationDismissAPIView(APIView):
     """POST /api/notifications/{pk}/dismiss/ — dismiss a notification."""
     authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]

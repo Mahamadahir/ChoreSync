@@ -13,6 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from chore_sync.api.views import CsrfExemptSessionAuthentication
+from chore_sync.models import AuthEvent
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from chore_sync.models import Calendar, OutlookCalendarSync
 from chore_sync.services.outlook_calendar_service import OutlookCalendarService
@@ -74,7 +75,9 @@ class OutlookCalendarCallbackAPIView(APIView):
             User = get_user_model()
             user = User.objects.get(pk=user_id)
             svc = OutlookCalendarService(user)
-            svc.exchange_code(code, code_verifier=code_verifier)
+            cred = svc.exchange_code(code, code_verifier=code_verifier)
+            AuthEvent.log_from_request('microsoft_calendar_connected', request, user=user,
+                          account_email=getattr(cred, 'account_email', ''))
             if is_mobile:
                 return redirect(f"{mobile_redirect_uri}?provider=outlook")
             return redirect(f"{frontend_url}/calendar/outlook/select?connected=1")
@@ -139,6 +142,7 @@ class OutlookCalendarSelectAPIView(APIView):
 
         selected_ids = []
         queued_ids = []
+        sync_calendar_ids = []
         for item in items:
             ext_id = item.get("id")
             if not ext_id:
@@ -162,11 +166,15 @@ class OutlookCalendarSelectAPIView(APIView):
             selected_ids.append(cal.external_id)
 
             if created or not cal.last_synced_at:
-                initial_outlook_sync_task.apply_async(
-                    args=[cal.id],
-                    queue="calendar_sync",
-                )
+                sync_calendar_ids.append(cal.id)
                 queued_ids.append(cal.external_id)
+
+        if sync_calendar_ids:
+            from celery import chain as celery_chain
+            celery_chain(
+                initial_outlook_sync_task.si(cal_id).set(queue='calendar_sync')
+                for cal_id in sync_calendar_ids
+            ).apply_async()
 
         # If the user designated an Outlook calendar as task writeback, clear is_task_writeback
         # from all other calendars for this user (including the internal one).
@@ -231,27 +239,30 @@ class OutlookCalendarWebhookAPIView(APIView):
                     logger.warning("Outlook webhook: clientState mismatch — ignoring notification")
                     return Response(status=status.HTTP_401_UNAUTHORIZED)
 
-        # Queue an incremental sync for each affected calendar
-        from chore_sync.tasks import initial_outlook_sync_task
+        # Queue an incremental delta sync for each affected calendar
+        from chore_sync.tasks import incremental_outlook_sync_task
 
+        seen_cal_ids = set()
         for notif in notifications:
             # resource looks like "/me/calendars/<calendarId>/events"
             resource = notif.get("resource", "")
-            # Try to find the matching Calendar row by external_id
             parts = resource.split("/")
             # Expected: ['', 'me', 'calendars', '<id>', 'events']
             if len(parts) >= 4 and parts[2] == "calendars":
                 ext_cal_id = parts[3]
+                if ext_cal_id in seen_cal_ids:
+                    continue
                 cal = Calendar.objects.filter(
                     provider="microsoft",
                     external_id=ext_cal_id,
                 ).first()
                 if cal:
-                    initial_outlook_sync_task.apply_async(
+                    seen_cal_ids.add(ext_cal_id)
+                    incremental_outlook_sync_task.apply_async(
                         args=[cal.id],
                         queue="calendar_sync",
                     )
-                    logger.debug("Outlook webhook: queued sync for calendar %s", cal.id)
+                    logger.debug("Outlook webhook: queued incremental sync for calendar %s", cal.id)
 
         # Microsoft expects a quick 202 Accepted
         return Response(status=status.HTTP_202_ACCEPTED)

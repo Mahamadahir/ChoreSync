@@ -25,8 +25,10 @@ import GroupSettingsScreen from '../screens/groups/GroupSettingsScreen';
 import TaskTemplateDetailScreen from '../screens/groups/TaskTemplateDetailScreen';
 import TaskAuthorScreen from '../screens/groups/TaskAuthorScreen';
 import InviteMemberScreen from '../screens/groups/InviteMemberScreen';
+import InvitationScreen from '../screens/groups/InvitationScreen';
 import MarketplaceScreen from '../screens/groups/MarketplaceScreen';
 import ProposalsScreen from '../screens/groups/ProposalsScreen';
+import AssignmentHistoryScreen from '../screens/groups/AssignmentHistoryScreen';
 import AssistantScreen from '../screens/assistant/AssistantScreen';
 import CalendarScreen from '../screens/calendar/CalendarScreen';
 import ProfileScreen from '../screens/profile/ProfileScreen';
@@ -66,6 +68,8 @@ function GroupsStackNavigator() {
       <GroupsStack.Screen name="InviteMember" component={InviteMemberScreen} />
       <GroupsStack.Screen name="Marketplace" component={MarketplaceScreen} />
       <GroupsStack.Screen name="Proposals" component={ProposalsScreen} />
+      <GroupsStack.Screen name="Invitation" component={InvitationScreen} />
+      <GroupsStack.Screen name="AssignmentHistory" component={AssignmentHistoryScreen} />
     </GroupsStack.Navigator>
   );
 }

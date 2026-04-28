@@ -8,8 +8,9 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
+from rest_framework_simplejwt.views import TokenRefreshView as _BaseTokenRefreshView, TokenVerifyView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 
 from django.conf import settings
 
@@ -64,16 +65,20 @@ class JWTObtainTokenAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        from chore_sync.models import AuthEvent
         try:
             user, user_dto = AccountService().authenticate(
                 identifier=identifier,
                 password=password,
             )
         except InvalidCredentials as exc:
+            AuthEvent.log_from_request('login_failed', request, email=identifier, client='mobile')
             return Response({'detail': str(exc)}, status=status.HTTP_401_UNAUTHORIZED)
         except InactiveAccount as exc:
+            AuthEvent.log_from_request('login_failed', request, email=identifier, client='mobile', reason='inactive')
             return Response({'detail': str(exc)}, status=status.HTTP_403_FORBIDDEN)
 
+        AuthEvent.log_from_request('login_success', request, user=user, client='mobile')
         refresh = RefreshToken.for_user(user)
         # Stamp extra claims
         refresh['email'] = user.email
@@ -123,18 +128,23 @@ class GoogleMobileLoginAPIView(APIView):
             return Response({'detail': 'id_token is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         mobile_client_ids = getattr(settings, 'GOOGLE_MOBILE_CLIENT_IDS', [])
+        from chore_sync.models import AuthEvent
         try:
             user, _ = AccountService().sign_in_with_google(
                 id_token=id_token_str,
                 extra_audiences=mobile_client_ids,
             )
         except (InvalidCredentials, RegistrationError) as exc:
+            AuthEvent.log_from_request('login_failed', request, provider='google', client='mobile', reason=str(exc))
             return Response({'detail': str(exc)}, status=status.HTTP_401_UNAUTHORIZED)
         except InactiveAccount as exc:
+            AuthEvent.log_from_request('login_failed', request, provider='google', client='mobile', reason='inactive')
             return Response({'detail': str(exc)}, status=status.HTTP_403_FORBIDDEN)
         except Exception as exc:
+            AuthEvent.log_from_request('login_failed', request, provider='google', client='mobile', reason=str(exc))
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        AuthEvent.log_from_request('google_sso_login', request, user=user, client='mobile')
         return Response(_jwt_response(user), status=status.HTTP_200_OK)
 
 
@@ -155,16 +165,42 @@ class MicrosoftMobileLoginAPIView(APIView):
         if not id_token_str:
             return Response({'detail': 'id_token is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        from chore_sync.models import AuthEvent
         try:
             user, _ = AccountService().sign_in_with_microsoft(id_token=id_token_str)
         except (InvalidCredentials, RegistrationError) as exc:
+            AuthEvent.log_from_request('login_failed', request, provider='microsoft', client='mobile', reason=str(exc))
             return Response({'detail': str(exc)}, status=status.HTTP_401_UNAUTHORIZED)
         except InactiveAccount as exc:
+            AuthEvent.log_from_request('login_failed', request, provider='microsoft', client='mobile', reason='inactive')
             return Response({'detail': str(exc)}, status=status.HTTP_403_FORBIDDEN)
         except Exception as exc:
+            AuthEvent.log_from_request('login_failed', request, provider='microsoft', client='mobile', reason=str(exc))
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        AuthEvent.log_from_request('microsoft_sso_login', request, user=user, client='mobile')
         return Response(_jwt_response(user), status=status.HTTP_200_OK)
+
+
+class TokenRefreshView(_BaseTokenRefreshView):
+    """Wraps SimpleJWT's TokenRefreshView to write an audit entry on each refresh."""
+
+    def post(self, request, *args, **kwargs):
+        from chore_sync.models import AuthEvent
+        from rest_framework_simplejwt.tokens import UntypedToken
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            try:
+                # Decode the new access token to get the user id
+                access = response.data.get('access', '')
+                token = UntypedToken(access)
+                user_id = token.get('user_id')
+                from django.contrib.auth import get_user_model
+                user = get_user_model().objects.filter(pk=user_id).first()
+                AuthEvent.log_from_request('token_refreshed', request, user=user, client='mobile')
+            except Exception:
+                pass
+        return response
 
 
 # Re-export standard views so urls.py only imports from here

@@ -277,14 +277,15 @@ export default function NotificationsScreen() {
   const handleMarkAll = useCallback(async () => {
     if (markingAll) return;
     setMarkingAll(true);
-    const unread = notifications.filter((n) => !n.read);
-    storeMarkRead(-1); // handled below via direct state update
-    // Mark each unread via API in background
-    unread.forEach((n) => {
-      notificationService.markRead(n.id).catch(() => {});
-      storeMarkRead(n.id);
-    });
-    setMarkingAll(false);
+    // Optimistic update — mark all read in store immediately
+    notifications.filter((n) => !n.read).forEach((n) => storeMarkRead(n.id));
+    try {
+      await notificationService.markAllRead();
+    } catch {
+      // Silent — optimistic update stays; not worth reverting
+    } finally {
+      setMarkingAll(false);
+    }
   }, [notifications, storeMarkRead, markingAll]);
 
   const handleSwapAccept = useCallback(async (notif: Notification) => {
@@ -351,12 +352,22 @@ export default function NotificationsScreen() {
         return;
       }
 
-      // Group invite: open group detail on the people tab
-      if (type === 'group_invite' && notif.group_id) {
-        navigation.navigate('GroupsTab', {
-          screen: 'GroupDetail',
-          params: { groupId: notif.group_id, initialTab: 'people' },
-        });
+      // Group invite: open invitation accept/decline screen
+      if (type === 'group_invite') {
+        const inviteMatch = notif.action_url?.match(/^\/invitations\/(\d+)$/);
+        if (inviteMatch) {
+          navigation.navigate('GroupsTab', {
+            screen: 'Invitation',
+            params: { invitationId: Number(inviteMatch[1]) },
+          });
+          return;
+        }
+        if (notif.group_id) {
+          navigation.navigate('GroupsTab', {
+            screen: 'GroupDetail',
+            params: { groupId: notif.group_id, initialTab: 'people' },
+          });
+        }
         return;
       }
 

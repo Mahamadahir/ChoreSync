@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from chore_sync.models import (
     Badge, GroupMembership, TaskOccurrence,
-    User, UserBadge, UserStats,
+    UserBadge, UserStats,
 )
 
 
@@ -60,27 +60,19 @@ class GamificationService:
         Resets to 1 if the last completion was earlier than yesterday.
         Same-day completions don't double-increment the streak.
         """
-        user = User.objects.get(id=user_id)
         today = timezone.now().date()
         yesterday = today - timedelta(days=1)
 
-        if user.last_streak_date == yesterday:
-            user.on_time_streak_days += 1
-        elif user.last_streak_date != today:
-            user.on_time_streak_days = 1
+        stats, _ = UserStats.objects.get_or_create(user_id=user_id, group_id=group_id)
 
-        user.longest_on_time_streak_days = max(
-            user.longest_on_time_streak_days, user.on_time_streak_days
-        )
-        user.last_streak_date = today
-        user.save(update_fields=[
-            'on_time_streak_days', 'longest_on_time_streak_days', 'last_streak_date'
-        ])
+        if stats.last_streak_date == yesterday:
+            stats.current_streak_days += 1
+        elif stats.last_streak_date != today:
+            stats.current_streak_days = 1
 
-        stats, _ = UserStats.objects.get_or_create(user_id=user_id, household_id=group_id)
-        stats.current_streak_days = user.on_time_streak_days
-        stats.longest_streak_days = user.longest_on_time_streak_days
-        stats.save(update_fields=['current_streak_days', 'longest_streak_days'])
+        stats.longest_streak_days = max(stats.longest_streak_days, stats.current_streak_days)
+        stats.last_streak_date = today
+        stats.save(update_fields=['current_streak_days', 'longest_streak_days', 'last_streak_date'])
 
     # ------------------------------------------------------------------ #
     #  On-time completion rate
@@ -101,7 +93,7 @@ class GamificationService:
             completed_at__lt=F('deadline'),
         ).count()
 
-        stats, _ = UserStats.objects.get_or_create(user_id=user_id, household_id=group_id)
+        stats, _ = UserStats.objects.get_or_create(user_id=user_id, group_id=group_id)
         stats.on_time_completion_rate = round(on_time / total, 4) if total > 0 else 0.0
         stats.save(update_fields=['on_time_completion_rate'])
 
@@ -126,7 +118,7 @@ class GamificationService:
         """
         from chore_sync.models import Group
 
-        stats = UserStats.objects.filter(user_id=user_id, household_id=group_id).first()
+        stats = UserStats.objects.filter(user_id=user_id, group_id=group_id).first()
         if not stats:
             return []
 
@@ -144,7 +136,7 @@ class GamificationService:
 
         for badge in Badge.objects.all():
             if UserBadge.objects.filter(
-                user_id=user_id, badge=badge, household_id=group_id
+                user_id=user_id, badge=badge, group_id=group_id
             ).exists():
                 continue
 
@@ -197,7 +189,7 @@ class GamificationService:
 
             if earned:
                 _, created = UserBadge.objects.get_or_create(
-                    user_id=user_id, badge=badge, household=group
+                    user_id=user_id, badge=badge, group=group
                 )
                 if created:
                     from chore_sync.services.notification_service import NotificationService
@@ -224,7 +216,7 @@ class GamificationService:
             raise PermissionError("Not a member of this group.")
 
         stats_qs = (
-            UserStats.objects.filter(household_id=group_id)
+            UserStats.objects.filter(group_id=group_id)
             .select_related('user')
             .order_by('-total_points')
         )

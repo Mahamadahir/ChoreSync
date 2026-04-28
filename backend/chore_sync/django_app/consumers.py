@@ -159,6 +159,16 @@ class ChoreConsumer(AsyncWebsocketConsumer):
             'seen_at': event['seen_at'],
         }))
 
+    async def task_update_broadcast(self, event):
+        """Broadcast a lightweight task/marketplace state change to all household members."""
+        await self.send(text_data=json.dumps({
+            'type': 'task_update',
+            'subtype': event['subtype'],
+            'group_id': event.get('group_id'),
+            'occurrence_id': event.get('occurrence_id'),
+            'listing_id': event.get('listing_id'),
+        }))
+
     # ------------------------------------------------------------------ #
     #  Internal helpers
     # ------------------------------------------------------------------ #

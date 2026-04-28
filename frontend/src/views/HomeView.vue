@@ -137,11 +137,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { calendarService } from '../services/calendarService';
 import { statsApi, taskApi, notificationApi } from '../services/api';
+import { NotificationSocketService } from '../services/NotificationSocketService';
+
+const socketSvc = new NotificationSocketService();
 
 const authStore = useAuthStore();
 const router = useRouter();
@@ -338,6 +341,20 @@ onMounted(() => {
   }
 
   Promise.allSettled([loadStats(), loadTasks(), loadSuggestion(), loadCalendarStatus()]);
+  window.addEventListener('focus', loadCalendarStatus);
+
+  socketSvc.connect();
+  socketSvc.onTaskUpdate((data: any) => {
+    if (data.subtype === 'task_updated') {
+      loadTasks();
+      loadStats();
+    }
+  });
+});
+
+onUnmounted(() => {
+  socketSvc.disconnect();
+  window.removeEventListener('focus', loadCalendarStatus);
 });
 </script>
 
@@ -568,7 +585,7 @@ onMounted(() => {
 
 /* ── Integrations ────────────────────────────────────────── */
 .dash-integrations { padding: 18px 20px; }
-.dash-cal-btn { width: 100%; justify-content: flex-start; font-size: 13px; }
+.dash-cal-btn { justify-content: flex-start; font-size: 13px; }
 
 /* ── Responsive ──────────────────────────────────────────── */
 @media (max-width: 900px) {

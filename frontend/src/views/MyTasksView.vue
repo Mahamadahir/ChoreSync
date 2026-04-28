@@ -273,8 +273,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { taskApi, marketplaceApi } from '../services/api';
+import { NotificationSocketService } from '../services/NotificationSocketService';
+
+const socketSvc = new NotificationSocketService();
 
 type Task = {
   id: number;
@@ -493,6 +496,17 @@ function statusChipClass(status: string) {
 onMounted(() => {
   loadTasks();
   loadIncomingSwaps();
+  socketSvc.connect();
+  socketSvc.onTaskUpdate((data: any) => {
+    if (data.subtype === 'task_updated') {
+      loadTasks();
+      loadIncomingSwaps();
+    }
+  });
+});
+
+onUnmounted(() => {
+  socketSvc.disconnect();
 });
 </script>
 

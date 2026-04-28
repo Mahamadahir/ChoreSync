@@ -1,4 +1,4 @@
-"""DRF views for task suggestion and moderator approval endpoints."""
+"""DRF views for task suggestion, moderator approval, and group-vote endpoints."""
 from __future__ import annotations
 
 from rest_framework import status
@@ -11,6 +11,8 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from chore_sync.services.proposal_service import ProposalService
 
 _svc = ProposalService()
+
+AUTH = [CsrfExemptSessionAuthentication, JWTAuthentication]
 
 
 class GroupProposalListCreateAPIView(APIView):
@@ -29,7 +31,7 @@ class GroupProposalListCreateAPIView(APIView):
             )
         except PermissionError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_403_FORBIDDEN)
-        return Response([_serialize(p) for p in proposals])
+        return Response([_serialize(p, request.user.id) for p in proposals])
 
     def post(self, request, pk):
         payload = request.data.get('payload')
@@ -44,18 +46,19 @@ class GroupProposalListCreateAPIView(APIView):
                 group_id=str(pk),
                 payload=payload,
                 reason=request.data.get('reason', ''),
+                vote_mode=bool(request.data.get('vote_mode', False)),
             )
         except PermissionError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_403_FORBIDDEN)
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(_serialize(proposal), status=status.HTTP_201_CREATED)
+        return Response(_serialize(proposal, request.user.id), status=status.HTTP_201_CREATED)
 
 
 class ProposalApproveAPIView(APIView):
     """POST /api/proposals/{pk}/approve/ — moderator approves, optionally editing fields"""
-    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+    authentication_classes = AUTH
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
@@ -74,12 +77,12 @@ class ProposalApproveAPIView(APIView):
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(_serialize(proposal))
+        return Response(_serialize(proposal, request.user.id))
 
 
 class ProposalRejectAPIView(APIView):
     """POST /api/proposals/{pk}/reject/ — moderator rejects with a note"""
-    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+    authentication_classes = AUTH
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
@@ -95,14 +98,82 @@ class ProposalRejectAPIView(APIView):
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(_serialize(proposal))
+        return Response(_serialize(proposal, request.user.id))
+
+
+class ProposalVoteAPIView(APIView):
+    """
+    POST   /api/proposals/{pk}/vote/  — cast or update a vote
+    DELETE /api/proposals/{pk}/vote/  — retract a vote
+    """
+    authentication_classes = AUTH
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        choice = request.data.get('choice', '')
+        try:
+            vote = _svc.cast_vote(
+                proposal_id=int(pk),
+                voter_id=str(request.user.id),
+                choice=choice,
+            )
+        except PermissionError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Return the updated proposal so the client can refresh in one round-trip
+        from chore_sync.models import TaskProposal
+        proposal = TaskProposal.objects.select_related(
+            'proposed_by', 'approved_by', 'task_template'
+        ).get(id=pk)
+        return Response(_serialize(proposal, request.user.id))
+
+    def delete(self, request, pk):
+        try:
+            _svc.retract_vote(proposal_id=int(pk), voter_id=str(request.user.id))
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        from chore_sync.models import TaskProposal
+        proposal = TaskProposal.objects.select_related(
+            'proposed_by', 'approved_by', 'task_template'
+        ).get(id=pk)
+        return Response(_serialize(proposal, request.user.id))
 
 
 # ------------------------------------------------------------------ #
 #  Serialiser helper
 # ------------------------------------------------------------------ #
 
-def _serialize(p) -> dict:
+def _serialize(p, viewer_id=None) -> dict:
+    from django.utils import timezone
+    from chore_sync.models import TaskVote
+
+    # Vote counts — only revealed once the window is closed (blind voting)
+    vote_data: dict = {
+        'vote_mode': p.vote_mode,
+        'vote_deadline': p.vote_deadline.isoformat() if p.vote_deadline else None,
+        'is_vote_open': p.is_vote_open if p.vote_mode else False,
+        'my_vote': None,
+        'vote_counts': None,
+    }
+    if p.vote_mode:
+        votes_qs = TaskVote.objects.filter(proposal=p)
+        # Reveal tally only once the vote is closed
+        if not p.is_vote_open:
+            votes = list(votes_qs.values_list('choice', flat=True))
+            vote_data['vote_counts'] = {
+                'yes': votes.count('yes'),
+                'no': votes.count('no'),
+                'abstain': votes.count('abstain'),
+                'total': len(votes),
+            }
+        # Always show the viewer's own vote
+        if viewer_id:
+            own = votes_qs.filter(voter_id=viewer_id).values_list('choice', flat=True).first()
+            vote_data['my_vote'] = own
+
     return {
         'id': p.id,
         'state': p.state,
@@ -118,4 +189,5 @@ def _serialize(p) -> dict:
         'proposed_by_id': str(p.proposed_by_id) if p.proposed_by_id else None,
         'task_template_id': p.task_template_id,
         'task_template_name': p.task_template.name if p.task_template else None,
+        **vote_data,
     }

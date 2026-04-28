@@ -22,6 +22,9 @@ import GroupsView from './views/GroupsView.vue';
 import GroupDetailView from './views/GroupDetailView.vue';
 import MyTasksView from './views/MyTasksView.vue';
 import ChatbotView from './views/ChatbotView.vue';
+import InvitationView from './views/InvitationView.vue';
+import PrivacyView from './views/PrivacyView.vue';
+import TermsView from './views/TermsView.vue';
 import { Quasar } from 'quasar';
 import '@quasar/extras/material-icons/material-icons.css';
 import 'quasar/src/css/index.sass';
@@ -42,10 +45,13 @@ const routes: RouteRecordRaw[] = [
   { path: '/calendar/google/select', name: 'google-calendar-select', component: GoogleCalendarSelectView, meta: { requiresAuth: true } },
   { path: '/calendar/outlook/select', name: 'outlook-calendar-select', component: OutlookCalendarSelectView, meta: { requiresAuth: true } },
   { path: '/assistant', name: 'assistant', component: ChatbotView, meta: { requiresAuth: true } },
+  { path: '/invitations/:id', name: 'invitation', component: InvitationView, meta: { requiresAuth: true } },
   { path: '/forgot-password', name: 'forgot-password', component: ForgotPasswordView, meta: { requiresGuest: true } },
   { path: '/reset-password', name: 'reset-password', component: ResetPasswordView, meta: { requiresGuest: true } },
   { path: '/login/google', name: 'login-google', component: GoogleLoginView, meta: { requiresGuest: true } },
   { path: '/login/microsoft', name: 'login-microsoft', component: MicrosoftLoginView, meta: { requiresGuest: true } },
+  { path: '/privacy', name: 'privacy', component: PrivacyView },
+  { path: '/terms', name: 'terms', component: TermsView },
 ];
 
 const pinia = createPinia();

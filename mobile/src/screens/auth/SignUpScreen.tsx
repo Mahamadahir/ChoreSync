@@ -17,11 +17,13 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/types';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
-import { useAuthRequest, makeRedirectUri, ResponseType } from 'expo-auth-session';
+import { useAuthRequest, makeRedirectUri, ResponseType, exchangeCodeAsync } from 'expo-auth-session';
+import { useRef } from 'react';
 import { authService } from '../../services/authService';
 import { tokenStorage } from '../../services/tokenStorage';
 import { useAuthStore } from '../../stores/authStore';
 import { Palette as C } from '../../theme';
+import LegalFooter from '../../components/common/LegalFooter';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -60,14 +62,25 @@ export default function SignUpScreen() {
   const [ssoLoading, setSsoLoading]   = useState(false);
   const [error, setError]             = useState('');
 
-  // ── Google OAuth ──────────────────────────────────────────────────
-  const [, googleResponse, promptGoogle] = Google.useAuthRequest({
+  // ── Google OAuth (Authorization Code + PKCE, same as LoginScreen) ──
+  const _androidId = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '';
+  const _iosId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '';
+  const googleRedirectUri = Platform.select({
+    android: _androidId ? `${_androidId.split('.').reverse().join('.')}:/oauth2redirect` : undefined,
+    ios: _iosId ? `${_iosId.split('.').reverse().join('.')}:/oauth2redirect` : undefined,
+  }) ?? makeRedirectUri({ scheme: 'choresync' });
+
+  const [googleRequest, googleResponse, promptGoogle] = Google.useAuthRequest({
     clientId: process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? '',
     iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
     androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
-    responseType: ResponseType.IdToken,
-    usePKCE: false,
+    redirectUri: googleRedirectUri,
+    responseType: ResponseType.Code,
+    usePKCE: true,
+    scopes: ['openid', 'email', 'profile'],
+    shouldAutoExchangeCode: false,
   });
+  const googlePKCERef = useRef<{ codeVerifier?: string } | null>(null);
 
   // ── Microsoft OAuth ───────────────────────────────────────────────
   const msTenant = process.env.EXPO_PUBLIC_MICROSOFT_TENANT_ID ?? 'common';
@@ -87,13 +100,38 @@ export default function SignUpScreen() {
   );
 
   useEffect(() => {
-    if (googleResponse?.type === 'success') {
-      const idToken = googleResponse.params.id_token;
-      if (idToken) _handleSSOSignIn(() => authService.loginWithGoogle(idToken));
-      else setError('Google sign-in did not return a token.');
-    } else if (googleResponse?.type === 'error') {
-      setError('Google sign-in failed. Please try again.');
+    if (googleResponse?.type !== 'success') {
+      if (googleResponse?.type === 'error') setError('Google sign-in failed. Please try again.');
+      return;
     }
+    const code = googleResponse.params.code;
+    const clientId = Platform.select({
+      android: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+      ios: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+    }) ?? process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? '';
+    const codeVerifier = googlePKCERef.current?.codeVerifier ?? googleRequest?.codeVerifier;
+    setSsoLoading(true);
+    setError('');
+    exchangeCodeAsync(
+      {
+        clientId,
+        code,
+        redirectUri: googleRedirectUri,
+        extraParams: codeVerifier ? { code_verifier: codeVerifier } : undefined,
+      },
+      { tokenEndpoint: 'https://oauth2.googleapis.com/token' },
+    )
+      .then((tokenResponse) => {
+        const idToken = tokenResponse.idToken;
+        if (!idToken) { setError('Google sign-in did not return an ID token.'); setSsoLoading(false); return; }
+        return _handleSSOSignIn(() => authService.loginWithGoogle(idToken));
+      })
+      .catch((err: any) => {
+        const detail = err?.body?.error_description ?? err?.body?.error ?? err?.message ?? '';
+        setError(detail ? `Google: ${detail}` : 'Google sign-in failed. Please try again.');
+        setSsoLoading(false);
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [googleResponse]);
 
   useEffect(() => {
@@ -151,7 +189,10 @@ export default function SignUpScreen() {
     }
   }
 
-  function handleGoogleSSO() { promptGoogle(); }
+  function handleGoogleSSO() {
+    googlePKCERef.current = googleRequest ? { codeVerifier: googleRequest.codeVerifier } : null;
+    promptGoogle();
+  }
   function handleMicrosoftSSO() { promptMs(); }
 
   return (
@@ -364,6 +405,7 @@ export default function SignUpScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+      <LegalFooter />
     </SafeAreaView>
   );
 }

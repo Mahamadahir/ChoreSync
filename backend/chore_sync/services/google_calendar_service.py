@@ -104,11 +104,15 @@ class GoogleCalendarService:
             except Exception as exc:  # pragma: no cover - log and continue
                 logger.warning("Failed to decode id_token for email: %s", exc)
         secret_payload = self._creds_to_dict(creds)
+        import datetime as _dt
+        expires_at = creds.expiry
+        if expires_at and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=_dt.timezone.utc)
         cred, _ = ExternalCredential.objects.update_or_create(
             user=self.user,
             provider="google",
             account_email=account_email,
-            defaults={"secret": secret_payload},
+            defaults={"secret": secret_payload, "expires_at": expires_at},
         )
         return cred
 
@@ -232,8 +236,12 @@ class GoogleCalendarService:
                 if not start or not end:
                     continue
                 is_all_day = "T" not in start
-                start_dt = datetime.datetime.fromisoformat(start.replace("Z", "+00:00"))
-                end_dt = datetime.datetime.fromisoformat(end.replace("Z", "+00:00"))
+                if is_all_day:
+                    start_dt = datetime.datetime.fromisoformat(start).replace(tzinfo=datetime.timezone.utc)
+                    end_dt = datetime.datetime.fromisoformat(end).replace(tzinfo=datetime.timezone.utc)
+                else:
+                    start_dt = datetime.datetime.fromisoformat(start.replace("Z", "+00:00"))
+                    end_dt = datetime.datetime.fromisoformat(end.replace("Z", "+00:00"))
                 updated_str = item.get("updated")
                 updated_dt = None
                 if updated_str:
@@ -316,13 +324,20 @@ class GoogleCalendarService:
             events_result = service.events().list(**params).execute()
             items = events_result.get("items", [])
             for item in items:
+                if item.get("status") == "cancelled":
+                    Event.objects.filter(external_event_id=item.get("id"), calendar=cal).delete()
+                    continue
                 start = item.get("start", {}).get("dateTime") or item.get("start", {}).get("date")
                 end = item.get("end", {}).get("dateTime") or item.get("end", {}).get("date")
                 if not start or not end:
                     continue
                 is_all_day = "T" not in start
-                start_dt = datetime.datetime.fromisoformat(start.replace("Z", "+00:00"))
-                end_dt = datetime.datetime.fromisoformat(end.replace("Z", "+00:00"))
+                if is_all_day:
+                    start_dt = datetime.datetime.fromisoformat(start).replace(tzinfo=datetime.timezone.utc)
+                    end_dt = datetime.datetime.fromisoformat(end).replace(tzinfo=datetime.timezone.utc)
+                else:
+                    start_dt = datetime.datetime.fromisoformat(start.replace("Z", "+00:00"))
+                    end_dt = datetime.datetime.fromisoformat(end.replace("Z", "+00:00"))
                 updated_str = item.get("updated")
                 updated_dt = None
                 if updated_str:

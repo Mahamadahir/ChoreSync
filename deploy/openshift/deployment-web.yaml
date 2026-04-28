@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: choresync-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: choresync-web
+  template:
+    metadata:
+      labels:
+        app: choresync-web
+    spec:
+      containers:
+        - name: web
+          # Replace with your actual image after pushing to OpenShift's registry:
+          # oc get route default-route -n openshift-image-registry
+          image: image-registry.openshift-image-registry.svc:5000/choresync/choresync:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: choresync-secret
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health/
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: media
+              mountPath: /app/media
+      volumes:
+        - name: media
+          # Persistent volume for user-uploaded files (avatars etc.)
+          # Create the PVC first: oc apply -f pvc-media.yaml
+          persistentVolumeClaim:
+            claimName: choresync-media

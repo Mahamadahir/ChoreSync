@@ -14,7 +14,10 @@ from chore_sync.api.serializers import (
 )
 from chore_sync.api.views import CsrfExemptSessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from datetime import timedelta
+
 from django.db.models import Count
+from django.utils import timezone
 from chore_sync.models import GroupMembership, TaskOccurrence, UserStats
 from chore_sync.services.group_service import GroupOrchestrator
 from chore_sync.services.gamification_service import GamificationService
@@ -31,7 +34,7 @@ class GroupListCreateAPIView(APIView):
 
     def get(self, request):
         memberships = list(
-            GroupMembership.objects.filter(user=request.user).select_related('group')
+            GroupMembership.objects.filter(user=request.user, group__is_personal=False).select_related('group')
         )
         group_ids = [m.group_id for m in memberships]
 
@@ -76,7 +79,6 @@ class GroupListCreateAPIView(APIView):
             group = _svc.create_group(
                 owner=request.user,
                 name=serializer.validated_data['name'],
-                reassignment_rule=serializer.validated_data.get('reassignment_rule'),
                 group_type=serializer.validated_data.get('group_type', 'custom'),
             )
         except ValueError as exc:
@@ -123,7 +125,6 @@ class GroupDetailAPIView(APIView):
             "role": membership.role,
             "my_role": membership.role,
             "member_count": member_count,
-            "reassignment_rule": g.reassignment_rule,
             "group_type": g.group_type,
         })
 
@@ -163,8 +164,17 @@ class GroupMembersAPIView(APIView):
         user_ids = [m.user_id for m in memberships]
         stats_map = {
             s.user_id: s
-            for s in UserStats.objects.filter(user_id__in=user_ids, household_id=pk)
+            for s in UserStats.objects.filter(user_id__in=user_ids, group_id=pk)
         }
+        week_start = timezone.now() - timedelta(weeks=1)
+        week_counts = dict(
+            TaskOccurrence.objects.filter(
+                assigned_to_id__in=user_ids,
+                template__group_id=pk,
+                status='completed',
+                completed_at__gte=week_start,
+            ).values('assigned_to_id').annotate(n=Count('id')).values_list('assigned_to_id', 'n')
+        )
         data = []
         for m in memberships:
             stats = stats_map.get(m.user_id)
@@ -179,7 +189,7 @@ class GroupMembersAPIView(APIView):
                 "stats": {
                     "total_tasks_completed": stats.total_tasks_completed,
                     "total_points": stats.total_points,
-                    "tasks_completed_this_week": stats.tasks_completed_this_week,
+                    "tasks_completed_this_week": week_counts.get(m.user_id, 0),
                     "on_time_completion_rate": stats.on_time_completion_rate,
                     "current_streak_days": stats.current_streak_days,
                 } if stats else None,

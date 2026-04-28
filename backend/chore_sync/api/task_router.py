@@ -15,6 +15,8 @@ from chore_sync.api.views import CsrfExemptSessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from chore_sync.models import GroupMembership, TaskAssignmentHistory, TaskOccurrence, TaskSwap, TaskTemplate
 from chore_sync.services.task_lifecycle_service import TaskLifecycleService
+from django.utils import timezone as _tz
+from django.db import transaction as _tx
 
 _svc = TaskLifecycleService()
 
@@ -431,6 +433,235 @@ class TaskDeclineSuggestionAPIView(APIView):
         return Response(_serialize_occurrence(occurrence))
 
 
+def _format_breakdown(history: TaskAssignmentHistory | None, occ: TaskOccurrence, my_id: str) -> dict:
+    """Serialise a TaskAssignmentHistory row into the breakdown response shape.
+
+    Returns the same dict structure as the /assignment-breakdown/ endpoint so
+    callers (single-task and history-list) can share the logic.
+    """
+    base = {
+        "occurrence_id": occ.id,
+        "template_name": occ.template.name,
+        "template_id": occ.template_id,
+        "deadline": occ.deadline.isoformat() if occ.deadline else None,
+        "occurrence_status": occ.status,
+        "completed_at": occ.completed_at.isoformat() if occ.completed_at else None,
+    }
+
+    if occ.reassignment_reason == 'emergency' and (history is None or history.score_breakdown is None):
+        original_username = None
+        if occ.original_assignee_id:
+            from django.contrib.auth import get_user_model
+            orig = get_user_model().objects.filter(id=occ.original_assignee_id).values('username').first()
+            original_username = orig['username'] if orig else None
+        covered_by = occ.assigned_to.username if occ.assigned_to else None
+        return {
+            **base,
+            "breakdown_available": False,
+            "assigned_via": "emergency_cover",
+            "covered_by": covered_by,
+            "original_assignee": original_username,
+            "candidates": [],
+        }
+
+    if history is None or history.score_breakdown is None:
+        return {**base, "breakdown_available": False, "candidates": []}
+
+    bd = history.score_breakdown
+
+    if bd.get('assigned_via') == 'streak_suggestion':
+        return {
+            **base,
+            "breakdown_available": False,
+            "assigned_via": "streak_suggestion",
+            "assigned_to": occ.assigned_to.username if occ.assigned_to else None,
+            "candidates": [],
+        }
+
+    candidates = []
+    for c in bd.get('candidates', []):
+        uid = c['user_id']
+        entry: dict = {
+            "user_id": uid,
+            "username": c['username'],
+            "is_winner": uid == bd['winner_id'],
+            "final_score": round(c['final_score'] * 100),
+            "is_me": uid == my_id,
+        }
+        if uid == my_id:
+            entry["components"] = {
+                "stage1_score": round(c['stage1_score'] * 100),
+                "tasks_score": round(c.get('tasks_score', 0) * 100),
+                "time_score": round(c.get('time_score', 0) * 100),
+                "points_score": round(c.get('points_score', 0) * 100),
+                "pref_multiplier": c['pref_multiplier'],
+                "preference": c.get('preference'),
+                "affinity_multiplier": c['affinity_multiplier'],
+                "calendar_penalty": round(c['calendar_penalty'] * 100),
+            }
+        candidates.append(entry)
+
+    candidates.sort(key=lambda x: (not x['is_winner'], x['final_score']))
+
+    return {
+        **base,
+        "assigned_at": history.assigned_at.isoformat(),
+        "winner_id": bd['winner_id'],
+        "breakdown_available": True,
+        "tiebreaker_used": bd.get('tiebreaker_used', False),
+        "tiebreaker_reason": bd.get('tiebreaker_reason'),
+        "candidates": candidates,
+    }
+
+
+class MyAssignmentHistoryAPIView(APIView):
+    """GET /api/groups/{group_id}/my-assignment-history/
+
+    Returns the requesting user's assignment history for a group — most recent
+    first, capped at 50 entries. Each entry includes the same breakdown payload
+    as /api/tasks/{pk}/assignment-breakdown/ so BreakdownPanel can be reused.
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+
+    def get(self, request, group_id: str):
+        if not GroupMembership.objects.filter(user=request.user, group_id=group_id).exists():
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        my_id = str(request.user.id)
+
+        history_qs = (
+            TaskAssignmentHistory.objects
+            .filter(user=request.user, task_template__group_id=group_id)
+            .select_related('task_occurrence', 'task_occurrence__template')
+            .order_by('-assigned_at')[:50]
+        )
+
+        results = []
+        for h in history_qs:
+            occ = h.task_occurrence
+            if occ is None:
+                continue
+            results.append(_format_breakdown(h, occ, my_id))
+
+        return Response(results)
+
+
+class PersonalTaskCreateAPIView(APIView):
+    """POST /api/tasks/personal/ — create a one-off task in the user's personal group."""
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        name = (request.data.get('name') or '').strip()
+        if not name:
+            return Response({"detail": "name is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        membership = (
+            GroupMembership.objects
+            .filter(user=request.user, group__is_personal=True)
+            .select_related('group')
+            .first()
+        )
+        if membership is None:
+            return Response(
+                {"detail": "No personal group found for this user."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        personal_group = membership.group
+
+        # Parse deadline — default to end of today
+        deadline_raw = request.data.get('deadline')
+        if deadline_raw:
+            from django.utils.dateparse import parse_datetime
+            deadline = parse_datetime(deadline_raw)
+            if deadline is None:
+                return Response({"detail": "Invalid deadline format. Use ISO 8601."}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            today = _tz.now().date()
+            deadline = _tz.datetime(today.year, today.month, today.day, 23, 59, 0, tzinfo=_tz.utc)
+
+        estimated_mins = request.data.get('estimated_mins', 30)
+        details = request.data.get('details', '')
+        category = request.data.get('category', 'other')
+
+        with _tx.atomic():
+            template = TaskTemplate(
+                name=name,
+                details=details,
+                recurring_choice='none',
+                estimated_mins=estimated_mins,
+                category=category,
+                next_due=deadline,
+                creator=request.user,
+                group=personal_group,
+            )
+            template.save()
+            occurrence = TaskOccurrence(
+                template=template,
+                assigned_to=request.user,
+                deadline=deadline,
+                status='pending',
+                points_earned=0,
+            )
+            occurrence.save()
+
+        occurrence = (
+            TaskOccurrence.objects
+            .select_related('template__group', 'assigned_to')
+            .get(id=occurrence.id)
+        )
+
+        # Writeback to the user's task calendar and mark the event as
+        # blocks_availability=True so the assignment scorer treats this
+        # personal commitment as busy time when distributing group tasks.
+        try:
+            from chore_sync.services.sync_providers.registry import get_task_writeback_provider
+            from chore_sync.models import Event
+            provider = get_task_writeback_provider(request.user)
+            if provider:
+                provider.create_task_event(occurrence)
+                Event.objects.filter(
+                    task_occurrence=occurrence,
+                    source='task',
+                ).update(blocks_availability=True)
+        except Exception:
+            logger.exception(
+                "PersonalTaskCreateAPIView: calendar writeback failed for occurrence_id=%s",
+                occurrence.id,
+            )
+
+        return Response(_serialize_occurrence(occurrence), status=status.HTTP_201_CREATED)
+
+
+class TaskDeleteAPIView(APIView):
+    """DELETE /api/tasks/{pk}/ — delete a personal task occurrence and its template."""
+    authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        occ = (
+            TaskOccurrence.objects
+            .select_related('template__group')
+            .filter(id=pk)
+            .first()
+        )
+        if occ is None:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not GroupMembership.objects.filter(user=request.user, group=occ.template.group).exists():
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not occ.template.group.is_personal:
+            return Response(
+                {"detail": "Only personal tasks can be deleted directly."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        with _tx.atomic():
+            template = occ.template
+            occ.delete()
+            template.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class TaskOccurrenceAssignmentBreakdownAPIView(APIView):
     """GET /api/tasks/{pk}/assignment-breakdown/
 
@@ -464,7 +695,6 @@ class TaskOccurrenceAssignmentBreakdownAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
-        # Verify membership
         occ = (
             TaskOccurrence.objects
             .select_related('template__group')
@@ -478,7 +708,6 @@ class TaskOccurrenceAssignmentBreakdownAPIView(APIView):
         ).exists():
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Fetch the pipeline-run history row (not swaps / emergency / marketplace)
         history = (
             TaskAssignmentHistory.objects
             .filter(
@@ -487,71 +716,7 @@ class TaskOccurrenceAssignmentBreakdownAPIView(APIView):
                 was_emergency=False,
                 was_marketplace=False,
             )
-            .order_by('assigned_at')
+            .order_by('-assigned_at')
             .first()
         )
-
-        # Emergency cover: task was accepted by a volunteer, not assigned by the pipeline.
-        # This is true when reassignment_reason='emergency' AND there is no subsequent
-        # pipeline history row (auto-reassignment via pipeline creates one with was_emergency=False).
-        if occ.reassignment_reason == 'emergency' and (history is None or history.score_breakdown is None):
-            original_username = None
-            if occ.original_assignee_id:
-                from django.contrib.auth import get_user_model
-                orig = get_user_model().objects.filter(id=occ.original_assignee_id).values('username').first()
-                original_username = orig['username'] if orig else None
-            covered_by = occ.assigned_to.username if occ.assigned_to else None
-            return Response({
-                "occurrence_id": occ.id,
-                "template_name": occ.template.name,
-                "breakdown_available": False,
-                "assigned_via": "emergency_cover",
-                "covered_by": covered_by,
-                "original_assignee": original_username,
-                "candidates": [],
-            })
-
-        if history is None or history.score_breakdown is None:
-            return Response({
-                "occurrence_id": occ.id,
-                "template_name": occ.template.name,
-                "breakdown_available": False,
-                "candidates": [],
-            })
-
-        bd = history.score_breakdown
-        my_id = str(request.user.id)
-
-        candidates = []
-        for c in bd.get('candidates', []):
-            uid = c['user_id']
-            entry: dict = {
-                "user_id": uid,
-                "username": c['username'],
-                "is_winner": uid == bd['winner_id'],
-                "final_score": round(c['final_score'] * 100),
-                "is_me": uid == my_id,
-            }
-            if uid == my_id:
-                entry["components"] = {
-                    "stage1_score": round(c['stage1_score'] * 100),
-                    "tasks_score": round(c.get('tasks_score', 0) * 100),
-                    "time_score": round(c.get('time_score', 0) * 100),
-                    "points_score": round(c.get('points_score', 0) * 100),
-                    "pref_multiplier": c['pref_multiplier'],
-                    "affinity_multiplier": c['affinity_multiplier'],
-                    "calendar_penalty": round(c['calendar_penalty'] * 100),
-                }
-            candidates.append(entry)
-
-        # Sort: winner first, then by final_score ascending
-        candidates.sort(key=lambda x: (not x['is_winner'], x['final_score']))
-
-        return Response({
-            "occurrence_id": occ.id,
-            "template_name": occ.template.name,
-            "assigned_at": history.assigned_at.isoformat(),
-            "winner_id": bd['winner_id'],
-            "breakdown_available": True,
-            "candidates": candidates,
-        })
+        return Response(_format_breakdown(history, occ, str(request.user.id)))

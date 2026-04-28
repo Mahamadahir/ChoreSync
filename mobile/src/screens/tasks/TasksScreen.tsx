@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -21,6 +21,7 @@ import type { TasksStackParamList } from '../../navigation/types';
 import type { TaskOccurrence } from '../../types/task';
 import { Palette as C } from '../../theme';
 import AppHeader from '../../components/common/AppHeader';
+import { socketService } from '../../services/MobileSocketService';
 
 type Nav = NativeStackNavigationProp<TasksStackParamList, 'Tasks'>;
 
@@ -346,11 +347,13 @@ export default function TasksScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<FilterTab>('active');
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [swapsError, setSwapsError] = useState(false);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setLoadError(null);
+    setSwapsError(false);
     try {
       const [allRes, suggRes, swapsRes] = await Promise.allSettled([
         taskService.myTasks(),
@@ -359,8 +362,11 @@ export default function TasksScreen() {
       ]);
       if (allRes.status === 'fulfilled') setAllTasks(allRes.value.data.results ?? allRes.value.data);
       if (suggRes.status === 'fulfilled') setSuggestions(suggRes.value.data.results ?? suggRes.value.data);
-      if (swapsRes.status === 'fulfilled') setPendingSwaps(swapsRes.value.data.results ?? swapsRes.value.data ?? []);
-      // Surface hard failure only when the primary task list fails
+      if (swapsRes.status === 'fulfilled') {
+        setPendingSwaps(swapsRes.value.data.results ?? swapsRes.value.data ?? []);
+      } else {
+        setSwapsError(true);
+      }
       if (allRes.status === 'rejected') {
         const err = allRes.reason;
         setLoadError(err?.response?.data?.detail ?? 'Could not load tasks. Pull to refresh.');
@@ -372,6 +378,13 @@ export default function TasksScreen() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const unsub = socketService.onTaskUpdate((data) => {
+      if (data.subtype === 'task_updated') load();
+    });
+    return unsub;
+  }, [load]);
 
   async function handleAcceptSuggestion(task: TaskOccurrence) {
     try {
@@ -498,7 +511,16 @@ export default function TasksScreen() {
         )}
 
         {/* ── Incoming swap requests ─────────────── */}
-        {pendingSwaps.length > 0 && (
+        {swapsError && (
+          <TouchableOpacity onPress={() => load()} activeOpacity={0.7}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 4 }}>
+            <Text style={[styles.msIcon, { color: C.onSurfaceVariant, fontSize: 16 }]}>sync_problem</Text>
+            <Text style={{ fontFamily: 'PlusJakartaSans-Medium', fontSize: 13, color: C.onSurfaceVariant }}>
+              Couldn't load swap requests · Tap to retry
+            </Text>
+          </TouchableOpacity>
+        )}
+        {!swapsError && pendingSwaps.length > 0 && (
           <View style={{ marginBottom: 8 }}>
             <Text style={styles.sectionTitle}>Swap Requests ({pendingSwaps.length})</Text>
             {pendingSwaps.map((swap: any) => (

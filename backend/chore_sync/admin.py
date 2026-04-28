@@ -44,9 +44,9 @@ class GroupMembershipInline(admin.TabularInline):
 
 @admin.register(models.Group)
 class GroupAdmin(admin.ModelAdmin):
-    list_display = ("name", "group_code", "owner", "reassignment_rule", "reassignment_value")
+    list_display = ("name", "group_code", "owner", "group_type")
     search_fields = ("name", "group_code", "owner__email")
-    list_filter = ("reassignment_rule",)
+    list_filter = ("group_type",)
     inlines = [GroupMembershipInline]
 
 
@@ -69,8 +69,8 @@ class TaskOccurrenceInline(admin.TabularInline):
 
 @admin.register(models.TaskTemplate)
 class TaskTemplateAdmin(admin.ModelAdmin):
-    list_display = ("name", "group", "category", "importance", "difficulty", "recurring_choice", "recur_value", "next_due", "active")
-    list_filter = ("active", "recurring_choice", "category", "importance", "group")
+    list_display = ("name", "group", "category", "difficulty", "recurring_choice", "recur_value", "next_due", "active")
+    list_filter = ("active", "recurring_choice", "category", "group")
     search_fields = ("name", "group__name")
     autocomplete_fields = ("creator", "group")
     inlines = [TaskOccurrenceInline]
@@ -100,13 +100,29 @@ class TaskSwapAdmin(admin.ModelAdmin):
     autocomplete_fields = ("task", "from_user", "to_user", "counterpart_task")
 
 
+class TaskVoteInline(admin.TabularInline):
+    model = models.TaskVote
+    extra = 0
+    readonly_fields = ('voter', 'choice', 'created_at', 'updated_at')
+    can_delete = False
+
+
+@admin.register(models.TaskVote)
+class TaskVoteAdmin(admin.ModelAdmin):
+    list_display = ('proposal', 'voter', 'choice', 'created_at')
+    list_filter = ('choice',)
+    search_fields = ('voter__email', 'proposal__id')
+    autocomplete_fields = ('voter',)
+
+
 @admin.register(models.TaskProposal)
 class TaskProposalAdmin(admin.ModelAdmin):
-    list_display = ("proposal_name", "group", "proposed_by", "state", "approved_by", "created_at")
-    list_filter = ("state", "group")
+    list_display = ("proposal_name", "group", "proposed_by", "state", "vote_mode", "vote_deadline", "approved_by", "created_at")
+    list_filter = ("state", "vote_mode", "group")
     search_fields = ("proposed_payload", "group__name", "proposed_by__email")
     autocomplete_fields = ("proposed_by", "group", "task_template", "approved_by")
     readonly_fields = ("proposed_payload", "payload_diff_display", "created_at", "updated_at")
+    inlines = [TaskVoteInline]
 
     @admin.display(description="Task Name")
     def proposal_name(self, obj):
@@ -234,10 +250,10 @@ class NotificationAdmin(admin.ModelAdmin):
 
 @admin.register(models.UserStats)
 class UserStatsAdmin(admin.ModelAdmin):
-    list_display = ("user", "household", "current_streak_days", "longest_streak_days", "total_tasks_completed", "total_points", "on_time_completion_rate", "last_updated")
-    list_filter = ("household",)
-    search_fields = ("user__email", "household__name")
-    autocomplete_fields = ("user", "household")
+    list_display = ("user", "group", "current_streak_days", "longest_streak_days", "total_tasks_completed", "total_points", "on_time_completion_rate", "last_updated")
+    list_filter = ("group",)
+    search_fields = ("user__email", "group__name")
+    autocomplete_fields = ("user", "group")
 
 
 @admin.register(models.Badge)
@@ -249,10 +265,32 @@ class BadgeAdmin(admin.ModelAdmin):
 
 @admin.register(models.UserBadge)
 class UserBadgeAdmin(admin.ModelAdmin):
-    list_display = ("user", "badge", "household", "awarded_at")
-    list_filter = ("badge", "household")
-    search_fields = ("user__email", "badge__name", "household__name")
-    autocomplete_fields = ("user", "badge", "household")
+    list_display = ("user", "badge", "group", "awarded_at")
+    list_filter = ("badge", "group")
+    search_fields = ("user__email", "badge__name", "group__name")
+    autocomplete_fields = ("user", "badge", "group")
+
+
+# -------------------------------------------------------------------
+# Auth Events
+# -------------------------------------------------------------------
+
+@admin.register(models.AuthEvent)
+class AuthEventAdmin(admin.ModelAdmin):
+    list_display = ('action', 'user', 'ip_address', 'created_at')
+    list_filter = ('action', 'created_at')
+    search_fields = ('user__email', 'ip_address', 'extra')
+    readonly_fields = ('user', 'action', 'ip_address', 'user_agent', 'extra', 'created_at')
+    ordering = ('-created_at',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 # -------------------------------------------------------------------

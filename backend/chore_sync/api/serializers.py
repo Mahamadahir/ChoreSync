@@ -107,11 +107,6 @@ class GoogleCalendarSelectionSerializer(serializers.Serializer):
 
 class CreateGroupSerializer(serializers.Serializer):
     name = serializers.CharField(min_length=1, max_length=100)
-    reassignment_rule = serializers.ChoiceField(
-        choices=['on_create', 'after_n_tasks', 'after_n_weeks'],
-        required=False,
-        allow_null=True,
-    )
     group_type = serializers.ChoiceField(
         choices=['flatshare', 'family', 'work_team', 'custom'],
         required=False,

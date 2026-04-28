@@ -122,4 +122,7 @@ if ($djSuUser -and $djSuEmail -and $djSuPassword) {
     Write-Host "Skipping Django superuser creation; missing DJANGO_SUPERUSER_* entries in secrets.env"
 }
 
+Write-Host "Seeding badge definitions..."
+python seed_badges.py badges.json
+
 Write-Host "`nDatabase reset complete!"

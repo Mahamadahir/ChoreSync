@@ -25,7 +25,13 @@ cd "$FRONTEND_DIR"
 npm run build
 ok "Frontend built → dist/"
 
-# ── 2. Django: migrate + collectstatic ───────────────────────────────────────
+# ── 2. Install/sync Python dependencies ──────────────────────────────────────
+step "Installing Python dependencies..."
+cd "$BACKEND_DIR"
+"$CONDA_PYTHON" -m pip install -e ".[dev]" --quiet
+ok "Dependencies installed"
+
+# ── 3. Django: migrate + collectstatic ───────────────────────────────────────
 step "Running migrations..."
 cd "$BACKEND_DIR"
 set -a; source "$SECRETS"; set +a
@@ -36,12 +42,12 @@ step "Collecting static files..."
 "$CONDA_PYTHON" manage.py collectstatic --no-input --clear
 ok "Static files collected → staticfiles/"
 
-# ── 3. Restart backend services ───────────────────────────────────────────────
+# ── 4. Restart backend services ───────────────────────────────────────────────
 step "Restarting backend services..."
 sudo systemctl restart choresync-daphne choresync-celery choresync-celery-beat
 sudo systemctl reload nginx
 ok "Daphne, Celery, Nginx restarted"
 
-# ── 4. Done ───────────────────────────────────────────────────────────────────
+# ── 5. Done ───────────────────────────────────────────────────────────────────
 ok "Deploy complete — https://choresync.mahamadahir.com is live"
 echo -e "  (Cloudflare tunnel is a background systemd service — already running)"

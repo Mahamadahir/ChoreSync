@@ -30,7 +30,7 @@ class InsightsService:
         """
         stats_qs = (
             UserStats.objects.filter(user_id=user_id)
-            .select_related('household')
+            .select_related('group')
             .order_by('-total_points')
         )
         return [_serialize_stats(s, user_id=user_id) for s in stats_qs]
@@ -47,7 +47,7 @@ class InsightsService:
         """
         badges_qs = (
             UserBadge.objects.filter(user_id=user_id)
-            .select_related('badge', 'household')
+            .select_related('badge', 'group')
             .order_by('-awarded_at')
         )
         return [_serialize_badge(ub) for ub in badges_qs]
@@ -216,13 +216,21 @@ class InsightsService:
 # ------------------------------------------------------------------ #
 
 def _serialize_stats(s: UserStats, user_id: str | None = None) -> dict:
+    now = timezone.now()
+    week_start = now - timedelta(weeks=1)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    base_qs = TaskOccurrence.objects.filter(
+        assigned_to_id=s.user_id,
+        template__group_id=s.group_id,
+        status='completed',
+    )
     result = {
-        'household_id': str(s.household_id),
-        'household_name': s.household.name,
+        'group_id': str(s.group_id),
+        'group_name': s.group.name,
         'total_tasks_completed': s.total_tasks_completed,
         'total_points': s.total_points,
-        'tasks_completed_this_week': s.tasks_completed_this_week,
-        'tasks_completed_this_month': s.tasks_completed_this_month,
+        'tasks_completed_this_week': base_qs.filter(completed_at__gte=week_start).count(),
+        'tasks_completed_this_month': base_qs.filter(completed_at__gte=month_start).count(),
         'on_time_completion_rate': s.on_time_completion_rate,
         'current_streak_days': s.current_streak_days,
         'longest_streak_days': s.longest_streak_days,
@@ -235,7 +243,7 @@ def _serialize_stats(s: UserStats, user_id: str | None = None) -> dict:
         weekly_qs = (
             TaskOccurrence.objects.filter(
                 assigned_to_id=user_id,
-                template__group_id=s.household_id,
+                template__group_id=s.group_id,
                 status='completed',
                 completed_at__gte=eight_weeks_ago,
             )
@@ -252,7 +260,7 @@ def _serialize_stats(s: UserStats, user_id: str | None = None) -> dict:
         category_qs = (
             TaskOccurrence.objects.filter(
                 assigned_to_id=user_id,
-                template__group_id=s.household_id,
+                template__group_id=s.group_id,
                 status='completed',
             )
             .values('template__category')
@@ -274,7 +282,7 @@ def _serialize_badge(ub: UserBadge) -> dict:
         'emoji': ub.badge.emoji,
         'icon_url': ub.badge.icon_url,
         'points_value': ub.badge.points_value,
-        'household_id': str(ub.household_id),
-        'household_name': ub.household.name,
+        'group_id': str(ub.group_id),
+        'group_name': ub.group.name,
         'awarded_at': ub.awarded_at.isoformat(),
     }

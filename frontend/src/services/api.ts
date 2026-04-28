@@ -29,6 +29,20 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+const AUTH_ENDPOINTS = ['/api/auth/login/', '/api/auth/change-password/'];
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const url: string = error?.config?.url ?? '';
+    const isAuthEndpoint = AUTH_ENDPOINTS.some((e) => url.includes(e));
+    if (error?.response?.status === 401 && !isAuthEndpoint) {
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+
 // ------------------------------------------------------------------ //
 //  Groups
 // ------------------------------------------------------------------ //
@@ -45,12 +59,14 @@ export const groupApi = {
   stats: (id: string) => api.get(`/api/groups/${id}/stats/`),
   assignmentMatrix: (id: string) => api.get(`/api/groups/${id}/assignment-matrix/`),
   proposals: (id: string) => api.get(`/api/groups/${id}/proposals/`),
-  createProposal: (id: string, payload: { payload: Record<string, unknown>; reason?: string }) =>
+  createProposal: (id: string, payload: { payload: Record<string, unknown>; reason?: string; vote_mode?: boolean }) =>
     api.post(`/api/groups/${id}/proposals/`, payload),
   approveProposal: (id: number, body: { edited_payload?: Record<string, unknown> | null; approval_note?: string }) =>
     api.post(`/api/proposals/${id}/approve/`, body),
   rejectProposal: (id: number, body: { note?: string }) =>
     api.post(`/api/proposals/${id}/reject/`, body),
+  voteOnProposal: (id: number, choice: string) =>
+    api.post(`/api/proposals/${id}/vote/`, { choice }),
 
 };
 
@@ -79,6 +95,14 @@ export const taskApi = {
   pendingSwaps: () => api.get('/api/users/me/pending-swaps/'),
   acceptSuggestion: (id: number) => api.post(`/api/tasks/${id}/accept-suggestion/`),
   declineSuggestion: (id: number) => api.post(`/api/tasks/${id}/decline-suggestion/`),
+  createPersonal: (payload: {
+    name: string;
+    deadline?: string;
+    estimated_mins?: number;
+    category?: string;
+    details?: string;
+  }) => api.post('/api/tasks/personal/', payload),
+  deletePersonal: (id: number) => api.delete(`/api/tasks/${id}/delete/`),
 };
 
 // ------------------------------------------------------------------ //
@@ -98,6 +122,7 @@ export const notificationApi = {
   history: (params?: { limit?: number; offset?: number }) =>
     api.get('/api/notifications/history/', { params }),
   markRead: (id: number) => api.post(`/api/notifications/${id}/read/`),
+  markAllRead: () => api.post('/api/notifications/read-all/'),
   dismiss: (id: number) => api.post(`/api/notifications/${id}/dismiss/`),
   getPrefs: () => api.get('/api/users/me/notification-preferences/'),
   patchPrefs: (payload: object) => api.patch('/api/users/me/notification-preferences/', payload),

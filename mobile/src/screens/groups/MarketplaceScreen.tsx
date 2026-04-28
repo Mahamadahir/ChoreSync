@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { groupService } from '../../services/groupService';
 import { useAuthStore } from '../../stores/authStore';
 import type { MarketplaceScreenProps } from '../../navigation/types';
@@ -257,6 +257,8 @@ export default function MarketplaceScreen() {
   }, [groupId]);
 
   useEffect(() => { load(); }, [load]);
+  // Refresh when navigating back to this screen so stale listings disappear
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   async function handleClaim(listing: MarketplaceListing) {
     Alert.alert(

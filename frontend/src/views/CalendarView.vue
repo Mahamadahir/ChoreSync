@@ -38,7 +38,7 @@
     <!-- ── Sync-started banner ──────────────────────────────── -->
     <div v-if="syncBanner" class="cal-sync-banner">
       <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle">sync</span>
-      Your Google Calendar is syncing in the background. You'll get a notification when it's done.
+      Your {{ syncProvider === 'outlook' ? 'Outlook' : 'Google' }} Calendar is syncing in the background. You'll get a notification when it's done.
       <button class="cal-sync-banner-close" @click="syncBanner = false">✕</button>
     </div>
 
@@ -75,6 +75,35 @@
       <!-- FullCalendar -->
       <div class="cal-body">
         <full-calendar ref="calendarRef" :options="calendarOptions" class="cal-fc" />
+      </div>
+    </div>
+
+    <!-- ── Connected Calendars settings ────────────────────────── -->
+    <div v-if="externalCalendars.length > 0" class="cal-settings-panel">
+      <h3 class="cal-settings-title">
+        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:6px">tune</span>
+        Connected Calendars
+      </h3>
+      <div class="cal-settings-list">
+        <div v-for="cal in externalCalendars" :key="cal.id" class="cal-settings-row">
+          <div class="cal-settings-info">
+            <span class="material-symbols-outlined cal-settings-provider-icon">
+              {{ cal.provider === 'google' ? 'event' : 'calendar_month' }}
+            </span>
+            <div>
+              <div class="cal-settings-name">{{ cal.name }}</div>
+              <div class="cal-settings-provider">{{ cal.provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook' }}</div>
+            </div>
+          </div>
+          <div class="cal-settings-toggle-group">
+            <span class="cal-settings-toggle-label">Push updates</span>
+            <button
+              :class="['cal-toggle', { 'cal-toggle--on': cal.push_enabled }]"
+              @click="togglePushEnabled(cal)"
+              :title="cal.push_enabled ? 'Disable push updates to this calendar' : 'Enable push updates to this calendar'"
+            ><div class="cal-toggle-thumb" /></button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -153,7 +182,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import FullCalendar from '@fullcalendar/vue3';
 import '@fullcalendar/core/vdom';
@@ -171,6 +200,7 @@ const authStore = useAuthStore();
 const route = useRoute();
 const router = useRouter();
 const syncBanner = ref(false);
+const syncProvider = ref<'google' | 'outlook'>('google');
 const calendarRef = ref();
 const loading = ref(false);
 const error = ref('');
@@ -234,6 +264,20 @@ async function loadUserCalendars() {
   } catch {}
 }
 
+const externalCalendars = computed(() =>
+  userCalendars.value.filter((c) => c.provider !== 'internal')
+);
+
+async function togglePushEnabled(cal: { id: number; name: string; provider: string; push_enabled: boolean }) {
+  const newVal = !cal.push_enabled;
+  cal.push_enabled = newVal;
+  try {
+    await api.patch(`/api/calendars/${cal.id}/`, { push_enabled: newVal });
+  } catch {
+    cal.push_enabled = !newVal;
+  }
+}
+
 const calendarOptions = ref({
   plugins: [dayGridPlugin, timeGridPlugin, interactionPlugin],
   initialView: 'dayGridMonth',
@@ -268,6 +312,7 @@ watch(selectedCalendarIds, () => { if (!combineCalendars.value) reload(); });
 onMounted(() => {
   if (route.query.sync === 'started') {
     syncBanner.value = true;
+    syncProvider.value = route.query.provider === 'outlook' ? 'outlook' : 'google';
     router.replace({ query: {} });
   }
   loadUserCalendars();
@@ -796,6 +841,39 @@ function startStream() {
 .cal-save-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Connected Calendars settings panel ──────────────────────── */
+.cal-settings-panel {
+  margin-top: 16px;
+  background: var(--cs-surface-container-lowest, #fafafa);
+  border-radius: 16px;
+  padding: 18px 20px;
+  border: 1px solid rgba(0,0,0,0.06);
+}
+.cal-settings-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--cs-on-surface-variant, #49454f);
+  letter-spacing: 0.4px;
+  margin: 0 0 14px;
+  text-transform: uppercase;
+}
+.cal-settings-list { display: flex; flex-direction: column; gap: 10px; }
+.cal-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.05);
+}
+.cal-settings-info { display: flex; align-items: center; gap: 12px; }
+.cal-settings-provider-icon { font-size: 20px; color: var(--cs-primary, #6750a4); font-family: 'Material Symbols Outlined'; }
+.cal-settings-name { font-size: 14px; font-weight: 600; color: var(--cs-on-surface, #1c1b1f); }
+.cal-settings-provider { font-size: 11px; color: var(--cs-on-surface-variant, #49454f); margin-top: 1px; }
+.cal-settings-toggle-group { display: flex; align-items: center; gap: 10px; }
+.cal-settings-toggle-label { font-size: 12px; color: var(--cs-on-surface-variant, #49454f); white-space: nowrap; }
 </style>
 
 <style>

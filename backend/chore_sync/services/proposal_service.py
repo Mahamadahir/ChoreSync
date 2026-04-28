@@ -1,20 +1,23 @@
 """Proposal and approval service for ChoreSync.
 
-Replaces the voting model with a simple moderator approve/reject flow.
-Members submit task suggestions (with full task details); any moderator
-can approve (optionally editing the details first) or reject with a note.
-The proposed_payload is frozen at submission; approved_payload records
-any moderator edits, making the diff a built-in audit log.
+Two flows:
+  - Moderator flow (vote_mode=False): proposal goes straight to any moderator for
+    approve/reject with optional payload edits.
+  - Vote flow (vote_mode=True): proposal is put to the group for a blind yes/no vote.
+    Passes when yes_votes / total_members > 0.5 (auto-creates task).
+    Fails when no_votes  / total_members > 0.5 (auto-rejects).
+    Expires at min(created_at + 7 days, next_due − 24h) if neither threshold is met.
 """
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 
 from django.db import transaction
 from django.utils import timezone
 
-from chore_sync.models import GroupMembership, TaskProposal, TaskTemplate
+from chore_sync.models import GroupMembership, TaskProposal, TaskTemplate, TaskVote
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +36,9 @@ class ProposalService:
         group_id: str,
         payload: dict,
         reason: str = '',
+        vote_mode: bool = False,
     ) -> TaskProposal:
-        """Submit a task suggestion for moderator review.
+        """Submit a task suggestion for moderator review or group vote.
 
         Inputs:
             proposer_id: Must be a group member.
@@ -43,8 +47,9 @@ class ProposalService:
                      Optional: category, difficulty, estimated_mins,
                      recurring_choice, recur_value, days_of_week, details.
             reason: Optional explanation from the proposer.
+            vote_mode: When True, proposal goes to a group vote instead of moderators.
         Output:
-            Created TaskProposal in 'pending' state.
+            Created TaskProposal in 'pending' (moderator) or 'voting' state.
         """
         if not GroupMembership.objects.filter(
             user_id=proposer_id, group_id=group_id
@@ -60,23 +65,45 @@ class ProposalService:
         allowed_keys = {
             'name', 'category', 'difficulty', 'estimated_mins',
             'recurring_choice', 'recur_value', 'days_of_week',
-            'next_due', 'details', 'importance',
+            'next_due', 'details',
         }
         clean_payload = {k: v for k, v in payload.items() if k in allowed_keys}
         clean_payload.setdefault('category', 'other')
         clean_payload.setdefault('difficulty', 1)
         clean_payload.setdefault('estimated_mins', 30)
         clean_payload.setdefault('recurring_choice', 'none')
-        clean_payload.setdefault('importance', 'core')
+
+        # Compute vote deadline when vote_mode is requested
+        vote_deadline = None
+        if vote_mode:
+            from django.utils.dateparse import parse_datetime
+            next_due_raw = clean_payload.get('next_due')
+            next_due_dt = parse_datetime(next_due_raw) if isinstance(next_due_raw, str) else next_due_raw
+            if next_due_dt is None:
+                raise ValueError('Cannot compute vote deadline: next_due is missing or unparseable.')
+            max_deadline = timezone.now() + timedelta(days=7)
+            earliest_close = next_due_dt - timedelta(hours=24)
+            if earliest_close <= timezone.now():
+                raise ValueError(
+                    'Task is due too soon to put to a vote — '
+                    'create it directly or pick a later start date.'
+                )
+            vote_deadline = min(max_deadline, earliest_close)
 
         proposal = TaskProposal.objects.create(
             proposed_by_id=proposer_id,
             group_id=group_id,
             proposed_payload=clean_payload,
             reason=reason,
+            vote_mode=vote_mode,
+            vote_deadline=vote_deadline,
+            state='voting' if vote_mode else 'pending',
         )
 
-        self._notify_moderators(proposal=proposal, group_id=group_id, proposer_id=proposer_id)
+        if vote_mode:
+            self._notify_vote_open(proposal=proposal, group_id=group_id)
+        else:
+            self._notify_moderators(proposal=proposal, group_id=group_id, proposer_id=proposer_id)
         return proposal
 
     # ------------------------------------------------------------------ #
@@ -124,7 +151,7 @@ class ProposalService:
                 allowed_keys = {
                     'name', 'category', 'difficulty', 'estimated_mins',
                     'recurring_choice', 'recur_value', 'days_of_week',
-                    'next_due', 'details', 'importance',
+                    'next_due', 'details',
                 }
                 for k, v in edited_payload.items():
                     if k in allowed_keys:
@@ -152,7 +179,6 @@ class ProposalService:
                 days_of_week=effective.get('days_of_week'),
                 next_due=next_due,
                 details=effective.get('details', ''),
-                importance=effective.get('importance', 'core'),
                 creator_id=proposal.proposed_by_id,
                 group=proposal.group,
                 active=True,
@@ -184,6 +210,7 @@ class ProposalService:
             spawn_next_occurrence.delay(str(template.id))
 
         self._notify_proposer_approved(proposal)
+        self._broadcast(proposal)
         return proposal
 
     # ------------------------------------------------------------------ #
@@ -226,7 +253,163 @@ class ProposalService:
             proposal.save(update_fields=['state', 'approved_by_id', 'approval_note'])
 
             self._notify_proposer_rejected(proposal)
+            self._broadcast(proposal)
             return proposal
+
+    # ------------------------------------------------------------------ #
+    #  Voting
+    # ------------------------------------------------------------------ #
+
+    def cast_vote(
+        self,
+        *,
+        proposal_id: int,
+        voter_id: str,
+        choice: str,
+    ) -> TaskVote:
+        """Cast or update a vote on a vote-mode proposal.
+
+        Inputs:
+            proposal_id: Target TaskProposal (must be in 'voting' state with open window).
+            voter_id: Must be a group member.
+            choice: 'yes', 'no', or 'abstain'.
+        Output:
+            Created or updated TaskVote. May trigger auto-approve/reject.
+        """
+        if choice not in ('yes', 'no', 'abstain'):
+            raise ValueError("choice must be 'yes', 'no', or 'abstain'.")
+
+        proposal = TaskProposal.objects.select_related('group').filter(id=proposal_id).first()
+        if proposal is None:
+            raise ValueError('Proposal not found.')
+        if not proposal.vote_mode:
+            raise ValueError('This proposal is not in vote mode.')
+        if not proposal.is_vote_open:
+            raise ValueError('The voting window for this proposal is closed.')
+        if not GroupMembership.objects.filter(user_id=voter_id, group_id=proposal.group_id).exists():
+            raise PermissionError('You are not a member of this group.')
+
+        vote, _ = TaskVote.objects.update_or_create(
+            proposal=proposal,
+            voter_id=voter_id,
+            defaults={'choice': choice},
+        )
+
+        self._check_vote_thresholds(proposal)
+        self._broadcast(proposal)
+        return vote
+
+    def retract_vote(self, *, proposal_id: int, voter_id: str) -> None:
+        """Remove a previously cast vote (only while window is open)."""
+        proposal = TaskProposal.objects.filter(id=proposal_id).first()
+        if proposal is None:
+            raise ValueError('Proposal not found.')
+        if not proposal.is_vote_open:
+            raise ValueError('The voting window is closed.')
+        TaskVote.objects.filter(proposal_id=proposal_id, voter_id=voter_id).delete()
+
+    def close_vote_window(self, *, proposal_id: int) -> TaskProposal:
+        """Called by Celery when the deadline expires without a threshold being reached."""
+        with transaction.atomic():
+            proposal = (
+                TaskProposal.objects
+                .select_for_update(of=('self',))
+                .select_related('group')
+                .filter(id=proposal_id)
+                .first()
+            )
+            if proposal is None or proposal.state != 'voting':
+                return proposal  # type: ignore[return-value]
+
+            # One last threshold check before expiring
+            resolved = self._check_vote_thresholds(proposal)
+            if not resolved:
+                proposal.state = 'expired'
+                proposal.save(update_fields=['state'])
+                self._notify_vote_lapsed(proposal)
+        return proposal
+
+    def _check_vote_thresholds(self, proposal: TaskProposal) -> bool:
+        """Tally votes and auto-resolve if yes or no has crossed 50%. Returns True if resolved."""
+        total_members = GroupMembership.objects.filter(group_id=proposal.group_id).count()
+        if total_members == 0:
+            return False
+
+        votes = list(TaskVote.objects.filter(proposal=proposal).values_list('choice', flat=True))
+        yes_count = votes.count('yes')
+        no_count = votes.count('no')
+
+        if yes_count / total_members > 0.5:
+            self._auto_approve(proposal)
+            return True
+        if no_count / total_members > 0.5:
+            self._auto_reject(proposal)
+            return True
+        return False
+
+    def _auto_approve(self, proposal: TaskProposal) -> None:
+        """Create the TaskTemplate and mark proposal approved (vote passed)."""
+        from django.utils.dateparse import parse_datetime
+        effective = proposal.proposed_payload
+
+        next_due = effective.get('next_due')
+        if isinstance(next_due, str):
+            next_due = parse_datetime(next_due)
+
+        with transaction.atomic():
+            # Re-check state inside lock to prevent double-fire
+            locked = (
+                TaskProposal.objects
+                .select_for_update(of=('self',))
+                .filter(id=proposal.id, state='voting')
+                .first()
+            )
+            if locked is None:
+                return
+
+            template = TaskTemplate.objects.create(
+                name=effective['name'],
+                category=effective.get('category', 'other'),
+                difficulty=effective.get('difficulty', 1),
+                estimated_mins=effective.get('estimated_mins', 30),
+                recurring_choice=effective.get('recurring_choice', 'none'),
+                recur_value=effective.get('recur_value'),
+                days_of_week=effective.get('days_of_week'),
+                next_due=next_due,
+                details=effective.get('details', ''),
+                creator_id=proposal.proposed_by_id,
+                group=proposal.group,
+                active=True,
+            )
+            locked.task_template = template
+            locked.state = 'approved'
+            locked.approved_at = timezone.now()
+            locked.save(update_fields=['task_template', 'state', 'approved_at'])
+
+        from chore_sync.services.task_lifecycle_service import TaskLifecycleService
+        try:
+            TaskLifecycleService().generate_recurring_instances(task_template_id=str(template.id))
+        except Exception:
+            logger.exception('_auto_approve: occurrence generation failed for template_id=%s', template.id)
+            from chore_sync.tasks import spawn_next_occurrence
+            spawn_next_occurrence.delay(str(template.id))
+
+        self._notify_vote_resolved(proposal, approved=True)
+
+    def _auto_reject(self, proposal: TaskProposal) -> None:
+        with transaction.atomic():
+            locked = (
+                TaskProposal.objects
+                .select_for_update(of=('self',))
+                .filter(id=proposal.id, state='voting')
+                .first()
+            )
+            if locked is None:
+                return
+            locked.state = 'rejected'
+            locked.save(update_fields=['state'])
+
+        self._notify_vote_resolved(proposal, approved=False)
 
     # ------------------------------------------------------------------ #
     #  List
@@ -324,3 +507,80 @@ class ProposalService:
             task_proposal_id=proposal.id,
             action_url=f'/groups/{proposal.group_id}?tab=discover',
         )
+
+    def _notify_vote_open(self, *, proposal: TaskProposal, group_id: str) -> None:
+        from chore_sync.services.notification_service import NotificationService
+        nsvc = NotificationService()
+        task_name = proposal.proposed_payload.get('name', 'a task')
+        proposer_name = proposal.proposed_by.username if proposal.proposed_by else 'Someone'
+        member_ids = GroupMembership.objects.filter(group_id=group_id).values_list('user_id', flat=True)
+        for uid in member_ids:
+            nsvc.emit_notification(
+                recipient_id=str(uid),
+                notification_type='task_proposal',
+                title=f'Vote: should we add "{task_name}"?',
+                content=f'{proposer_name} is proposing to add "{task_name}". Cast your vote.',
+                group_id=group_id,
+                task_proposal_id=proposal.id,
+                action_url=f'/groups/{group_id}?tab=discover&proposal={proposal.id}',
+            )
+
+    def _notify_vote_resolved(self, proposal: TaskProposal, *, approved: bool) -> None:
+        from chore_sync.services.notification_service import NotificationService
+        nsvc = NotificationService()
+        task_name = proposal.proposed_payload.get('name', 'A task')
+        voter_ids = set(
+            TaskVote.objects.filter(proposal=proposal).values_list('voter_id', flat=True)
+        )
+        if proposal.proposed_by_id:
+            voter_ids.add(proposal.proposed_by_id)
+
+        if approved:
+            title = f'Vote passed: "{task_name}" has been added'
+            content = f'The group voted to add "{task_name}". It\'s now live.'
+        else:
+            title = f'Vote failed: "{task_name}" was not added'
+            content = f'The group voted against adding "{task_name}".'
+
+        for uid in voter_ids:
+            nsvc.emit_notification(
+                recipient_id=str(uid),
+                notification_type='task_proposal',
+                title=title,
+                content=content,
+                group_id=str(proposal.group_id),
+                task_proposal_id=proposal.id,
+                action_url=f'/groups/{proposal.group_id}?tab=discover',
+            )
+
+    def _notify_vote_lapsed(self, proposal: TaskProposal) -> None:
+        from chore_sync.services.notification_service import NotificationService
+        nsvc = NotificationService()
+        task_name = proposal.proposed_payload.get('name', 'A task')
+        voter_ids = set(
+            TaskVote.objects.filter(proposal=proposal).values_list('voter_id', flat=True)
+        )
+        if proposal.proposed_by_id:
+            voter_ids.add(proposal.proposed_by_id)
+        for uid in voter_ids:
+            nsvc.emit_notification(
+                recipient_id=str(uid),
+                notification_type='task_proposal',
+                title=f'Vote expired: "{task_name}"',
+                content=f'The voting window closed without a majority. "{task_name}" was not added.',
+                group_id=str(proposal.group_id),
+                task_proposal_id=proposal.id,
+                action_url=f'/groups/{proposal.group_id}?tab=discover',
+            )
+
+
+    def _broadcast(self, proposal: TaskProposal) -> None:
+        try:
+            from chore_sync.services.notification_service import NotificationService
+            NotificationService().push_household_event(
+                group_id=str(proposal.group_id),
+                subtype='proposal_updated',
+                proposal_id=proposal.id,
+            )
+        except Exception:
+            logger.exception("_broadcast: failed for proposal_id=%s", proposal.id)

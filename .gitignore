@@ -70,3 +70,4 @@ coverage/
 # ── Scratch / local data ──────────────────────────────────────────────────────
 testing-data.json
 =5.3.0
+deploy/openshift/secret.yaml

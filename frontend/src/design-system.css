@@ -263,6 +263,30 @@ input, button, select, textarea {
   border-top: 1px solid var(--cs-outline-variant);
   background: var(--cs-surface-low);
 }
+.cs-sidebar-legal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--cs-surface-low);
+}
+.cs-legal-link {
+  font-size: 11px;
+  color: var(--cs-on-surface-variant);
+  opacity: 0.6;
+  text-decoration: none;
+  transition: opacity 0.15s;
+}
+.cs-legal-link:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+.cs-legal-dot {
+  font-size: 11px;
+  color: var(--cs-on-surface-variant);
+  opacity: 0.35;
+}
 .cs-user-avatar {
   width: 36px;
   height: 36px;
@@ -275,6 +299,13 @@ input, button, select, textarea {
   font-size: 13px;
   font-weight: 700;
   flex-shrink: 0;
+  overflow: hidden;
+}
+.cs-user-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
 }
 .cs-user-name {
   font-size: 13px;
@@ -892,3 +923,79 @@ input, button, select, textarea {
   .cs-topbar { left: 0; }
   .cs-content { margin-left: 0; }
 }
+
+/* ── Personal task modal ──────────────────────────────────── */
+.cs-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cs-modal {
+  background: var(--cs-surface);
+  border-radius: var(--cs-radius-lg);
+  width: 100%;
+  max-width: 440px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  overflow: hidden;
+}
+.cs-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--cs-outline-variant);
+}
+.cs-modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--cs-on-surface);
+}
+.cs-modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.cs-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.cs-form-error {
+  font-size: 13px;
+  color: var(--cs-error, #b00020);
+}
+.cs-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+.cs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border-radius: var(--cs-radius-md);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: background 0.15s, opacity 0.15s;
+}
+.cs-btn--primary {
+  background: var(--cs-primary);
+  color: #fff;
+}
+.cs-btn--primary:hover { background: var(--cs-primary-hover); }
+.cs-btn--primary:disabled { opacity: 0.55; cursor: not-allowed; }
+.cs-btn--ghost {
+  background: transparent;
+  color: var(--cs-on-surface-variant);
+  border: 1px solid var(--cs-outline-variant);
+}
+.cs-btn--ghost:hover { background: var(--cs-surface-variant); }

@@ -128,7 +128,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='taskswap',
             name='expires_at',
-            field=models.DateTimeField(default=chore_sync.models.TaskSwap.default_swap_expiry),
+            field=models.DateTimeField(default=chore_sync.models._swap_expiry_default),
         ),
         migrations.AddField(
             model_name='taskswap',

@@ -39,12 +39,16 @@ type CalendarEvent = {
   end: string;
   is_all_day: boolean;
   blocks_availability: boolean;
-  source: string;
+  source: string;       // 'manual' | 'google' | 'outlook' | 'choresync'
   calendar_id: number;
   calendar_name: string;
   calendar_color?: string | null;
   description?: string | null;
 };
+
+function isEditable(ev: CalendarEvent): boolean {
+  return ev.source === 'manual';
+}
 
 // ── Design tokens ─────────────────────────────────────────────
 
@@ -358,9 +362,15 @@ function isValidHHMM(t: string): boolean {
   return h >= 0 && h <= 23 && m >= 0 && m <= 59;
 }
 
-/** Build an ISO-8601 datetime string from a local date + HH:MM time, preserving local timezone. */
+/** Build a UTC ISO-8601 string from a local YYYY-MM-DD date + HH:MM time.
+ *  Uses the multi-argument Date constructor which is guaranteed to interpret
+ *  arguments as local time, avoiding the ambiguous string-parsing behaviour
+ *  of new Date('YYYY-MM-DDTHH:MM:SS') across JS engines (incl. Hermes).
+ */
 function buildIso(date: string, time: string): string {
-  return new Date(`${date}T${time.padStart(5, '0')}:00`).toISOString();
+  const [year, month, day] = date.split('-').map(Number);
+  const [hours, minutes] = time.padStart(5, '0').split(':').map(Number);
+  return new Date(year, month - 1, day, hours, minutes, 0).toISOString();
 }
 
 type UserCalendar = { id: number; name: string; provider: string; color: string; push_enabled: boolean };
@@ -376,11 +386,13 @@ function CalendarViewTab({ insets }: { insets: ReturnType<typeof useSafeAreaInse
   const [createVisible, setCreateVisible] = useState(false);
   const [editEvent, setEditEvent] = useState<CalendarEvent | null>(null);
   const [userCalendars, setUserCalendars] = useState<UserCalendar[]>([]);
+  const [showDatePicker, setShowDatePicker] = useState(false);
 
   // Create/edit form state — times stored as "HH:MM" strings
   const [form, setForm] = useState({
     title: '',
     description: '',
+    date: today,
     startTime: '09:00',
     endTime: '10:00',
     is_all_day: false,
@@ -464,9 +476,11 @@ function CalendarViewTab({ insets }: { insets: ReturnType<typeof useSafeAreaInse
   function openCreate() {
     setEditEvent(null);
     setFormError('');
+    setShowDatePicker(false);
     setForm({
       title: '',
       description: '',
+      date: selectedDate,
       startTime: '09:00',
       endTime: '10:00',
       is_all_day: false,
@@ -477,11 +491,22 @@ function CalendarViewTab({ insets }: { insets: ReturnType<typeof useSafeAreaInse
   }
 
   function openEdit(ev: CalendarEvent) {
+    if (!isEditable(ev)) {
+      const provider = ev.source === 'google' ? 'Google Calendar'
+        : ev.source === 'outlook' ? 'Outlook' : 'the source app';
+      Alert.alert(
+        'External event',
+        `This event was imported from ${provider}. Edit it there and it will sync back automatically.`,
+      );
+      return;
+    }
     setEditEvent(ev);
     setFormError('');
+    setShowDatePicker(false);
     setForm({
       title: ev.title,
       description: ev.description ?? '',
+      date: ev.start.split('T')[0],
       startTime: isoToHHMM(ev.start),
       endTime: isoToHHMM(ev.end),
       is_all_day: ev.is_all_day,
@@ -496,24 +521,22 @@ function CalendarViewTab({ insets }: { insets: ReturnType<typeof useSafeAreaInse
       setFormError('Please enter a title.');
       return;
     }
-    if (!isValidHHMM(form.startTime)) {
+    if (!form.is_all_day && !isValidHHMM(form.startTime)) {
       setFormError('Start time must be HH:MM (e.g. 09:00).');
       return;
     }
-    if (!isValidHHMM(form.endTime)) {
+    if (!form.is_all_day && !isValidHHMM(form.endTime)) {
       setFormError('End time must be HH:MM (e.g. 10:00).');
       return;
     }
     setFormError('');
     setSaving(true);
 
-    // Determine the event date: editing uses the event's original date, creating uses selectedDate
-    const eventDate = editEvent ? editEvent.start.split('T')[0] : selectedDate;
     const payload: Record<string, unknown> = {
       title: form.title.trim(),
       description: form.description,
-      start: buildIso(eventDate, form.startTime),
-      end: buildIso(eventDate, form.endTime),
+      start: form.is_all_day ? `${form.date}T00:00:00Z` : buildIso(form.date, form.startTime),
+      end: form.is_all_day ? `${form.date}T23:59:59Z` : buildIso(form.date, form.endTime),
       is_all_day: form.is_all_day,
       blocks_availability: form.blocks_availability,
     };
@@ -541,13 +564,19 @@ function CalendarViewTab({ insets }: { insets: ReturnType<typeof useSafeAreaInse
     }
   }
 
-  async function handleDelete(id: number) {
+  async function handleDelete(ev: CalendarEvent) {
+    if (!isEditable(ev)) {
+      const provider = ev.source === 'google' ? 'Google Calendar'
+        : ev.source === 'outlook' ? 'Outlook' : 'the source app';
+      Alert.alert('External event', `Delete this event in ${provider} — it will sync back automatically.`);
+      return;
+    }
     Alert.alert('Delete Event', 'Remove this event?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete', style: 'destructive', onPress: async () => {
           try {
-            await api.delete(`/api/events/${id}/`);
+            await api.delete(`/api/events/${ev.id}/`);
             loadEvents(selectedDate);
           } catch {
             Alert.alert('Error', 'Could not delete event.');
@@ -617,7 +646,7 @@ function CalendarViewTab({ insets }: { insets: ReturnType<typeof useSafeAreaInse
                 activeOpacity={0.85}
                 style={cvStyles.eventCard}
                 onPress={() => openEdit(ev)}
-                onLongPress={() => handleDelete(ev.id)}
+                onLongPress={() => handleDelete(ev)}
               >
                 <View style={[cvStyles.eventAccent, { backgroundColor: ev.calendar_color || C.primary }]} />
                 <View style={{ flex: 1 }}>
@@ -630,6 +659,9 @@ function CalendarViewTab({ insets }: { insets: ReturnType<typeof useSafeAreaInse
                 </View>
                 {ev.blocks_availability && (
                   <Text style={[cvStyles.msIcon, { color: C.error, fontSize: 18 }]}>block</Text>
+                )}
+                {!isEditable(ev) && (
+                  <Text style={[cvStyles.msIcon, { color: C.outline, fontSize: 16 }]}>lock</Text>
                 )}
               </TouchableOpacity>
             ))}
@@ -669,11 +701,44 @@ function CalendarViewTab({ insets }: { insets: ReturnType<typeof useSafeAreaInse
             />
 
             <Text style={[cvStyles.formLabel, { marginTop: 16 }]}>DATE</Text>
-            <View style={[cvStyles.formInput, { justifyContent: 'center' }]}>
+            <TouchableOpacity
+              style={[cvStyles.formInput, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+              onPress={() => setShowDatePicker((v) => !v)}
+              activeOpacity={0.75}
+            >
               <Text style={{ fontFamily: 'PlusJakartaSans-Medium', fontSize: 15, color: C.onSurface }}>
-                {formatDateLabel(editEvent ? editEvent.start.split('T')[0] : selectedDate)}
+                {formatDateLabel(form.date)}
               </Text>
-            </View>
+              <Text style={[cvStyles.msIcon, { color: C.onSurfaceVariant, fontSize: 18 }]}>
+                {showDatePicker ? 'expand_less' : 'calendar_month'}
+              </Text>
+            </TouchableOpacity>
+            {showDatePicker && (
+              <View style={{ marginTop: 8, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: C.outlineVariant }}>
+                <Calendar
+                  current={form.date}
+                  onDayPress={(day: { dateString: string }) => {
+                    setForm((p) => ({ ...p, date: day.dateString }));
+                    setShowDatePicker(false);
+                  }}
+                  markedDates={{ [form.date]: { selected: true, selectedColor: C.primary } }}
+                  theme={{
+                    backgroundColor: C.surfaceContainerLow,
+                    calendarBackground: C.surfaceContainerLow,
+                    todayTextColor: C.primary,
+                    selectedDayBackgroundColor: C.primary,
+                    selectedDayTextColor: C.white,
+                    arrowColor: C.primary,
+                    textDayFontFamily: 'PlusJakartaSans-Medium',
+                    textMonthFontFamily: 'PlusJakartaSans-Bold',
+                    textDayHeaderFontFamily: 'PlusJakartaSans-SemiBold',
+                    textDayFontSize: 13,
+                    textMonthFontSize: 14,
+                    textDayHeaderFontSize: 10,
+                  }}
+                />
+              </View>
+            )}
 
             {/* Calendar picker — only shown when creating, not editing */}
             {!editEvent && userCalendars.length > 1 && (
@@ -712,34 +777,36 @@ function CalendarViewTab({ insets }: { insets: ReturnType<typeof useSafeAreaInse
               </>
             )}
 
-            <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={cvStyles.formLabel}>START TIME</Text>
-                <TextInput
-                  style={cvStyles.formInput}
-                  value={form.startTime}
-                  onChangeText={(v) => setForm((p) => ({ ...p, startTime: v }))}
-                  placeholder="09:00"
-                  placeholderTextColor={C.outline}
-                  keyboardType="numbers-and-punctuation"
-                  autoCapitalize="none"
-                  maxLength={5}
-                />
+            {!form.is_all_day && (
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={cvStyles.formLabel}>START TIME</Text>
+                  <TextInput
+                    style={cvStyles.formInput}
+                    value={form.startTime}
+                    onChangeText={(v) => setForm((p) => ({ ...p, startTime: v }))}
+                    placeholder="09:00"
+                    placeholderTextColor={C.outline}
+                    keyboardType="numbers-and-punctuation"
+                    autoCapitalize="none"
+                    maxLength={5}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={cvStyles.formLabel}>END TIME</Text>
+                  <TextInput
+                    style={cvStyles.formInput}
+                    value={form.endTime}
+                    onChangeText={(v) => setForm((p) => ({ ...p, endTime: v }))}
+                    placeholder="10:00"
+                    placeholderTextColor={C.outline}
+                    keyboardType="numbers-and-punctuation"
+                    autoCapitalize="none"
+                    maxLength={5}
+                  />
+                </View>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={cvStyles.formLabel}>END TIME</Text>
-                <TextInput
-                  style={cvStyles.formInput}
-                  value={form.endTime}
-                  onChangeText={(v) => setForm((p) => ({ ...p, endTime: v }))}
-                  placeholder="10:00"
-                  placeholderTextColor={C.outline}
-                  keyboardType="numbers-and-punctuation"
-                  autoCapitalize="none"
-                  maxLength={5}
-                />
-              </View>
-            </View>
+            )}
 
             <View style={cvStyles.toggleRow}>
               <Text style={cvStyles.toggleLabel}>All day</Text>
@@ -769,7 +836,7 @@ function CalendarViewTab({ insets }: { insets: ReturnType<typeof useSafeAreaInse
             {editEvent && (
               <TouchableOpacity
                 style={cvStyles.deleteBtn}
-                onPress={() => { setCreateVisible(false); handleDelete(editEvent.id); }}
+                onPress={() => { setCreateVisible(false); handleDelete(editEvent); }}
               >
                 <Text style={[cvStyles.msIcon, { color: C.error, fontSize: 18 }]}>delete</Text>
                 <Text style={cvStyles.deleteBtnText}>Delete event</Text>
@@ -935,6 +1002,9 @@ export default function CalendarScreen() {
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerProvider, setPickerProvider] = useState<PickerProvider | null>(null);
 
+  // Connected calendars (for push_enabled toggles)
+  const [connectedCalendars, setConnectedCalendars] = useState<UserCalendar[]>([]);
+
   // ── Load connected status via dedicated endpoint ──────────────
   const loadStatus = useCallback(() => {
     calendarService.status().then((res) => {
@@ -945,6 +1015,32 @@ export default function CalendarScreen() {
   }, []);
 
   useEffect(() => { loadStatus(); }, [loadStatus]);
+
+  // ── Load calendar list for push_enabled toggles ───────────────
+  const loadCalendars = useCallback(() => {
+    api.get<UserCalendar[]>('/api/calendars/')
+      .then((res) => setConnectedCalendars(
+        (Array.isArray(res.data) ? res.data : []).filter((c) => c.provider !== 'internal')
+      ))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => { loadCalendars(); }, [loadCalendars]);
+
+  const handleTogglePushEnabled = useCallback(async (cal: UserCalendar) => {
+    const newVal = !cal.push_enabled;
+    setConnectedCalendars((prev) =>
+      prev.map((c) => c.id === cal.id ? { ...c, push_enabled: newVal } : c)
+    );
+    try {
+      await api.patch(`/api/calendars/${cal.id}/`, { push_enabled: newVal });
+    } catch {
+      setConnectedCalendars((prev) =>
+        prev.map((c) => c.id === cal.id ? { ...c, push_enabled: !newVal } : c)
+      );
+      Alert.alert('Error', 'Could not update calendar setting. Please try again.');
+    }
+  }, []);
 
   // ── OAuth connect flow (Google) ───────────────────────────────
   const handleGoogleToggle = useCallback(async (val: boolean) => {
@@ -1189,6 +1285,37 @@ export default function CalendarScreen() {
           </View>
         )}
 
+        {/* ── Connected Calendars / Push Settings ────── */}
+        {connectedCalendars.length > 0 && (
+          <View style={styles.pushSection}>
+            <Text style={styles.pushSectionTitle}>PUSH SETTINGS</Text>
+            {connectedCalendars.map((cal) => (
+              <View key={cal.id} style={styles.pushRow}>
+                <View style={styles.pushRowInfo}>
+                  <Text style={[styles.msIcon, { color: C.primary, fontSize: 20 }]}>
+                    {cal.provider === 'google' ? 'event' : 'calendar_month'}
+                  </Text>
+                  <View>
+                    <Text style={styles.pushCalName} numberOfLines={1}>{cal.name}</Text>
+                    <Text style={styles.pushCalProvider}>
+                      {cal.provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook'}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.pushToggleGroup}>
+                  <Text style={styles.pushToggleLabel}>Push updates</Text>
+                  <Switch
+                    value={cal.push_enabled}
+                    onValueChange={() => handleTogglePushEnabled(cal)}
+                    trackColor={{ false: C.surfaceContainerHighest, true: C.secondaryContainer }}
+                    thumbColor={cal.push_enabled ? C.secondary : C.onSurfaceVariant}
+                  />
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+
         {/* ── How It Works ───────────────────────────── */}
         <View style={styles.howItWorksSection}>
           <Text style={styles.howItWorksTitle}>How it works</Text>
@@ -1423,6 +1550,48 @@ const styles = StyleSheet.create({
   },
   syncChipText: {
     fontFamily: 'PlusJakartaSans-Bold', fontSize: 12, color: C.onSecondaryContainer,
+  },
+
+  // Push settings
+  pushSection: {
+    backgroundColor: C.surfaceContainerLowest,
+    borderRadius: 16,
+    padding: 16,
+    gap: 10,
+  },
+  pushSectionTitle: {
+    fontFamily: 'PlusJakartaSans-Bold',
+    fontSize: 10,
+    letterSpacing: 1,
+    color: C.onSurfaceVariant,
+    marginBottom: 4,
+  },
+  pushRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: C.surfaceContainer,
+    borderRadius: 12,
+    padding: 12,
+  },
+  pushRowInfo: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  pushCalName: {
+    fontFamily: 'PlusJakartaSans-SemiBold',
+    fontSize: 13,
+    color: C.onSurface,
+    maxWidth: 160,
+  },
+  pushCalProvider: {
+    fontFamily: 'PlusJakartaSans-Regular',
+    fontSize: 11,
+    color: C.onSurfaceVariant,
+    marginTop: 1,
+  },
+  pushToggleGroup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pushToggleLabel: {
+    fontFamily: 'PlusJakartaSans-Regular',
+    fontSize: 11,
+    color: C.onSurfaceVariant,
   },
 
   // How it works

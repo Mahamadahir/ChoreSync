@@ -1,10 +1,13 @@
 """Task template orchestration for reusable chore blueprints."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from django.db import transaction
 from chore_sync.models import Group, TaskTemplate, TaskOccurrence, GroupMembership
 from django.contrib.auth import get_user_model
+
+logger = logging.getLogger("chore_sync")
 
 User = get_user_model()
 
@@ -69,7 +72,7 @@ class TaskTemplateService:
             raise ValueError("Actor is not a member of this group.")
 
         allowed = {'name', 'details', 'recurring_choice', 'difficulty', 'estimated_mins',
-                   'category', 'next_due', 'days_of_week', 'recur_value', 'importance',
+                   'category', 'next_due', 'days_of_week', 'recur_value',
                    'photo_proof_required'}
         update_fields = []
         for field, value in updates.items():
@@ -84,7 +87,7 @@ class TaskTemplateService:
     def delete_template(self, *, template_id: str, actor_id: str) -> None:
         """Soft-delete a template and transition pending occurrences to 'cancelled'.
 
-        'cancelled' is a declared terminal status in TaskOccurrence.status_choices.
+        'cancelled' is a declared terminal status in TaskOccurrence.STATUS_CHOICES.
         Inputs:
             template_id: Template being removed.
             actor_id: User performing the action (must be a group member).
@@ -97,7 +100,24 @@ class TaskTemplateService:
         if not GroupMembership.objects.filter(user_id=actor_id, group=template.group).exists():
             raise ValueError("Actor is not a member of this group.")
 
+        # Fetch pending occurrences before cancelling so we can clean up calendars.
+        pending_occs = list(
+            TaskOccurrence.objects.filter(template=template, status='pending')
+            .select_related('assigned_to')
+        )
+
         with transaction.atomic():
             template.active = False
             template.save(update_fields=['active'])
             TaskOccurrence.objects.filter(template=template, status='pending').update(status='cancelled')
+
+        # Delete calendar events for pending occurrences (best-effort, outside transaction).
+        try:
+            from chore_sync.services.sync_providers.registry import get_task_writeback_provider
+            for occ in pending_occs:
+                if occ.assigned_to:
+                    provider = get_task_writeback_provider(occ.assigned_to)
+                    if provider:
+                        provider.delete_task_event(occ)
+        except Exception:
+            logger.exception("delete_template: calendar cleanup failed for template_id=%s", template_id)

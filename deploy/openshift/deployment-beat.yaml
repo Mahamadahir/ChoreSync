@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: choresync-beat
+spec:
+  # NEVER scale beat above 1 — multiple replicas would double-fire every scheduled task.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: choresync-beat
+  template:
+    metadata:
+      labels:
+        app: choresync-beat
+    spec:
+      containers:
+        - name: beat
+          image: image-registry.openshift-image-registry.svc:5000/choresync/choresync:latest
+          imagePullPolicy: Always
+          command:
+            - celery
+            - -A
+            - chore_sync
+            - beat
+            - --loglevel=info
+            - --scheduler=django_celery_beat.schedulers:DatabaseScheduler
+          envFrom:
+            - secretRef:
+                name: choresync-secret
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"

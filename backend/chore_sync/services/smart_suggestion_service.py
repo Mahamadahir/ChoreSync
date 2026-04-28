@@ -367,7 +367,7 @@ class SmartSuggestionService:
 
         stats_map: dict = {}
         for m in members:
-            s = UserStats.objects.filter(user=m.user, household=group).first()
+            s = UserStats.objects.filter(user=m.user, group=group).first()
             stats_map[m.user] = s.total_tasks_completed if s else 0
 
         if not stats_map:

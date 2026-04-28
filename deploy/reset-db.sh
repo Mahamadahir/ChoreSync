@@ -86,6 +86,11 @@ ok "Database created and permissions granted"
 # ── Run migrations ────────────────────────────────────────────────────────────
 step "Running Django migrations..."
 cd "$BACKEND_DIR"
+step "Installing Python dependencies..."
+"$CONDA_PYTHON" -m pip install -q -r requirements.txt
+ok "Dependencies installed"
+
+step "Running Django migrations..."
 "$CONDA_PYTHON" manage.py migrate --no-input
 ok "Migrations applied"
 
@@ -106,6 +111,11 @@ if [ "$DEV_MODE" = false ]; then
   sudo systemctl start choresync-daphne choresync-celery choresync-celery-beat
   ok "Services restarted"
 fi
+
+# ── Seed badges ───────────────────────────────────────────────────────────────
+step "Seeding badge definitions..."
+"$CONDA_PYTHON" seed_badges.py badges.json
+ok "Badges seeded"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo -e "\n${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

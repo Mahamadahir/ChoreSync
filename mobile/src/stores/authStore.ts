@@ -32,8 +32,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
     },
 
     logout: async () => {
-      // Await deregister so the DELETE /api/push-token/ request fires while
-      // credentials are still valid, avoiding the race condition.
+      // Deregister push token first while credentials are still valid
       try {
         const Notifications = await import('expo-notifications');
         const tokenData = await Notifications.getExpoPushTokenAsync({
@@ -43,6 +42,16 @@ export const useAuthStore = create<AuthState>((set, get) => {
         await notificationService.deregisterPushToken(tokenData.data);
       } catch {
         // Best-effort — a failed deregister just means the token expires naturally
+      }
+      // Blacklist the refresh token on the server so it can't be reused after logout
+      try {
+        const refresh = await tokenStorage.getRefresh();
+        if (refresh) {
+          const { authService } = await import('../services/authService');
+          await authService.logout(refresh);
+        }
+      } catch {
+        // Best-effort — local clear still happens below
       }
       await tokenStorage.clear();
       set({ user: null, isAuthenticated: false });

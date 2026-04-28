@@ -1,34 +1,13 @@
 """
-Chatbot router — conversational task assistant powered by Gemini Flash.
+Chatbot router — conversational task assistant powered by Gemini.
 
-Intents:
-  CREATE_TASK           create a new task template + occurrences
-  CANT_DO_TASK          user can't complete a task → offer emergency/marketplace/swap
-  COMPLETE_TASK         mark a task as done
-  SNOOZE_TASK           snooze a task
-  SNOOZE_ALL            snooze all the user's pending tasks
-  QUERY_MY_TASKS        list the user's pending tasks
-  QUERY_GROUP_TASKS     list all tasks in a group
-  QUERY_STATS           personal stats (points, streak, completion rate)
-  QUERY_BADGES          earned badges
-  QUERY_LEADERBOARD     group leaderboard
-  QUERY_SWAP_REQUESTS   pending swap requests for the user
-  SET_PREFERENCE        set prefer/neutral/avoid on a task template
-  CLAIM_MARKETPLACE     claim a task from the marketplace
-  ACCEPT_SWAP           accept a pending swap request
-  ACCEPT_EMERGENCY      volunteer to take an emergency task
-  CREATE_GROUP          create a new group
-  JOIN_GROUP            join a group via code
-  INVITE_MEMBER         invite someone to a group by email
-  DELETE_TASK_TEMPLATE  remove a task template (moderator only)
-  PROPOSE_TASK          propose a new task for moderator approval
-  CHOOSE_OPTION         reply to a multi-turn prompt
-  UNKNOWN               fallback
+Uses native function calling for intent detection and parameter extraction.
+The model drives clarification (including chip generation) via ask_clarification().
+No manual state machine — conversation history carries context between turns.
 """
 from __future__ import annotations
 
 import httpx
-import json
 import logging
 from datetime import timedelta
 
@@ -56,10 +35,11 @@ from chore_sync.services.marketplace_service import MarketplaceService
 from chore_sync.services.group_service import GroupOrchestrator
 from chore_sync.services.proposal_service import ProposalService
 
-GEMINI_API_KEY = getattr(settings, 'GEMINI_API_KEY', '')
-GEMINI_PRIMARY_MODEL   = getattr(settings, 'GEMINI_MODEL',          'gemini-3.1-flash-lite-preview')
-GEMINI_FALLBACK_MODEL  = getattr(settings, 'GEMINI_FALLBACK_MODEL',  'gemma-4-31b-it')
-GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/'
+GEMINI_API_KEY        = getattr(settings, 'GEMINI_API_KEY', '')
+GEMINI_PRIMARY_MODEL  = getattr(settings, 'GEMINI_MODEL',          'gemma-4-31b-it')
+GEMINI_FALLBACK_MODEL = getattr(settings, 'GEMINI_FALLBACK_MODEL',  'gemma-3-27b-it')
+GEMINI_BASE_URL       = 'https://generativelanguage.googleapis.com/v1beta/models/'
+
 DAY_INT_TO_ABBR = {0: 'mon', 1: 'tue', 2: 'wed', 3: 'thu', 4: 'fri', 5: 'sat', 6: 'sun'}
 DAY_NAME_TO_INT = {
     'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
@@ -68,65 +48,314 @@ DAY_NAME_TO_INT = {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# System prompt
+# Function declarations — the model picks and fills these instead of JSON intents
+# ──────────────────────────────────────────────────────────────────────────────
+
+FUNCTION_DECLARATIONS = [
+    {
+        "name": "ask_clarification",
+        "description": (
+            "Ask the user for a missing piece of information before proceeding. "
+            "Use this whenever a required parameter is unknown or ambiguous."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "Clear, concise question for the user."},
+                "chips": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "3–6 short option labels the user can tap as a quick reply.",
+                },
+            },
+            "required": ["question", "chips"],
+        },
+    },
+    {
+        "name": "create_task",
+        "description": (
+            "Create a new recurring or one-off task template in a group. "
+            "Requires moderator role — if the user lacks permission, use propose_task instead. "
+            "Before calling, always collect via ask_clarification: "
+            "(1) name, (2) recurrence, (3) day_of_week if weekly, (4) day_of_month if monthly, "
+            "(5) time_of_day — always ask even if not mentioned, "
+            "(6) estimated_minutes — always ask even if not mentioned. "
+            "When asking for day_of_week always offer all 7 days as chips. "
+            "Only call this function once all six fields are known."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name":              {"type": "string"},
+                "recurrence":        {"type": "string", "enum": ["daily", "weekly", "fortnightly", "monthly", "once"]},
+                "day_of_week":       {"type": "string", "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"], "description": "Required for weekly."},
+                "day_of_month":      {"type": "integer", "description": "Day 1–28, required for monthly."},
+                "time_of_day":       {"type": "string", "description": "24 h HH:MM format. Must be collected before calling."},
+                "estimated_minutes": {"type": "integer", "description": "How long the task takes in minutes. Must be collected before calling."},
+                "difficulty":        {"type": "integer", "description": "1 (easy) – 5 (hard)."},
+                "category":          {"type": "string", "enum": ["cleaning", "cooking", "laundry", "maintenance", "other"]},
+                "group_name":        {"type": "string"},
+                "assign_to_name":    {"type": "string"},
+            },
+            "required": ["name", "recurrence", "time_of_day", "estimated_minutes"],
+        },
+    },
+    {
+        "name": "propose_task",
+        "description": (
+            "Submit a task suggestion for moderator approval or group vote. "
+            "Use when the user is not a moderator, or when they explicitly want to suggest rather than create."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_name":         {"type": "string"},
+                "recurrence":        {"type": "string", "enum": ["daily", "weekly", "fortnightly", "monthly", "once"]},
+                "day_of_week":       {"type": "string", "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]},
+                "day_of_month":      {"type": "integer"},
+                "time_of_day":       {"type": "string"},
+                "estimated_minutes": {"type": "integer"},
+                "category":          {"type": "string", "enum": ["cleaning", "cooking", "laundry", "maintenance", "other"]},
+                "reason":            {"type": "string"},
+                "group_name":        {"type": "string"},
+                "vote_mode":         {"type": "boolean", "description": "True = group vote, False = moderator review."},
+            },
+            "required": ["task_name"],
+        },
+    },
+    {
+        "name": "complete_task",
+        "description": "Mark one of the user's pending tasks as completed.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_name": {"type": "string", "description": "Full or partial task name."},
+            },
+        },
+    },
+    {
+        "name": "snooze_task",
+        "description": "Snooze a specific pending task for a number of hours.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_name":    {"type": "string"},
+                "snooze_hours": {"type": "integer", "description": "Hours to snooze. Default 3."},
+            },
+        },
+    },
+    {
+        "name": "snooze_all_tasks",
+        "description": "Snooze all of the user's pending tasks.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "snooze_hours": {"type": "integer", "description": "Hours to snooze. Default 3."},
+            },
+        },
+    },
+    {
+        "name": "query_my_tasks",
+        "description": "List the user's pending and upcoming tasks.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "query_group_tasks",
+        "description": "List all active tasks in a group.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "group_name": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "query_stats",
+        "description": "Show the user's personal stats: points, streak, completion rate.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "query_badges",
+        "description": "Show the user's earned badges.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "query_leaderboard",
+        "description": "Show the points leaderboard for a group.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "group_name": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "query_swap_requests",
+        "description": "List pending swap requests sent to the user.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "set_preference",
+        "description": "Set the user's preference for a task template.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_name":  {"type": "string"},
+                "preference": {"type": "string", "enum": ["prefer", "neutral", "avoid"]},
+            },
+            "required": ["task_name", "preference"],
+        },
+    },
+    {
+        "name": "claim_marketplace_task",
+        "description": "Claim a task currently listed on the group marketplace.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_name":  {"type": "string"},
+                "group_name": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "accept_swap",
+        "description": "Accept a pending swap request from another member.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_name": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "accept_emergency_task",
+        "description": "Volunteer to take over an emergency task that has been broadcast to the group.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_name": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "emergency_reassign_task",
+        "description": "Broadcast one of the user's tasks as an emergency so group members can volunteer.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_name": {"type": "string"},
+                "reason":    {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "list_task_on_marketplace",
+        "description": "Put one of the user's tasks on the marketplace so anyone in the group can claim it.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_name":    {"type": "string"},
+                "bonus_points": {"type": "integer", "description": "Optional bonus points offered to claimer."},
+            },
+        },
+    },
+    {
+        "name": "request_task_swap",
+        "description": "Request a task swap with a specific group member.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_name":      {"type": "string"},
+                "swap_with_name": {"type": "string"},
+                "reason":         {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "create_group",
+        "description": "Create a new household group.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "join_group",
+        "description": "Join an existing group using its join code.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string"},
+            },
+            "required": ["code"],
+        },
+    },
+    {
+        "name": "invite_member",
+        "description": "Invite someone to a group by email address. Moderator only.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "email":      {"type": "string"},
+                "group_name": {"type": "string"},
+            },
+            "required": ["email"],
+        },
+    },
+    {
+        "name": "delete_task_template",
+        "description": (
+            "Permanently delete a task template and cancel all pending occurrences. Moderator only. "
+            "IMPORTANT: always call ask_clarification to confirm before calling this function."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_name":  {"type": "string"},
+                "group_name": {"type": "string"},
+            },
+            "required": ["task_name"],
+        },
+    },
+]
+
+# ──────────────────────────────────────────────────────────────────────────────
+# System prompt — describes behaviour, not JSON shapes
 # ──────────────────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """You are a task assistant for ChoreSync, a household chore app.
-Understand the user's message and return ONLY a JSON object — no explanation, no markdown.
-
-Possible intents and JSON shapes:
-
-CREATE_TASK: {"intent":"CREATE_TASK","name":"str","recurrence":"daily|weekly|fortnightly|monthly|once|unknown","day_of_week":"monday|tuesday|wednesday|thursday|friday|saturday|sunday|null","day_of_month":int_1-31_or_null,"time_of_day":"HH:MM_24h_or_null","estimated_minutes":int_or_null,"difficulty":1-5_or_null,"category":"cleaning|cooking|laundry|maintenance|other","assign_to_name":"str_or_null,"group_name":"str_or_null"}
-CANT_DO_TASK: {"intent":"CANT_DO_TASK","task_name":"str_or_null","reason":"str_or_null"}
-COMPLETE_TASK: {"intent":"COMPLETE_TASK","task_name":"str_or_null"}
-SNOOZE_TASK: {"intent":"SNOOZE_TASK","task_name":"str_or_null","snooze_hours":int_or_null}
-SNOOZE_ALL: {"intent":"SNOOZE_ALL","snooze_hours":int_or_null}
-QUERY_MY_TASKS: {"intent":"QUERY_MY_TASKS"}
-QUERY_GROUP_TASKS: {"intent":"QUERY_GROUP_TASKS","group_name":"str_or_null"}
-QUERY_STATS: {"intent":"QUERY_STATS"}
-QUERY_BADGES: {"intent":"QUERY_BADGES"}
-QUERY_LEADERBOARD: {"intent":"QUERY_LEADERBOARD","group_name":"str_or_null"}
-QUERY_SWAP_REQUESTS: {"intent":"QUERY_SWAP_REQUESTS"}
-SET_PREFERENCE: {"intent":"SET_PREFERENCE","task_name":"str","preference":"prefer|neutral|avoid"}
-CLAIM_MARKETPLACE: {"intent":"CLAIM_MARKETPLACE","task_name":"str_or_null","group_name":"str_or_null"}
-ACCEPT_SWAP: {"intent":"ACCEPT_SWAP","task_name":"str_or_null"}
-ACCEPT_EMERGENCY: {"intent":"ACCEPT_EMERGENCY","task_name":"str_or_null"}
-CREATE_GROUP: {"intent":"CREATE_GROUP","name":"str"}
-JOIN_GROUP: {"intent":"JOIN_GROUP","code":"str"}
-INVITE_MEMBER: {"intent":"INVITE_MEMBER","email":"str","group_name":"str_or_null"}
-DELETE_TASK_TEMPLATE: {"intent":"DELETE_TASK_TEMPLATE","task_name":"str","group_name":"str_or_null"}
-PROPOSE_TASK: {"intent":"PROPOSE_TASK","task_name":"str","reason":"str_or_null","group_name":"str_or_null"}
-CHOOSE_OPTION: {"intent":"CHOOSE_OPTION","choice":"str"}
-UNKNOWN: {"intent":"UNKNOWN"}
+Use the available functions to help users manage their tasks and groups.
 
 Rules:
-- Return ONLY the JSON object.
-- day_of_week: full lowercase day name e.g. "monday". null for daily/fortnightly/monthly/once.
-- recurrence: only set if the user EXPLICITLY states it. "daily"=every day, "weekly"=same day each week, "fortnightly"=every 2 weeks, "monthly"=same date each month, "once"=one-off. Use "unknown" if the user did not explicitly mention how often — do NOT guess or infer.
-- day_of_month: integer 1-31 only for monthly (e.g. "every 1st" → 1). null otherwise.
-- time_of_day: 24h "HH:MM" if user mentions a time (e.g. "at 6pm" → "18:00", "18:45" → "18:45"). null if not mentioned.
-- "I can't do X", "I'm sick", "I won't be able to" → CANT_DO_TASK
-- "I've done X", "mark X complete", "finished X" → COMPLETE_TASK
-- "I hate X", "I love doing X", "avoid X" → SET_PREFERENCE
-- "What's on the marketplace" / "I'll take [task]" → CLAIM_MARKETPLACE
-- "Accept [name]'s swap" / "accept the swap request" → ACCEPT_SWAP
-- "I'll help with [name]'s emergency" → ACCEPT_EMERGENCY
-- "Snooze all my tasks" → SNOOZE_ALL
-- User replying to options you presented → CHOOSE_OPTION"""
+- Ask ONE question at a time. Never combine multiple questions into one message.
+- Every ask_clarification call MUST include chips. Never call ask_clarification without a chips array.
+- For create_task, collect fields in this order, one per turn: (1) recurrence, (2) day_of_week if weekly — always offer all 7 days as chips, (3) day_of_month if monthly, (4) time_of_day — offer time chips like ["8:00 AM","12:00 PM","3:00 PM","6:00 PM","8:00 PM","You choose"], (5) estimated_minutes — offer chips like ["15 min","30 min","45 min","1 hour","1.5 hours","You choose"]. Only call create_task once all fields are collected.
+- When the user says "you choose", "doesn't matter", or similar — pick a sensible default based on the task name and context. Do NOT ask again.
+- create_task requires moderator role. If the response indicates the user lacks permission, switch to propose_task.
+- For "I can't do X" without a specified action, use ask_clarification to find out what they want: emergency reassign, marketplace, or swap.
+- Always call ask_clarification to confirm before calling delete_task_template.
+- Match tasks by partial name — users rarely type exact task names."""
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Helpers
+# Gemini API
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _call_gemini(messages: list[dict]) -> dict | None:
-    """Call Gemini REST API with primary model, falling back to the fallback model on failure."""
-    # Split system prompt from conversation turns
+    """Call Gemini with function calling enabled.
+
+    Returns one of:
+      {"type": "function_call", "name": str, "args": dict}
+      {"type": "text", "content": str}
+      None  — all models failed
+    """
     system_text = None
     turns = []
     for msg in messages:
-        role = msg["role"]
-        content = msg["content"]
+        role, content = msg["role"], msg["content"]
         if role == "system":
             system_text = content
         elif role == "assistant":
@@ -136,11 +365,9 @@ def _call_gemini(messages: list[dict]) -> dict | None:
 
     payload: dict = {
         "contents": turns,
-        "generationConfig": {
-            "temperature": 0.1,
-            "maxOutputTokens": 1024,
-            "responseMimeType": "application/json",
-        },
+        "tools": [{"function_declarations": FUNCTION_DECLARATIONS}],
+        "tool_config": {"function_calling_config": {"mode": "AUTO"}},
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024},
     }
     if system_text:
         payload["system_instruction"] = {"parts": [{"text": system_text}]}
@@ -156,33 +383,33 @@ def _call_gemini(messages: list[dict]) -> dict | None:
                 timeout=60,
             )
         except httpx.RequestError as exc:
-            logger.warning("Chatbot Gemini request error (model=%s): %s — trying next", model, exc)
+            logger.warning("Chatbot request error (model=%s): %s — trying next", model, exc)
             continue
         if not resp.is_success:
-            logger.warning("Chatbot Gemini HTTP %s (model=%s): %s — trying next", resp.status_code, model, resp.text[:200])
+            logger.warning("Chatbot HTTP %s (model=%s): %s — trying next", resp.status_code, model, resp.text[:200])
             continue
         body = resp.json()
         try:
-            raw = body["candidates"][0]["content"]["parts"][0]["text"].strip()
-        except (KeyError, IndexError):
-            logger.warning("Chatbot Gemini unexpected response shape (model=%s): %s — trying next", model, str(body)[:200])
-            continue
-        logger.debug("Chatbot ← Gemini raw (model=%s): %s", model, raw[:300])
-        # Strip accidental markdown fences
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.strip()
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            logger.warning("Chatbot JSON parse failed (model=%s). Raw: %s — trying next", model, raw[:300])
+            parts = body["candidates"][0]["content"]["parts"]
+            part  = next(p for p in parts if not p.get("thought"))
+            if "functionCall" in part:
+                fc = part["functionCall"]
+                logger.debug("Chatbot ← fn=%s args=%s", fc["name"], str(fc.get("args", {}))[:200])
+                return {"type": "function_call", "name": fc["name"], "args": fc.get("args", {})}
+            text = part.get("text", "").strip()
+            logger.debug("Chatbot ← text: %s", text[:200])
+            return {"type": "text", "content": text}
+        except (KeyError, IndexError, StopIteration):
+            logger.warning("Chatbot unexpected response shape (model=%s): %s — trying next", model, str(body)[:200])
             continue
 
     logger.error("Chatbot: all models failed")
     return None
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Shared helpers
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _name(user) -> str:
     return user.first_name or user.username
@@ -216,16 +443,12 @@ def _find_member_by_name(user, name: str):
 
 
 def _find_group(user, group_name: str | None) -> Group | None:
-    """Return the single best-matching group, or None.
-    Use _find_groups() when you need to detect ambiguity."""
     groups = _find_groups(user, group_name)
     return groups[0] if groups else None
 
 
 def _find_groups(user, group_name: str | None) -> list[Group]:
-    """Return all groups the user belongs to that match group_name (substring,
-    case-insensitive). If group_name is None, return all groups ordered by name."""
-    qs = GroupMembership.objects.filter(user=user).select_related('group').order_by('group__name')
+    qs = GroupMembership.objects.filter(user=user, group__is_personal=False).select_related('group').order_by('group__name')
     if not group_name:
         return [m.group for m in qs]
     low = group_name.lower()
@@ -254,17 +477,7 @@ def _emergency_reassigns_used(user) -> int:
     ).count()
 
 
-# ── Chip option lists ────────────────────────────────────────────────────────
-
-_RECURRENCE_CHIPS   = ["Daily", "Weekly", "Fortnightly", "Monthly", "One-off", "None"]
-_DAY_CHIPS          = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "None"]
-_DOM_CHIPS          = ["1st", "5th", "10th", "15th", "20th", "25th", "28th", "None"]
-_TIME_CHIPS         = ["8:00 AM", "12:00 PM", "3:00 PM", "6:00 PM", "8:00 PM", "Skip"]
-
-# ── Date/time helpers ─────────────────────────────────────────────────────────
-
 def _parse_day_field(raw) -> int | None:
-    """Normalise Gemini day_of_week value → 0–6 int or None."""
     if isinstance(raw, str):
         return DAY_NAME_TO_INT.get(raw.lower().strip())
     if isinstance(raw, int) and 0 <= raw <= 6:
@@ -273,7 +486,6 @@ def _parse_day_field(raw) -> int | None:
 
 
 def _parse_time_str(raw: str | None) -> tuple[int, int]:
-    """Parse "HH:MM" (24h) → (hour, minute). Returns (20, 0) on failure."""
     if not raw:
         return 20, 0
     try:
@@ -283,131 +495,42 @@ def _parse_time_str(raw: str | None) -> tuple[int, int]:
         return 20, 0
 
 
-def _parse_chip_time(raw: str) -> str | None:
-    """Parse chip labels like '8:00 AM' / '6:00 PM' or freetext '18:45' → 'HH:MM'. None on failure."""
-    from datetime import datetime as _dt
-    raw = raw.strip()
-    upper = raw.upper()
-    for fmt in ('%I:%M %p', '%I %p'):
-        try:
-            t = _dt.strptime(upper, fmt)
-            return f'{t.hour:02d}:{t.minute:02d}'
-        except ValueError:
-            pass
-    # Try bare 24h
+def _compute_next_due(recurrence, day_of_week, time_of_day=None, day_of_month=None, user_tz_str=None):
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
     try:
-        parts = raw.split(':')
-        h, m = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
-        if 0 <= h <= 23 and 0 <= m <= 59:
-            return f'{h:02d}:{m:02d}'
-    except (ValueError, IndexError):
-        pass
-    return None
-
-
-def _compute_next_due(
-    recurrence: str,
-    day_of_week: int | None,
-    time_of_day: str | None = None,
-    day_of_month: int | None = None,
-):
-    now = timezone.now()
+        user_tz = ZoneInfo(user_tz_str) if user_tz_str else ZoneInfo('UTC')
+    except (ZoneInfoNotFoundError, Exception):
+        user_tz = ZoneInfo('UTC')
+    utc = ZoneInfo('UTC')
+    now_utc = timezone.now()
+    now     = now_utc.astimezone(user_tz)
     hour, minute = _parse_time_str(time_of_day)
 
     if recurrence == 'monthly' and day_of_month:
-        dom = max(1, min(28, day_of_month))
+        dom  = max(1, min(28, day_of_month))
         base = now.replace(day=dom, hour=hour, minute=minute, second=0, microsecond=0)
         if base <= now:
-            if base.month == 12:
-                base = base.replace(year=base.year + 1, month=1)
-            else:
-                base = base.replace(month=base.month + 1)
-        return base
+            base = base.replace(month=base.month + 1) if base.month < 12 else base.replace(year=base.year + 1, month=1)
+        return base.astimezone(utc)
 
     if day_of_week is None or recurrence in ('once', 'daily', 'fortnightly'):
         base = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if base <= now:
             base += timedelta(days=1)
-        return base
+        return base.astimezone(utc)
 
-    # weekly/custom: advance to next occurrence of that weekday
     days_ahead = (day_of_week - now.weekday()) % 7
-    base = (now + timedelta(days=days_ahead)).replace(
-        hour=hour, minute=minute, second=0, microsecond=0
-    )
+    base = (now + timedelta(days=days_ahead)).replace(hour=hour, minute=minute, second=0, microsecond=0)
     if days_ahead == 0 and base <= now:
         base += timedelta(days=7)
-    return base
+    return base.astimezone(utc)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Intent handlers
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _handle_create_task(user, parsed: dict) -> tuple[str, dict | None]:
-    group_name_hint = parsed.get("group_name")
-    candidates = _find_groups(user, group_name_hint)
-
-    if not candidates:
-        if group_name_hint:
-            return f"I couldn't find a group called **{group_name_hint}** that you belong to.", None
-        return "You're not in any group yet. Create or join a group first.", None
-
-    if len(candidates) > 1:
-        reply = f"Which group should I add **{parsed.get('name', 'this task')}** to?"
-        return reply, {
-            "intent": "CREATE_TASK",
-            "parsed": parsed,
-            "awaiting": "group",
-            "group_ids": [str(g.id) for g in candidates],
-            "group_names": [g.name for g in candidates],
-            "options": [g.name for g in candidates] + ["None"],
-        }
-
-    return _check_and_ask(user, parsed, candidates[0])
-
-
-def _check_and_ask(user, parsed: dict, group) -> tuple[str, dict | None]:
-    """Ask for the next missing required field, or create the task if all present."""
-    name = parsed.get('name', 'this task')
-    recurrence = (parsed.get('recurrence') or '').lower().strip()
-    day_of_week = _parse_day_field(parsed.get('day_of_week'))
-    day_of_month = parsed.get('day_of_month')
-    time_of_day = parsed.get('time_of_day')
-
-    base = {"intent": "CREATE_TASK", "parsed": parsed, "group_id": str(group.id), "group_name": group.name}
-
-    if recurrence not in ('daily', 'weekly', 'fortnightly', 'monthly', 'once'):
-        return (
-            f"How often should **{name}** repeat?",
-            {**base, "awaiting": "recurrence", "options": _RECURRENCE_CHIPS},
-        )
-    if recurrence == 'weekly' and day_of_week is None:
-        return (
-            f"Which day should **{name}** run each week?",
-            {**base, "awaiting": "day_of_week", "options": _DAY_CHIPS},
-        )
-    if recurrence == 'monthly' and not day_of_month:
-        return (
-            f"Which day of the month should **{name}** run?",
-            {**base, "awaiting": "day_of_month", "options": _DOM_CHIPS},
-        )
-    if recurrence == 'once' and not time_of_day:
-        return (
-            f"What time should **{name}** be due? (Scheduled for tomorrow.)",
-            {**base, "awaiting": "time_of_day", "options": _TIME_CHIPS},
-        )
-
-    return _build_and_create(user, parsed, group)
-
-
-def _build_payload(parsed: dict) -> tuple[dict, int | None]:
-    """Translate parsed Gemini fields into a TaskTemplate payload dict.
-    Returns (payload, recur_value) so callers can use both."""
-    recurrence   = (parsed.get('recurrence') or 'weekly').lower()
-    day_of_week  = _parse_day_field(parsed.get('day_of_week'))
-    day_of_month = parsed.get('day_of_month')
-    time_of_day  = parsed.get('time_of_day')
+def _build_payload(args: dict, user_tz_str: str | None = None) -> tuple[dict, int | None]:
+    recurrence   = (args.get('recurrence') or 'weekly').lower()
+    day_of_week  = _parse_day_field(args.get('day_of_week'))
+    day_of_month = args.get('day_of_month')
+    time_of_day  = args.get('time_of_day')
 
     if recurrence == 'once':
         recurring_choice, days_of_week_list, recur_value = 'none', None, None
@@ -422,15 +545,15 @@ def _build_payload(parsed: dict) -> tuple[dict, int | None]:
     else:
         recurring_choice, days_of_week_list, recur_value = 'weekly', None, None
 
-    next_due = _compute_next_due(recurrence, day_of_week, time_of_day, day_of_month)
+    next_due = _compute_next_due(recurrence, day_of_week, time_of_day, day_of_month, user_tz_str)
 
     payload = {
-        "name":             parsed.get("name", "New Task"),
+        "name":             args.get("name", "New Task"),
         "recurring_choice": recurring_choice,
         "days_of_week":     days_of_week_list,
-        "estimated_mins":   parsed.get("estimated_minutes") or 30,
-        "difficulty":       parsed.get("difficulty") or 2,
-        "category":         parsed.get("category") or "other",
+        "estimated_mins":   args.get("estimated_minutes") or 30,
+        "difficulty":       args.get("difficulty") or 2,
+        "category":         args.get("category") or "other",
         "next_due":         next_due,
     }
     if recur_value:
@@ -438,7 +561,7 @@ def _build_payload(parsed: dict) -> tuple[dict, int | None]:
     return payload, recur_value
 
 
-def _freq_label(recurring_choice: str, recur_value: int | None, day_of_week: int | None, day_of_month: int | None) -> str:
+def _freq_label(recurring_choice, recur_value, day_of_week, day_of_month) -> str:
     day_names = ['Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays']
     if recurring_choice == 'none':
         return 'one-off'
@@ -454,180 +577,207 @@ def _freq_label(recurring_choice: str, recur_value: int | None, day_of_week: int
     return recurring_choice
 
 
-def _build_and_create(user, parsed: dict, group) -> tuple[str, None]:
-    """Map parsed fields → model fields, create template and occurrences."""
-    payload, recur_value = _build_payload(parsed)
-
+def _build_and_create(user, args: dict, group) -> str:
+    user_tz = getattr(user, 'timezone', None) or 'UTC'
+    payload, recur_value = _build_payload(args, user_tz_str=user_tz)
     try:
         template = TaskTemplateService().create_template(
             creator=user, group_id=str(group.id), payload=payload,
         )
     except DjangoValidationError as exc:
-        messages = '; '.join(
+        msgs = '; '.join(
             f"{f}: {', '.join(errs)}" for f, errs in exc.message_dict.items()
         ) if hasattr(exc, 'message_dict') else str(exc)
-        return f"Couldn't create task — invalid details: {messages}", None
+        return f"Couldn't create task — invalid details: {msgs}"
     except ValueError as exc:
-        return f"Couldn't create task: {exc}", None
+        return f"Couldn't create task: {exc}"
 
     TaskLifecycleService().generate_recurring_instances(task_template_id=str(template.id))
 
-    day_of_week  = _parse_day_field(parsed.get('day_of_week'))
-    day_of_month = parsed.get('day_of_month')
-    time_of_day  = parsed.get('time_of_day')
-    freq_str = _freq_label(payload['recurring_choice'], recur_value, day_of_week, day_of_month)
-    time_str = f' at {time_of_day}' if time_of_day else ''
-    return f"Done! Created **{template.name}** ({freq_str}{time_str}) in **{group.name}**.", None
+    day_of_week  = _parse_day_field(args.get('day_of_week'))
+    day_of_month = args.get('day_of_month')
+    time_of_day  = args.get('time_of_day')
+    freq_str  = _freq_label(payload['recurring_choice'], recur_value, day_of_week, day_of_month)
+    time_str  = f' at {time_of_day}' if time_of_day else ''
+    return f"Done! Created **{template.name}** ({freq_str}{time_str}) in **{group.name}**."
 
 
-def _handle_cant_do_task(user, parsed: dict) -> tuple[str, dict | None]:
-    occ = _find_user_occurrence(user, parsed.get("task_name"))
+# ──────────────────────────────────────────────────────────────────────────────
+# Function handlers  (user, args: dict) -> str
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _handle_create_task(user, args: dict) -> str:
+    candidates = _find_groups(user, args.get("group_name"))
+    if not candidates:
+        hint = args.get("group_name")
+        return f"I couldn't find a group called **{hint}**." if hint else "You're not in any group yet."
+    if len(candidates) > 1:
+        names = ", ".join(f"**{g.name}**" for g in candidates)
+        return f"You're in multiple groups ({names}). Which one should I add this task to?"
+    group = candidates[0]
+
+    membership = GroupMembership.objects.filter(user=user, group=group).first()
+    if not membership or membership.role != 'moderator':
+        name = args.get('name', 'this task')
+        return (
+            f"You don't have permission to create tasks directly in **{group.name}**. "
+            f"Would you like to submit **{name}** as a suggestion instead? "
+            f"Try saying 'propose {name} for {group.name}'."
+        )
+
+    return _build_and_create(user, args, group)
+
+
+def _handle_propose_task(user, args: dict) -> str:
+    task_name = args.get("task_name", "").strip()
+    if not task_name:
+        return "What task would you like to suggest?"
+    group = _find_group(user, args.get("group_name"))
+    if not group:
+        return "I couldn't find that group."
+
+    normalized = {**args, "name": task_name}
+    user_tz = getattr(user, 'timezone', None) or 'UTC'
+    proposal_payload, _ = _build_payload(normalized, user_tz_str=user_tz)
+    vote_mode = bool(args.get("vote_mode", False))
+    try:
+        ProposalService().create_proposal(
+            proposer_id=str(user.id),
+            group_id=str(group.id),
+            payload=proposal_payload,
+            reason=args.get("reason") or "",
+            vote_mode=vote_mode,
+        )
+    except ValueError as exc:
+        return f"Couldn't submit suggestion: {exc}"
+
+    if vote_mode:
+        return (
+            f"**{task_name}** has been put to a group vote in **{group.name}**. "
+            f"Members will be notified to cast their votes."
+        )
+    return (
+        f"Suggestion submitted for **{task_name}** in **{group.name}**. "
+        f"A moderator will be notified to review it."
+    )
+
+
+def _handle_complete_task(user, args: dict) -> str:
+    occ = _find_user_occurrence(user, args.get("task_name"))
     if not occ:
-        return f"I couldn't find that task in your pending tasks. Could you be more specific?", None
-    used = _emergency_reassigns_used(user)
-    remaining = max(0, 3 - used)
-    reason = parsed.get("reason") or "personal reasons"
-    lines = [
-        f"Here's what you can do with **{occ.template.name}** (due {occ.deadline.strftime('%a %d %b, %H:%M')}):",
-        "",
-        f"1. **Emergency reassign** — broadcast to your group ({remaining}/3 remaining this month)",
-        "2. **List on marketplace** — anyone in the group can claim it",
-        "3. **Swap** — request a swap with someone (e.g. 'swap with Jamie')",
-        "",
-        "Reply with 1, 2, 3, or describe what you'd like.",
-    ]
-    return "\n".join(lines), {"intent": "CANT_DO_TASK", "occurrence_id": occ.id, "reason": reason}
-
-
-def _handle_complete_task(user, parsed: dict) -> tuple[str, None]:
-    occ = _find_user_occurrence(user, parsed.get("task_name"))
-    if not occ:
-        return "I couldn't find that task in your pending tasks.", None
+        return "I couldn't find that task in your pending tasks."
     try:
         TaskLifecycleService().toggle_occurrence_completed(
             occurrence_id=str(occ.id), actor_id=str(user.id)
         )
-        return f"Marked **{occ.template.name}** as complete!", None
-    except Exception as e:
-        return f"Couldn't complete that task: {e}", None
+        return f"Marked **{occ.template.name}** as complete!"
+    except Exception as exc:
+        return f"Couldn't complete that task: {exc}"
 
 
-def _handle_snooze_task(user, parsed: dict) -> tuple[str, None]:
-    occ = _find_user_occurrence(user, parsed.get("task_name"))
+def _handle_snooze_task(user, args: dict) -> str:
+    occ = _find_user_occurrence(user, args.get("task_name"))
     if not occ:
-        return "I couldn't find that task in your pending tasks.", None
-    hours = parsed.get("snooze_hours") or 3
+        return "I couldn't find that task in your pending tasks."
+    hours       = int(args.get("snooze_hours") or 3)
     snooze_until = timezone.now() + timedelta(hours=hours)
     try:
         TaskLifecycleService().snooze_task(
             occurrence_id=str(occ.id), snooze_until=snooze_until, actor_id=str(user.id)
         )
-        return f"Snoozed **{occ.template.name}** for {hours}h (until {snooze_until.strftime('%H:%M')}).", None
-    except Exception as e:
-        return f"Couldn't snooze: {e}", None
+        return f"Snoozed **{occ.template.name}** for {hours}h (until {snooze_until.strftime('%H:%M')})."
+    except Exception as exc:
+        return f"Couldn't snooze: {exc}"
 
 
-def _handle_snooze_all(user, parsed: dict) -> tuple[str, None]:
-    hours = parsed.get("snooze_hours") or 3
+def _handle_snooze_all(user, args: dict) -> str:
+    hours        = int(args.get("snooze_hours") or 3)
     snooze_until = timezone.now() + timedelta(hours=hours)
-    svc = TaskLifecycleService()
+    svc  = TaskLifecycleService()
     occs = list(TaskOccurrence.objects.filter(
         assigned_to=user, status='pending'
     ).select_related('template'))
     if not occs:
-        return "You have no pending tasks to snooze.", None
-    succeeded = 0
-    failed_names: list[str] = []
+        return "You have no pending tasks to snooze."
+    succeeded, failed = 0, []
     for occ in occs:
         try:
-            svc.snooze_task(
-                occurrence_id=str(occ.id), snooze_until=snooze_until, actor_id=str(user.id)
-            )
+            svc.snooze_task(occurrence_id=str(occ.id), snooze_until=snooze_until, actor_id=str(user.id))
             succeeded += 1
         except Exception as exc:
-            failed_names.append(occ.template.name)
-            logger.warning(
-                "Chatbot snooze_all: failed to snooze occurrence %s (%s) for user %s: %s",
-                occ.id, occ.template.name, user.id, exc,
-            )
+            failed.append(occ.template.name)
+            logger.warning("snooze_all failed for occ %s: %s", occ.id, exc)
     if succeeded == 0:
-        return "Couldn't snooze any tasks right now. Please try again.", None
+        return "Couldn't snooze any tasks right now. Please try again."
     msg = f"Snoozed {succeeded} task(s) for {hours}h (until {snooze_until.strftime('%H:%M')})."
-    if failed_names:
-        msg += f" ⚠️ Could not snooze: {', '.join(failed_names)}."
-    return msg, None
+    if failed:
+        msg += f" ⚠️ Could not snooze: {', '.join(failed)}."
+    return msg
 
 
-def _handle_query_tasks(user) -> tuple[str, None]:
+def _handle_query_tasks(user, _args: dict) -> str:
     buckets = TaskLifecycleService().list_user_tasks(user_id=str(user.id))
-    occs = sorted(
-        buckets['active'] + buckets['upcoming'],
-        key=lambda o: o.deadline,
-    )[:10]
+    occs = sorted(buckets['active'] + buckets['upcoming'], key=lambda o: o.deadline)[:10]
     if not occs:
-        return "You have no pending tasks right now.", None
+        return "You have no pending tasks right now."
     lines = [f"Your pending tasks ({len(occs)}):"]
     for occ in occs:
         suffix = " *(snoozed)*" if occ.status == 'snoozed' else ""
         lines.append(f"• **{occ.template.name}** — due {occ.deadline.strftime('%a %d %b, %H:%M')}{suffix}")
-    return "\n".join(lines), None
+    return "\n".join(lines)
 
 
-def _handle_query_group_tasks(user, parsed: dict) -> tuple[str, None]:
-    group = _find_group(user, parsed.get("group_name"))
+def _handle_query_group_tasks(user, args: dict) -> str:
+    group = _find_group(user, args.get("group_name"))
     if not group:
-        return "I couldn't find that group.", None
+        return "I couldn't find that group."
     try:
-        all_occs = TaskLifecycleService().list_group_tasks(
-            group_id=str(group.id), actor_id=str(user.id)
-        )
+        all_occs = TaskLifecycleService().list_group_tasks(group_id=str(group.id), actor_id=str(user.id))
     except PermissionError:
-        return "I couldn't find that group.", None
+        return "I couldn't find that group."
     occs = [o for o in all_occs if o.status in ('pending', 'snoozed', 'overdue')][:15]
     if not occs:
-        return f"No pending tasks in **{group.name}**.", None
+        return f"No pending tasks in **{group.name}**."
     lines = [f"Tasks in **{group.name}**:"]
     for occ in occs:
         assignee = _name(occ.assigned_to) if occ.assigned_to else "Unassigned"
         lines.append(f"• **{occ.template.name}** — {assignee}, due {occ.deadline.strftime('%a %d %b')}")
-    return "\n".join(lines), None
+    return "\n".join(lines)
 
 
-def _handle_query_stats(user) -> tuple[str, None]:
-    memberships = GroupMembership.objects.filter(user=user).select_related('group')
+def _handle_query_stats(user, _args: dict) -> str:
+    memberships = GroupMembership.objects.filter(user=user, group__is_personal=False).select_related('group')
     if not memberships:
-        return "You're not in any group yet.", None
+        return "You're not in any group yet."
     lines = [f"Stats for **{_name(user)}**:"]
     for m in memberships:
-        s = UserStats.objects.filter(user=user, household=m.group).first()
+        s = UserStats.objects.filter(user=user, group=m.group).first()
         if s:
             lines.append(
                 f"\n**{m.group.name}:** {s.total_tasks_completed} tasks · "
                 f"{s.total_points} pts · {s.current_streak_days}-day streak · "
                 f"{round(s.on_time_completion_rate * 100)}% on time"
             )
-    return "\n".join(lines), None
+    return "\n".join(lines)
 
 
-def _handle_query_badges(user) -> tuple[str, None]:
+def _handle_query_badges(user, _args: dict) -> str:
     badges = UserBadge.objects.filter(user=user).select_related('badge').order_by('-awarded_at')[:10]
     if not badges:
-        return "You haven't earned any badges yet. Complete tasks to start earning!", None
+        return "You haven't earned any badges yet. Complete tasks to start earning!"
     lines = [f"Your badges ({badges.count()}):"]
     for ub in badges:
         lines.append(f"• **{ub.badge.name}** — {ub.badge.description}")
-    return "\n".join(lines), None
+    return "\n".join(lines)
 
 
-def _handle_query_leaderboard(user, parsed: dict) -> tuple[str, None]:
-    group = _find_group(user, parsed.get("group_name"))
+def _handle_query_leaderboard(user, args: dict) -> str:
+    group = _find_group(user, args.get("group_name"))
     if not group:
-        return "I couldn't find that group.", None
-    stats = UserStats.objects.filter(
-        household=group
-    ).select_related('user').order_by('-total_points')[:8]
+        return "I couldn't find that group."
+    stats = UserStats.objects.filter(group=group).select_related('user').order_by('-total_points')[:8]
     if not stats:
-        return f"No leaderboard data yet for **{group.name}**.", None
+        return f"No leaderboard data yet for **{group.name}**."
     lines = [f"Leaderboard — **{group.name}**:"]
     for i, s in enumerate(stats, 1):
         marker = " ← you" if s.user_id == user.id else ""
@@ -635,430 +785,264 @@ def _handle_query_leaderboard(user, parsed: dict) -> tuple[str, None]:
             f"{i}. {_name(s.user)} — {s.total_points} pts · "
             f"{s.current_streak_days}-day streak{marker}"
         )
-    return "\n".join(lines), None
+    return "\n".join(lines)
 
 
-def _handle_query_swap_requests(user) -> tuple[str, None]:
+def _handle_query_swap_requests(user, _args: dict) -> str:
     swaps = TaskSwap.objects.filter(
         to_user=user, status='pending'
     ).select_related('task__template', 'from_user').order_by('expires_at')
     if not swaps:
-        return "You have no pending swap requests.", None
+        return "You have no pending swap requests."
     lines = [f"Pending swap requests ({swaps.count()}):"]
     for sw in swaps:
         expires = sw.expires_at.strftime('%a %d %b') if sw.expires_at else "soon"
         lines.append(
             f"• **{sw.task.template.name}** from {_name(sw.from_user)} "
-            f"— expires {expires} (swap ID: {sw.id})"
+            f"— expires {expires}"
         )
     lines.append("\nSay 'accept [task name] swap' to accept one.")
-    return "\n".join(lines), None
+    return "\n".join(lines)
 
 
-def _handle_set_preference(user, parsed: dict) -> tuple[str, None]:
-    task_name = parsed.get("task_name", "")
-    preference = parsed.get("preference", "neutral")
-    template = _find_template(user, task_name)
+def _handle_set_preference(user, args: dict) -> str:
+    task_name  = args.get("task_name", "")
+    preference = args.get("preference", "neutral")
+    template   = _find_template(user, task_name)
     if not template:
-        return f"I couldn't find a task called '{task_name}' in your groups.", None
+        return f"I couldn't find a task called '{task_name}' in your groups."
     try:
         TaskPreferenceService().set_preference(user=user, template=template, preference=preference)
     except (ValueError, PermissionError) as exc:
-        return f"Couldn't save preference: {exc}", None
+        return f"Couldn't save preference: {exc}"
     verb = {"prefer": "You'll be prioritised for", "avoid": "You'll be deprioritised for", "neutral": "You're neutral on"}[preference]
-    return f"{verb} **{template.name}**. Preference saved.", None
+    return f"{verb} **{template.name}**. Preference saved."
 
 
-def _handle_claim_marketplace(user, parsed: dict) -> tuple[str, None]:
-    group = _find_group(user, parsed.get("group_name"))
+def _handle_claim_marketplace(user, args: dict) -> str:
+    group = _find_group(user, args.get("group_name"))
     if not group:
-        return "I couldn't find that group.", None
-
-    task_name = parsed.get("task_name")
+        return "I couldn't find that group."
     listings = MarketplaceListing.objects.filter(
         task_occurrence__template__group=group,
         expires_at__gt=timezone.now(),
     ).select_related('task_occurrence__template', 'listed_by')
-
     if not listings:
-        return f"There's nothing on the marketplace in **{group.name}** right now.", None
+        return f"There's nothing on the marketplace in **{group.name}** right now."
 
+    task_name = args.get("task_name")
     if not task_name:
         lines = [f"Marketplace listings in **{group.name}**:"]
-        for l in listings[:8]:
-            bonus = f" (+{l.bonus_points} pts)" if l.bonus_points else ""
-            lines.append(f"• **{l.task_occurrence.template.name}**{bonus} — listed by {_name(l.listed_by)}")
+        for lst in listings[:8]:
+            bonus = f" (+{lst.bonus_points} pts)" if lst.bonus_points else ""
+            lines.append(f"• **{lst.task_occurrence.template.name}**{bonus} — listed by {_name(lst.listed_by)}")
         lines.append("\nSay 'claim [task name]' to take one.")
-        return "\n".join(lines), None
+        return "\n".join(lines)
 
-    low = task_name.lower()
+    low   = task_name.lower()
     match = next((l for l in listings if low in l.task_occurrence.template.name.lower()), None)
     if not match:
-        return f"I couldn't find '{task_name}' on the marketplace.", None
-
+        return f"I couldn't find '{task_name}' on the marketplace."
     try:
         MarketplaceService().claim_task(user=user, listing_id=match.id)
         bonus_str = f" You earned +{match.bonus_points} bonus points!" if match.bonus_points else ""
-        return f"Claimed **{match.task_occurrence.template.name}**!{bonus_str}", None
-    except Exception as e:
-        return f"Couldn't claim that task: {e}", None
+        return f"Claimed **{match.task_occurrence.template.name}**!{bonus_str}"
+    except Exception as exc:
+        return f"Couldn't claim that task: {exc}"
 
 
-def _handle_accept_swap(user, parsed: dict) -> tuple[str, None]:
-    task_name = parsed.get("task_name")
-    qs = TaskSwap.objects.filter(to_user=user, status='pending').select_related('task__template')
-    if task_name:
-        low = task_name.lower()
-        swap = next((s for s in qs if low in s.task.template.name.lower()), None)
-    else:
-        swap = qs.order_by('expires_at').first()
-
+def _handle_accept_swap(user, args: dict) -> str:
+    task_name = args.get("task_name")
+    qs   = TaskSwap.objects.filter(to_user=user, status='pending').select_related('task__template')
+    swap = next((s for s in qs if task_name and task_name.lower() in s.task.template.name.lower()), None) \
+           or qs.order_by('expires_at').first()
     if not swap:
-        return "I couldn't find a pending swap request for that task.", None
+        return "I couldn't find a pending swap request for that task."
     try:
         TaskLifecycleService().respond_to_swap_request(
             swap_id=str(swap.id), accept=True, actor_id=str(user.id)
         )
-        return f"Accepted the swap for **{swap.task.template.name}**. It's now yours.", None
-    except Exception as e:
-        return f"Couldn't accept swap: {e}", None
+        return f"Accepted the swap for **{swap.task.template.name}**. It's now yours."
+    except Exception as exc:
+        return f"Couldn't accept swap: {exc}"
 
 
-def _handle_accept_emergency(user, parsed: dict) -> tuple[str, None]:
-    task_name = parsed.get("task_name")
-    # Emergency occurrences: reassignment_reason='emergency', no current assignee
+def _handle_accept_emergency(user, args: dict) -> str:
+    task_name = args.get("task_name")
     qs = TaskOccurrence.objects.filter(
         status='pending',
         reassignment_reason='emergency',
         assigned_to__isnull=True,
         template__group__in=GroupMembership.objects.filter(user=user).values('group'),
     ).select_related('template')
-    if task_name:
-        low = task_name.lower()
-        occ = next((o for o in qs if low in o.template.name.lower()), None)
-    else:
-        occ = qs.order_by('deadline').first()
-
+    occ = next((o for o in qs if task_name and task_name.lower() in o.template.name.lower()), None) \
+          or qs.order_by('deadline').first()
     if not occ:
-        return "I couldn't find any open emergency tasks right now.", None
+        return "I couldn't find any open emergency tasks right now."
     try:
-        TaskLifecycleService().accept_emergency(
-            occurrence_id=str(occ.id), actor_id=str(user.id)
+        TaskLifecycleService().accept_emergency(occurrence_id=str(occ.id), actor_id=str(user.id))
+        return f"You've taken **{occ.template.name}**. The original assignee has been notified. You'll earn bonus points!"
+    except Exception as exc:
+        return f"Couldn't accept emergency task: {exc}"
+
+
+def _handle_emergency_reassign(user, args: dict) -> str:
+    occ = _find_user_occurrence(user, args.get("task_name"))
+    if not occ:
+        return "I couldn't find that task in your pending tasks."
+    used = _emergency_reassigns_used(user)
+    if used >= 3:
+        return "You've used all 3 emergency reassigns this month. Try the marketplace or a swap instead."
+    reason = args.get("reason") or ""
+    try:
+        TaskLifecycleService().emergency_reassign(
+            occurrence_id=str(occ.id), actor_id=str(user.id), reason=reason
         )
-        return f"You've taken **{occ.template.name}**. The original assignee has been notified. You'll earn bonus points!", None
-    except Exception as e:
-        return f"Couldn't accept emergency task: {e}", None
+        remaining = max(0, 2 - used)
+        return (
+            f"Emergency reassign sent for **{occ.template.name}**. "
+            f"Your group has been notified. You have {remaining} emergency reassign(s) left this month."
+        )
+    except Exception as exc:
+        return f"Couldn't emergency reassign: {exc}"
 
 
-def _handle_create_group(user, parsed: dict) -> tuple[str, None]:
-    name = parsed.get("name", "").strip()
+def _handle_list_marketplace(user, args: dict) -> str:
+    occ = _find_user_occurrence(user, args.get("task_name"))
+    if not occ:
+        return "I couldn't find that task in your pending tasks."
+    bonus = int(args.get("bonus_points") or 0)
+    try:
+        MarketplaceService().list_task(user=user, occurrence_id=str(occ.id), bonus_points=bonus)
+        return f"**{occ.template.name}** is now on the marketplace. Anyone in your group can claim it."
+    except (ValueError, PermissionError) as exc:
+        return f"Couldn't list on marketplace: {exc}"
+
+
+def _handle_request_swap(user, args: dict) -> str:
+    occ = _find_user_occurrence(user, args.get("task_name"))
+    if not occ:
+        return "I couldn't find that task in your pending tasks."
+    name   = args.get("swap_with_name", "")
+    target = _find_member_by_name(user, name) if name else None
+    if not target:
+        return f"I couldn't find '{name}' in your groups. Try the exact name." if name else "Who would you like to swap with?"
+    try:
+        TaskLifecycleService().create_swap_request(
+            task_id=str(occ.id), from_user_id=str(user.id),
+            to_user_id=str(target.id), reason=args.get("reason") or "",
+        )
+        return f"Swap request sent to {_name(target)} for **{occ.template.name}**."
+    except Exception as exc:
+        return f"Couldn't send swap request: {exc}"
+
+
+def _handle_create_group(user, args: dict) -> str:
+    name = (args.get("name") or "").strip()
     if not name:
-        return "What would you like to name the group?", None
+        return "What would you like to name the group?"
     try:
         group = GroupOrchestrator().create_group(owner=user, name=name)
-        return f"Created group **{group.name}**! Share the join code: `{group.group_code}`", None
-    except Exception as e:
-        return f"Couldn't create group: {e}", None
+        return f"Created group **{group.name}**! Share the join code: `{group.group_code}`"
+    except Exception as exc:
+        return f"Couldn't create group: {exc}"
 
 
-def _handle_join_group(user, parsed: dict) -> tuple[str, None]:
-    code = (parsed.get("code") or "").strip().upper()
+def _handle_join_group(user, args: dict) -> str:
+    code = (args.get("code") or "").strip().upper()
     if not code:
-        return "What's the group code you'd like to join?", None
+        return "What's the group code you'd like to join?"
     try:
         group = GroupOrchestrator().join_by_code(user=user, code=code)
-        return f"Joined **{group.name}**!", None
-    except ValueError as e:
-        return str(e), None
+        return f"Joined **{group.name}**!"
+    except ValueError as exc:
+        return str(exc)
 
 
-def _handle_invite_member(user, parsed: dict) -> tuple[str, None]:
-    email = parsed.get("email", "").strip()
+def _handle_invite_member(user, args: dict) -> str:
+    email = (args.get("email") or "").strip()
     if not email:
-        return "What email address would you like to invite?", None
-    group = _find_group(user, parsed.get("group_name"))
+        return "What email address would you like to invite?"
+    group = _find_group(user, args.get("group_name"))
     if not group:
-        return "I couldn't find that group.", None
+        return "I couldn't find that group."
     membership = GroupMembership.objects.filter(user=user, group=group).first()
     if not membership or membership.role != 'moderator':
-        return f"Only moderators can invite members to **{group.name}**.", None
+        return f"Only moderators can invite members to **{group.name}**."
     try:
-        GroupOrchestrator().invite_member(
-            requestor=user, group_id=str(group.id), email=email, role='member'
-        )
-        return f"Invitation sent to **{email}** for **{group.name}**.", None
-    except Exception as e:
-        return f"Couldn't send invitation: {e}", None
+        GroupOrchestrator().invite_member(requestor=user, group_id=str(group.id), email=email, role='member')
+        return f"Invitation sent to **{email}** for **{group.name}**."
+    except Exception as exc:
+        return f"Couldn't send invitation: {exc}"
 
 
-def _handle_delete_template(user, parsed: dict) -> tuple[str, dict | None]:
-    from chore_sync.services.task_template_service import TaskTemplateService
-    task_name = parsed.get("task_name", "")
-    group = _find_group(user, parsed.get("group_name"))
-    template = _find_template(user, task_name, group)
+def _handle_delete_template(user, args: dict) -> str:
+    task_name = args.get("task_name", "")
+    group     = _find_group(user, args.get("group_name"))
+    template  = _find_template(user, task_name, group)
     if not template:
-        return f"I couldn't find a template called '{task_name}' in your groups.", None
+        return f"I couldn't find a template called '{task_name}' in your groups."
     membership = GroupMembership.objects.filter(user=user, group=template.group).first()
     if not membership or membership.role != 'moderator':
-        return f"Only moderators can delete task templates.", None
-    # Confirm before deleting
-    return (
-        f"Are you sure you want to delete **{template.name}** from **{template.group.name}**? "
-        f"This will cancel all pending occurrences. Reply 'yes, delete it' to confirm.",
-        {"intent": "DELETE_TASK_TEMPLATE", "template_id": template.id, "template_name": template.name},
-    )
-
-
-def _handle_propose_task(user, parsed: dict) -> tuple[str, None]:
-    task_name = parsed.get("task_name", "").strip()
-    if not task_name:
-        return "What task would you like to suggest?", None
-    group = _find_group(user, parsed.get("group_name"))
-    if not group:
-        return "I couldn't find that group.", None
-    reason = parsed.get("reason") or ""
-
-    # Build a minimal proposal payload from what the user described.
-    # next_due defaults to tomorrow; a moderator can adjust it on approval.
-    proposal_payload, _ = _build_payload({**parsed, "name": task_name})
+        return "Only moderators can delete task templates."
     try:
-        ProposalService().create_proposal(
-            proposer_id=str(user.id),
-            group_id=str(group.id),
-            payload=proposal_payload,
-            reason=reason,
-        )
-        return (
-            f"Suggestion submitted for **{task_name}** in **{group.name}**. "
-            f"A moderator will be notified to review it.",
-            None,
-        )
-    except (ValueError, PermissionError) as e:
-        return f"Couldn't submit suggestion: {e}", None
-
-
-def _handle_choose_option(user, choice: str, pending: dict) -> tuple[str, dict | None]:
-    intent = pending.get("intent")
-
-    if intent == "CREATE_TASK":
-        cs = choice.strip()
-        cl = cs.lower()
-
-        # Always allow cancel
-        if cl in ("none", "cancel", "nevermind", "never mind"):
-            return "No problem, task creation cancelled!", None
-
-        awaiting = pending.get("awaiting")
-        parsed   = dict(pending.get("parsed", {}))
-
-        # ── Group disambiguation ──────────────────────────────────────────────
-        if awaiting == "group":
-            group_ids   = pending.get("group_ids", [])
-            group_names = pending.get("group_names", [])
-            selected_group = None
-            if cs.isdigit():
-                idx = int(cs) - 1
-                if 0 <= idx < len(group_ids):
-                    selected_group = Group.objects.filter(id=group_ids[idx]).first()
-            if selected_group is None:
-                for gid, gname in zip(group_ids, group_names):
-                    if cl in gname.lower():
-                        selected_group = Group.objects.filter(id=gid).first()
-                        break
-            if selected_group is None:
-                return "Task creation cancelled. Just ask me again whenever you're ready!", None
-            return _check_and_ask(user, parsed, selected_group)
-
-        # ── All other awaiting states use stored group_id ─────────────────────
-        group = Group.objects.filter(id=pending.get("group_id")).first()
-        if not group:
-            return "Task creation cancelled (group not found). Please try again.", None
-
-        if awaiting == "recurrence":
-            recurrence_map = {
-                "daily": "daily", "weekly": "weekly", "fortnightly": "fortnightly",
-                "monthly": "monthly", "one-off": "once", "once": "once",
-            }
-            recurrence = recurrence_map.get(cl)
-            if not recurrence:
-                return (
-                    f"Please pick one of the options.",
-                    {**pending, "options": _RECURRENCE_CHIPS},
-                )
-            parsed["recurrence"] = recurrence
-            return _check_and_ask(user, parsed, group)
-
-        if awaiting == "day_of_week":
-            day = DAY_NAME_TO_INT.get(cl)
-            if day is None:
-                return (
-                    "Please pick a day from the options.",
-                    {**pending, "options": _DAY_CHIPS},
-                )
-            parsed["day_of_week"] = cl  # store as name, _parse_day_field handles it
-            return _check_and_ask(user, parsed, group)
-
-        if awaiting == "day_of_month":
-            # Parse ordinals: "1st" → 1, "last day" / "28th" → 28
-            dom_raw = cl.replace('st','').replace('nd','').replace('rd','').replace('th','').strip()
-            if dom_raw in ('last', 'last day'):
-                dom = 28
-            else:
-                try:
-                    dom = int(dom_raw)
-                except ValueError:
-                    return (
-                        "Please pick a day from the options.",
-                        {**pending, "options": _DOM_CHIPS},
-                    )
-            if not 1 <= dom <= 31:
-                return (
-                    "Please pick a valid day (1–31).",
-                    {**pending, "options": _DOM_CHIPS},
-                )
-            parsed["day_of_month"] = dom
-            return _check_and_ask(user, parsed, group)
-
-        if awaiting == "time_of_day":
-            if cl == "skip":
-                parsed["time_of_day"] = None
-            else:
-                t = _parse_chip_time(cs)
-                if not t:
-                    return (
-                        "I couldn't read that time. Please pick one of the options.",
-                        {**pending, "options": _TIME_CHIPS},
-                    )
-                parsed["time_of_day"] = t
-            return _check_and_ask(user, parsed, group)
-
-        # Unknown awaiting — shouldn't happen, cancel cleanly
-        return "Task creation cancelled. Just ask me again whenever you're ready!", None
-
-    if intent == "CANT_DO_TASK":
-        occ_id = pending.get("occurrence_id")
-        reason = pending.get("reason", "")
-        try:
-            occ = TaskOccurrence.objects.select_related('template').get(id=occ_id)
-        except TaskOccurrence.DoesNotExist:
-            return "That task no longer exists.", None
-
-        low = choice.lower()
-
-        if any(x in low for x in ["1", "emergency"]):
-            used = _emergency_reassigns_used(user)
-            if used >= 3:
-                return "You've used all 3 emergency reassigns this month. Try the marketplace or a swap instead.", None
-            try:
-                TaskLifecycleService().emergency_reassign(
-                    occurrence_id=str(occ_id), actor_id=str(user.id), reason=reason
-                )
-                remaining = max(0, 2 - used)
-                return (
-                    f"Emergency reassign sent for **{occ.template.name}**. "
-                    f"Your group has been notified. You have {remaining} emergency reassign(s) left this month.", None
-                )
-            except Exception as e:
-                return f"Couldn't emergency reassign: {e}", None
-
-        if any(x in low for x in ["2", "marketplace", "market"]):
-            try:
-                MarketplaceService().list_task(
-                    user=user,
-                    occurrence_id=str(occ_id),
-                    bonus_points=0,
-                )
-                return f"**{occ.template.name}** is now on the marketplace. Anyone in your group can claim it.", None
-            except (ValueError, PermissionError) as e:
-                return f"Couldn't list on marketplace: {e}", None
-
-        if any(x in low for x in ["3", "swap"]):
-            name = None
-            if "with" in low:
-                name = choice.split("with", 1)[1].strip().title()
-            if name:
-                target = _find_member_by_name(user, name)
-                if target:
-                    try:
-                        TaskLifecycleService().create_swap_request(
-                            task_id=str(occ_id), from_user_id=str(user.id),
-                            to_user_id=str(target.id), reason=reason,
-                        )
-                        return f"Swap request sent to {_name(target)} for **{occ.template.name}**.", None
-                    except Exception as e:
-                        return f"Couldn't send swap request: {e}", None
-                else:
-                    return f"I couldn't find '{name}' in your groups. Try the exact name.", None
-            else:
-                return "Who would you like to swap with? Say 'swap with [name]'.", pending
-
-    if intent == "DELETE_TASK_TEMPLATE":
-        if any(x in choice.lower() for x in ["yes", "confirm", "delete"]):
-            from chore_sync.services.task_template_service import TaskTemplateService
-            template_id = pending.get("template_id")
-            template_name = pending.get("template_name", "that template")
-            try:
-                TaskTemplateService().delete_template(
-                    template_id=str(template_id), actor_id=str(user.id)
-                )
-                return f"**{template_name}** has been deleted and pending occurrences cancelled.", None
-            except Exception as e:
-                return f"Couldn't delete: {e}", None
-        else:
-            return "Deletion cancelled.", None
-
-    return "I'm not sure what to do with that reply. Could you rephrase?", None
+        TaskTemplateService().delete_template(template_id=str(template.id), actor_id=str(user.id))
+        return f"**{template.name}** has been deleted and pending occurrences cancelled."
+    except Exception as exc:
+        return f"Couldn't delete: {exc}"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# View
+# Dispatch table
 # ──────────────────────────────────────────────────────────────────────────────
 
-INTENT_HANDLERS = {
-    "CREATE_TASK": lambda user, p: _handle_create_task(user, p),
-    "CANT_DO_TASK": lambda user, p: _handle_cant_do_task(user, p),
-    "COMPLETE_TASK": lambda user, p: _handle_complete_task(user, p),
-    "SNOOZE_TASK": lambda user, p: _handle_snooze_task(user, p),
-    "SNOOZE_ALL": lambda user, p: _handle_snooze_all(user, p),
-    "QUERY_MY_TASKS": lambda user, p: _handle_query_tasks(user),
-    "QUERY_GROUP_TASKS": lambda user, p: _handle_query_group_tasks(user, p),
-    "QUERY_STATS": lambda user, p: _handle_query_stats(user),
-    "QUERY_BADGES": lambda user, p: _handle_query_badges(user),
-    "QUERY_LEADERBOARD": lambda user, p: _handle_query_leaderboard(user, p),
-    "QUERY_SWAP_REQUESTS": lambda user, p: _handle_query_swap_requests(user),
-    "SET_PREFERENCE": lambda user, p: _handle_set_preference(user, p),
-    "CLAIM_MARKETPLACE": lambda user, p: _handle_claim_marketplace(user, p),
-    "ACCEPT_SWAP": lambda user, p: _handle_accept_swap(user, p),
-    "ACCEPT_EMERGENCY": lambda user, p: _handle_accept_emergency(user, p),
-    "CREATE_GROUP": lambda user, p: _handle_create_group(user, p),
-    "JOIN_GROUP": lambda user, p: _handle_join_group(user, p),
-    "INVITE_MEMBER": lambda user, p: _handle_invite_member(user, p),
-    "DELETE_TASK_TEMPLATE": lambda user, p: _handle_delete_template(user, p),
-    "PROPOSE_TASK": lambda user, p: _handle_propose_task(user, p),
+_FUNCTION_HANDLERS = {
+    "create_task":             _handle_create_task,
+    "propose_task":            _handle_propose_task,
+    "complete_task":           _handle_complete_task,
+    "snooze_task":             _handle_snooze_task,
+    "snooze_all_tasks":        _handle_snooze_all,
+    "query_my_tasks":          _handle_query_tasks,
+    "query_group_tasks":       _handle_query_group_tasks,
+    "query_stats":             _handle_query_stats,
+    "query_badges":            _handle_query_badges,
+    "query_leaderboard":       _handle_query_leaderboard,
+    "query_swap_requests":     _handle_query_swap_requests,
+    "set_preference":          _handle_set_preference,
+    "claim_marketplace_task":  _handle_claim_marketplace,
+    "accept_swap":             _handle_accept_swap,
+    "accept_emergency_task":   _handle_accept_emergency,
+    "emergency_reassign_task": _handle_emergency_reassign,
+    "list_task_on_marketplace":_handle_list_marketplace,
+    "request_task_swap":       _handle_request_swap,
+    "create_group":            _handle_create_group,
+    "join_group":              _handle_join_group,
+    "invite_member":           _handle_invite_member,
+    "delete_task_template":    _handle_delete_template,
 }
 
-UNKNOWN_REPLY = (
-    "I didn't quite understand that. Here's what I can help with:\n\n"
-    "**Tasks:** 'What tasks do I have?' · 'I've done the vacuuming' · 'Snooze dishes for 3 hours'\n"
-    "**Can't do a task:** 'I can't do bathroom cleaning today, I'm sick'\n"
-    "**Preferences:** 'I hate vacuuming' · 'I love doing dishes'\n"
-    "**Marketplace:** 'What's on the marketplace?' · 'Claim the bathroom task'\n"
-    "**Swaps:** 'Accept Jamie's swap request'\n"
-    "**Stats:** 'How am I doing?' · 'Show the leaderboard' · 'What badges do I have?'\n"
-    "**Groups:** 'Create a group called Flat 3' · 'Join group ABC123' · 'Invite bob@email.com'\n"
-    "**Create task:** 'Add weekly bathroom cleaning on Fridays'"
-)
 
+def _dispatch_function(user, name: str, args: dict) -> str:
+    handler = _FUNCTION_HANDLERS.get(name)
+    if not handler:
+        logger.warning("Chatbot: no handler for function '%s'", name)
+        return "I'm not sure how to handle that. Could you rephrase?"
+    try:
+        return handler(user, args)
+    except Exception as exc:
+        logger.exception("Chatbot dispatch error for '%s': %s", name, exc)
+        return f"Something went wrong: {exc}"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Views
+# ──────────────────────────────────────────────────────────────────────────────
 
 class ChatbotMessageAPIView(APIView):
     authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Return a session's message history.
-        ?session_id=<id> → load that specific session.
-        No param           → load the most recent non-empty session.
-        """
         session_id = request.query_params.get("session_id")
         if session_id:
             session = ChatbotSession.objects.filter(id=session_id, user=request.user).first()
@@ -1086,7 +1070,6 @@ class ChatbotMessageAPIView(APIView):
 
         user = request.user
 
-        # Load or create session
         session = None
         created_session = False
         if session_id:
@@ -1095,49 +1078,46 @@ class ChatbotMessageAPIView(APIView):
             session = ChatbotSession.objects.create(user=user)
             created_session = True
 
-        # Multi-turn: if pending action, parse choice locally without LLM call
-        if session.pending_action:
-            parsed = {"intent": "CHOOSE_OPTION", "choice": message}
+        history      = session.messages[-20:]
+        llm_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history + [
+            {"role": "user", "content": message}
+        ]
+        result = _call_gemini(llm_messages)
+
+        if result is None:
+            if created_session and not session.messages:
+                session.delete()
+            return Response({
+                "reply": "The AI assistant is unavailable right now. Please try again shortly.",
+                "session_id": None if created_session else session.id,
+                "pending_action": False,
+                "options": [],
+            })
+
+        chips = []
+        if result["type"] == "function_call":
+            name = result["name"]
+            args = result["args"]
+            logger.info("Chatbot | user=%s | session=%s | fn=%s", user.username, session.id, name)
+            if name == "ask_clarification":
+                reply = args.get("question", "")
+                chips = args.get("chips", [])
+            else:
+                reply = _dispatch_function(user, name, args)
         else:
-            history = session.messages[-20:]
-            llm_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history + [
-                {"role": "user", "content": message}
-            ]
-            parsed = _call_gemini(llm_messages)
-            if parsed is None:
-                if created_session and not session.messages and not session.pending_action:
-                    session.delete()
-                return Response({
-                    "reply": "The AI assistant is unavailable right now. Please try again shortly.",
-                    "session_id": None if created_session else session.id,
-                    "pending_action": False,
-                })
+            logger.info("Chatbot | user=%s | session=%s | text response", user.username, session.id)
+            reply = result.get("content") or "I'm not sure how to help with that."
 
-        intent = parsed.get("intent", "UNKNOWN")
-        logger.info("Chatbot | user=%s | session=%s | intent=%s", user.username, session.id, intent)
-        next_pending = None
-
-        if intent == "CHOOSE_OPTION" and session.pending_action:
-            reply, next_pending = _handle_choose_option(user, message, session.pending_action)
-        elif intent in INTENT_HANDLERS:
-            reply, next_pending = INTENT_HANDLERS[intent](user, parsed)
-        else:
-            reply = UNKNOWN_REPLY
-
-        # Persist history only for non-pending-reply turns
-        if not session.pending_action:
-            session.messages.append({"role": "user", "content": message})
-            session.messages.append({"role": "assistant", "content": reply})
-
-        session.pending_action = next_pending
+        session.messages.append({"role": "user",      "content": message})
+        session.messages.append({"role": "assistant",  "content": reply})
+        session.pending_action = None
         session.save()
 
-        options = next_pending.get("options", []) if next_pending else []
         return Response({
-            "reply": reply,
-            "session_id": session.id,
-            "pending_action": bool(next_pending),
-            "options": options,
+            "reply":          reply,
+            "session_id":     session.id,
+            "pending_action": bool(chips),
+            "options":        chips,
         })
 
     def delete(self, request):
@@ -1149,7 +1129,6 @@ class ChatbotMessageAPIView(APIView):
 
 
 class ChatbotSessionListAPIView(APIView):
-    """GET /api/assistant/sessions/ — list all non-empty sessions for the current user."""
     authentication_classes = [CsrfExemptSessionAuthentication, JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
@@ -1162,13 +1141,12 @@ class ChatbotSessionListAPIView(APIView):
         )
         data = []
         for s in sessions:
-            msgs = s.messages or []
-            # First user message as preview title
+            msgs       = s.messages or []
             first_user = next((m["content"] for m in msgs if m.get("role") == "user"), "")
             data.append({
-                "id": s.id,
-                "preview": first_user[:80],
+                "id":            s.id,
+                "preview":       first_user[:80],
                 "message_count": len(msgs),
-                "last_active": s.last_active.isoformat(),
+                "last_active":   s.last_active.isoformat(),
             })
         return Response(data)

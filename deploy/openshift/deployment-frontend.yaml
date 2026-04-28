@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: choresync-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: choresync-frontend
+  template:
+    metadata:
+      labels:
+        app: choresync-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: image-registry.openshift-image-registry.svc:5000/choresync/choresync-frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: choresync-frontend
+spec:
+  selector:
+    app: choresync-frontend
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: choresync-frontend
+spec:
+  host: choresync-app.mahamadahir.com
+  to:
+    kind: Service
+    name: choresync-frontend
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

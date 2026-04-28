@@ -97,45 +97,55 @@ export default function TaskTemplateDetailScreen() {
   const [prefSaving, setPrefSaving] = useState(false);
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [favourite, setFavourite] = useState(false);
+  const [sectionErrors, setSectionErrors] = useState<{ template?: boolean; occurrences?: boolean; preference?: boolean }>({});
 
   async function loadAll() {
-    try {
-      const [templateRes, prefsRes, tasksRes, membersRes] = await Promise.allSettled([
-        groupService.getTemplate(templateId),
-        groupService.myPreferences(groupId),
-        groupService.tasks(groupId),
-        groupService.members(groupId),
-      ]);
+    setSectionErrors({});
+    const [templateRes, prefsRes, tasksRes, membersRes] = await Promise.allSettled([
+      groupService.getTemplate(templateId),
+      groupService.myPreferences(groupId),
+      groupService.tasks(groupId),
+      groupService.members(groupId),
+    ]);
 
-      if (templateRes.status === 'fulfilled') {
-        setTemplate(templateRes.value.data);
-      }
+    const errors: { template?: boolean; occurrences?: boolean; preference?: boolean } = {};
 
-      if (prefsRes.status === 'fulfilled') {
-        const match = prefsRes.value.data.find((p: any) => p.template_id === templateId || +p.template_id === templateId);
-        if (match) {
-          setPreference(match.preference as Preference);
-          setFavourite(match.preference === 'prefer');
-        }
-      }
+    if (templateRes.status === 'fulfilled') {
+      setTemplate(templateRes.value.data);
+    } else {
+      errors.template = true;
+    }
 
-      if (tasksRes.status === 'fulfilled') {
-        const all: any[] = tasksRes.value.data;
-        const filtered = all
-          .filter((o: any) => o.template_id === templateId || +o.template_id === templateId)
-          .filter((o: any) => o.status === 'pending' || o.status === 'snoozed')
-          .sort((a: any, b: any) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())
-          .slice(0, 3);
-        setOccurrences(filtered);
+    if (prefsRes.status === 'fulfilled') {
+      const match = prefsRes.value.data.find((p: any) => p.template_id === templateId || +p.template_id === templateId);
+      if (match) {
+        setPreference(match.preference as Preference);
+        setFavourite(match.preference === 'prefer');
       }
+    } else {
+      errors.preference = true;
+    }
 
-      if (membersRes.status === 'fulfilled') {
-        const me = membersRes.value.data.find(
-          (m: any) => m.user_id === String(authUser?.id) || m.username === authUser?.username
-        );
-        setIsModerator(me?.role === 'moderator' || me?.role === 'admin');
-      }
-    } catch {}
+    if (tasksRes.status === 'fulfilled') {
+      const all: any[] = tasksRes.value.data;
+      const filtered = all
+        .filter((o: any) => o.template_id === templateId || +o.template_id === templateId)
+        .filter((o: any) => o.status === 'pending' || o.status === 'snoozed')
+        .sort((a: any, b: any) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())
+        .slice(0, 3);
+      setOccurrences(filtered);
+    } else {
+      errors.occurrences = true;
+    }
+
+    if (membersRes.status === 'fulfilled') {
+      const me = membersRes.value.data.find(
+        (m: any) => m.user_id === String(authUser?.id) || m.username === authUser?.username
+      );
+      setIsModerator(me?.role === 'moderator' || me?.role === 'admin');
+    }
+
+    if (Object.keys(errors).length > 0) setSectionErrors(errors);
   }
 
   useEffect(() => {
@@ -232,10 +242,28 @@ export default function TaskTemplateDetailScreen() {
     return (
       <SafeAreaView style={s.safe} edges={['top']}>
         <View style={s.centered}>
-          <Text style={s.errorMsg}>Template not found.</Text>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={s.backFallback}>
-            <Text style={s.backFallbackText}>Go back</Text>
-          </TouchableOpacity>
+          {sectionErrors.template ? (
+            <>
+              <Text style={[s.msIcon, { fontSize: 36, color: C.onSurfaceVariant, marginBottom: 12 }]}>sync_problem</Text>
+              <Text style={s.errorMsg}>Couldn't load template</Text>
+              <TouchableOpacity
+                onPress={() => { setLoading(true); loadAll().finally(() => setLoading(false)); }}
+                style={s.backFallback}
+              >
+                <Text style={s.backFallbackText}>Retry</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => navigation.goBack()} style={[s.backFallback, { marginTop: 8, backgroundColor: 'transparent' }]}>
+                <Text style={[s.backFallbackText, { color: C.onSurfaceVariant }]}>Go back</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <Text style={s.errorMsg}>Template not found.</Text>
+              <TouchableOpacity onPress={() => navigation.goBack()} style={s.backFallback}>
+                <Text style={s.backFallbackText}>Go back</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       </SafeAreaView>
     );
@@ -275,12 +303,6 @@ export default function TaskTemplateDetailScreen() {
             <View style={[s.chip, { backgroundColor: C.tertiaryFixed }]}>
               <Text style={[s.chipIcon, { color: C.tertiary }]}>{categoryIcon}</Text>
               <Text style={[s.chipText, { color: C.onTertiaryFixed }]}>{categoryLabel}</Text>
-            </View>
-
-            <View style={[s.chip, { backgroundColor: template.importance === 'core' ? C.primaryFixed : C.surfaceContainerHighest }]}>
-              <Text style={[s.chipText, { color: template.importance === 'core' ? C.primary : C.onSurfaceVariant }]}>
-                {template.importance === 'core' ? 'Core' : 'Additional'}
-              </Text>
             </View>
 
             {template.photo_proof_required && (
@@ -342,7 +364,18 @@ export default function TaskTemplateDetailScreen() {
           <Text style={s.sectionTitle}>My Preference</Text>
           <Text style={s.sectionSub}>Affects how often you're assigned this task</Text>
 
-          <View style={s.prefSegment}>
+          {sectionErrors.preference && (
+            <TouchableOpacity
+              onPress={() => loadAll()}
+              activeOpacity={0.7}
+              style={s.sectionError}
+            >
+              <Text style={[s.msIcon, { color: C.onSurfaceVariant, fontSize: 16 }]}>sync_problem</Text>
+              <Text style={s.sectionErrorText}>Couldn't load preference · Tap to retry</Text>
+            </TouchableOpacity>
+          )}
+
+          <View style={[s.prefSegment, sectionErrors.preference && { opacity: 0.4 }]}>
             {/* Prefer */}
             <TouchableOpacity
               style={[s.prefBtn, preference === 'prefer' && { backgroundColor: C.secondary }]}
@@ -388,7 +421,12 @@ export default function TaskTemplateDetailScreen() {
         <View>
           <Text style={s.looseSectionTitle}>Upcoming</Text>
 
-          {occurrences.length === 0 ? (
+          {sectionErrors.occurrences ? (
+            <TouchableOpacity onPress={() => loadAll()} activeOpacity={0.7} style={s.sectionError}>
+              <Text style={[s.msIcon, { color: C.onSurfaceVariant, fontSize: 16 }]}>sync_problem</Text>
+              <Text style={s.sectionErrorText}>Couldn't load upcoming tasks · Tap to retry</Text>
+            </TouchableOpacity>
+          ) : occurrences.length === 0 ? (
             <View style={s.emptyState}>
               <Text style={s.emptyIcon}>event_busy</Text>
               <Text style={s.emptyText}>No upcoming occurrences</Text>
@@ -713,4 +751,19 @@ const s = StyleSheet.create({
 
   onSurface: { color: C.onSurface },
   onSurfaceVariant: { color: C.onSurfaceVariant },
+
+  msIcon: { fontFamily: 'MaterialSymbols' },
+  sectionError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    marginBottom: 8,
+  },
+  sectionErrorText: {
+    fontFamily: 'PlusJakartaSans_500Medium',
+    fontSize: 13,
+    color: C.onSurfaceVariant,
+  },
 });

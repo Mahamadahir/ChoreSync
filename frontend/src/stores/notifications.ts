@@ -37,8 +37,10 @@ export const useNotificationStore = defineStore('notifications', () => {
     notifications.value.filter((n) => !n.read && TASK_TYPES.has(n.type)).length,
   );
 
-  // Total unread across all groups for the Groups sidebar badge
-  const GROUP_TYPES = new Set(Object.keys(NOTIF_TAB));
+  // Total unread across all groups for the Groups sidebar badge.
+  // Only group-contextual types (chat, invites, proposals, swaps) — not task-level
+  // types already counted in tasksBadge.
+  const GROUP_TYPES = new Set(['message', 'group_invite', 'task_proposal', 'task_swap', 'task_suggestion']);
   const groupsBadge = computed(() =>
     notifications.value.filter((n) => !n.read && GROUP_TYPES.has(n.type)).length,
   );
@@ -70,6 +72,10 @@ export const useNotificationStore = defineStore('notifications', () => {
     if (n) n.read = true;
   }
 
+  function markAllRead() {
+    notifications.value.forEach((n) => { n.read = true; });
+  }
+
   function remove(id: number) {
     notifications.value = notifications.value.filter((n) => n.id !== id);
   }
@@ -84,6 +90,7 @@ export const useNotificationStore = defineStore('notifications', () => {
     setNotifications,
     prepend,
     markRead,
+    markAllRead,
     remove,
   };
 });
