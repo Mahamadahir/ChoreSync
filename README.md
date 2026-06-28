@@ -2,7 +2,7 @@
 
 A household chore app that decides whose turn it is, so flatmates stop arguing about it.
 
-**[Download for Android](https://choresync.mahamadahir.com/download)** · built by [Mahamad Dahir](mailto:mrmahamadahir@gmail.com)
+**[Download for Android](https://github.com/Mahamadahir/ChoreSync/releases/latest)** · built by [Mahamad Dahir](mailto:mrmahamadahir@gmail.com)
 
 > This repository is a showcase. It explains how ChoreSync is built and what went
 > into it. The source code is private.
@@ -21,13 +21,13 @@ I built it over my final year as a full-stack project: a Django backend, a Vue w
 
 ## Screenshots
 
-<!-- Drop real screenshots into screenshots/ and update these paths. -->
+| Dashboard | My tasks |
+|---|---|
+| ![Dashboard](screenshots/dashboard.png) | ![My tasks](screenshots/tasks.png) |
 
-| Tasks | Fair assignment | Calendar |
-|---|---|---|
-| ![Tasks view](screenshots/tasks.png) | ![Why you got this task](screenshots/assignment.png) | ![Calendar sync](screenshots/calendar.png) |
-
-[Watch the demo](#) <!-- link a short GIF or video here -->
+| Calendar sync (Google + Outlook) | AI assistant |
+|---|---|
+| ![Calendar sync](screenshots/calendar.png) | ![AI assistant](screenshots/assistant.png) |
 
 ---
 
