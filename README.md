@@ -2,7 +2,7 @@
 
 A household chore app that decides whose turn it is, so flatmates stop arguing about it.
 
-**[Download for Android](https://github.com/Mahamadahir/ChoreSync/releases/latest)** · built by [Mahamad Dahir](mailto:mrmahamadahir@gmail.com)
+**[Use the web app](https://choresync-app.mahamadahir.com)** · **[Download for Android](https://github.com/Mahamadahir/ChoreSync/releases/latest)** · built by [Mahamad Dahir](mailto:mrmahamadahir@gmail.com)
 
 > This repository is a showcase. It explains how ChoreSync is built and what went
 > into it. The source code is private.
@@ -90,7 +90,7 @@ A few things that took real work beyond the features:
 
 ## Status
 
-Live on Android and in active development. I'm looking for real households to try it and tell me what's confusing or broken.
+Live on the web and Android, and in active development. I'm looking for real households to try it and tell me what's confusing or broken.
 
 ---
 
