@@ -42,6 +42,7 @@ I built it over my final year as a full-stack project: a Django backend, a Vue w
 - **A marketplace.** List a chore for someone else to pick up for bonus points.
 - **An AI assistant.** Tell it 'I did the dishes' in plain English and it sorts the rest.
 - **Real-time chat and notifications.** Household chat with read receipts, plus push notifications to your phone.
+- **Send feedback.** Report a bug or suggest a feature without leaving the app.
 
 ---
 
@@ -85,6 +86,7 @@ A few things that took real work beyond the features:
 - **A real-time layer with three delivery paths.** One call fans a notification out over WebSocket, SSE, and push, persisting it first so a dropped connection replays on reconnect rather than losing messages.
 - **Production operations on Kubernetes.** I moved Postgres onto persistent storage after finding it was writing to ephemeral container storage, added automated daily database backups, wrote a deep health check that reports the database and broker rather than just answering 200, and added an external heartbeat so a silently dead background worker pages me.
 - **A two-phase account deletion** with a 14-day grace period and a nightly purge, with the full cascade behaviour documented.
+- **Automated release pipeline.** Pushing a version tag triggers a signed Android build on EAS, which is then published straight to the GitHub release, so a release is one `git tag` away.
 
 ---
 
