@@ -102,14 +102,16 @@ chores, free calendar slots, preferred-but-unassigned tasks, and uneven workload
 
 ## Deployment
 
-ChoreSync runs on Kubernetes (OpenShift). One backend image is reused by the web,
-worker and beat deployments; the frontend is a separate static build. The web and
-mobile clients are split across two domains, with the CSRF cookie scoped to the parent
-domain so the frontend origin can read it. GitHub Actions runs the tests, builds the
-images and rolls out the deployments on each push. Cloudflare sits in front for DNS and
-TLS.
+ChoreSync runs on Azure Container Apps. One backend image is reused by the web,
+worker and beat apps; the frontend is a separate static build on Azure Static Web Apps.
+The web and mobile clients are split across two domains, with the CSRF cookie scoped to
+the parent domain so the frontend origin can read it. GitHub Actions runs the tests,
+builds the image and rolls out the apps on each push. Cloudflare sits in front for DNS.
+The stack was migrated here from a university OpenShift cluster; see MIGRATION.md in the
+main repository for the move.
 
-On the operations side, Postgres runs on a persistent volume with automated daily
-backups, a deep health check reports the database and broker rather than just returning
-200, and an external dead-man's-switch heartbeat catches a silently failed background
-worker even during a full outage.
+On the operations side, Postgres is a managed Flexible Server with automated
+point-in-time backups, media lives in Blob storage so the web tier stays stateless,
+a deep health check reports the database and broker rather than just returning 200, and
+an external dead-man's-switch heartbeat catches a silently failed background worker even
+during a full outage.
