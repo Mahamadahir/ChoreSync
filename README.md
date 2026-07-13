@@ -73,7 +73,8 @@ I wrote this up in full, including the data model and the real-time and calendar
 | Web app | Vue 3, Quasar, Pinia, Vite |
 | Mobile app | React Native (Expo SDK 52) |
 | Auth | Session + CSRF (web), JWT (mobile), Google and Microsoft SSO |
-| Deployment | Kubernetes (OpenShift), GitHub Actions CI/CD, Cloudflare |
+| Deployment | Azure Container Apps, Azure Static Web Apps, GitHub Actions CI/CD, Cloudflare |
+| Monitoring | Azure Application Insights (OpenTelemetry), Azure Monitor alerts |
 
 ---
 
@@ -85,6 +86,7 @@ A few things that took real work beyond the features:
 - **Incremental sync that survives rate limits.** The initial Google sync pulls two years of events in monthly chunks, checkpointing after each, so a 429 resumes instead of restarting. Live webhooks are paused during the backfill so they don't race it.
 - **A real-time layer with three delivery paths.** One call fans a notification out over WebSocket, SSE, and push, persisting it first so a dropped connection replays on reconnect rather than losing messages.
 - **Production operations on Kubernetes.** I moved Postgres onto persistent storage after finding it was writing to ephemeral container storage, added automated daily database backups, wrote a deep health check that reports the database and broker rather than just answering 200, and added an external heartbeat so a silently dead background worker pages me.
+- **Telemetry and alerting on every request.** The backend reports to Application Insights through the Azure Monitor OpenTelemetry SDK, auto-instrumenting Django, outgoing HTTP, the database and Celery, so I see request rates, latency, dependencies and exceptions without hand-rolled metrics. Metric alerts email me on a spike in failed requests, response latency above three seconds, or a jump in server exceptions.
 - **A two-phase account deletion** with a 14-day grace period and a nightly purge, with the full cascade behaviour documented.
 - **Automated release pipeline.** Pushing a version tag triggers a signed Android build on EAS, which is then published straight to the GitHub release, so a release is one `git tag` away.
 
