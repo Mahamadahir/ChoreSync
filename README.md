@@ -15,7 +15,7 @@ My flat spent the best part of a year negotiating the bin rota in the group chat
 
 Instead of a static schedule, ChoreSync works out who *should* get a task from who has done the least lately, what people actually mind doing, and whether they are even home that day. It won't hand you the bins on an evening it knows you're out. That fairness engine is the core of the app, and the part I am most proud of.
 
-I built it over my final year as a full-stack project: a Django backend, a Vue web app, and a React Native Android app, deployed on Kubernetes.
+I built it over my final year as a full-stack project: a Django backend, a Vue web app, and a React Native Android app, deployed on Azure Container Apps.
 
 ---
 
@@ -85,7 +85,7 @@ A few things that took real work beyond the features:
 - **A provider-agnostic calendar layer.** Google and Outlook write into one shared event store using a Strategy pattern, so the assignment engine queries availability with no provider-specific branches. Adding a new calendar provider means writing one class.
 - **Incremental sync that survives rate limits.** The initial Google sync pulls two years of events in monthly chunks, checkpointing after each, so a 429 resumes instead of restarting. Live webhooks are paused during the backfill so they don't race it.
 - **A real-time layer with three delivery paths.** One call fans a notification out over WebSocket, SSE, and push, persisting it first so a dropped connection replays on reconnect rather than losing messages.
-- **Production operations on Kubernetes.** I moved Postgres onto persistent storage after finding it was writing to ephemeral container storage, added automated daily database backups, wrote a deep health check that reports the database and broker rather than just answering 200, and added an external heartbeat so a silently dead background worker pages me.
+- **A platform migration under a live app.** ChoreSync first ran on a university OpenShift cluster, where I self-operated Postgres on persistent storage after finding it writing to ephemeral container storage, and ran automated daily backups. I later moved the whole stack to Azure Container Apps with managed Postgres, Blob storage for media, and KEDA autoscaling, so the app runs on infrastructure I own outright rather than a student cluster that could change under me. Throughout, a deep health check reports the database and broker rather than just answering 200, and an external heartbeat pages me if a background worker dies silently.
 - **Telemetry and alerting on every request.** The backend reports to Application Insights through the Azure Monitor OpenTelemetry SDK, auto-instrumenting Django, outgoing HTTP, the database and Celery, so I see request rates, latency, dependencies and exceptions without hand-rolled metrics. Metric alerts email me on a spike in failed requests, response latency above three seconds, or a jump in server exceptions.
 - **A two-phase account deletion** with a 14-day grace period and a nightly purge, with the full cascade behaviour documented.
 - **Automated release pipeline.** Pushing a version tag triggers a signed Android build on EAS, which is then published straight to the GitHub release, so a release is one `git tag` away.
